@@ -5,1013 +5,799 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>路跑打卡系統｜管理後台</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-
-<!-- Firebase -->
 <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, where, orderBy, onSnapshot, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, where, orderBy, onSnapshot, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-  const firebaseConfig = {
-    apiKey: "AIzaSyBWn7703qi0X6rL2c4WBhieTZ2-_JSrvco",
-    authDomain: "road-running-check-in-system.firebaseapp.com",
-    projectId: "road-running-check-in-system",
-    storageBucket: "road-running-check-in-system.firebasestorage.app",
-    messagingSenderId: "19800079371",
-    appId: "1:19800079371:web:157af22aa9f1533387db0e"
-  };
+const firebaseConfig = {
+  apiKey: "AIzaSyBWn7703qi0X6rL2c4WBhieTZ2-_JSrvco",
+  authDomain: "road-running-check-in-system.firebaseapp.com",
+  projectId: "road-running-check-in-system",
+  storageBucket: "road-running-check-in-system.firebasestorage.app",
+  messagingSenderId: "19800079371",
+  appId: "1:19800079371:web:157af22aa9f1533387db0e"
+};
 
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-  const auth = getAuth(app);
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
 
-  // ── 全域狀態 ──
-  let currentEventId = null;
-  let recordsUnsubscribe = null;
+// ── 工具 ──
+function fmt(ts) {
+  if (!ts) return '-';
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleTimeString('zh-TW',{hour12:false});
+}
+function diffHMS(a, b) {
+  if (!a || !b) return '-';
+  const da = a.toDate ? a.toDate() : new Date(a);
+  const db2 = b.toDate ? b.toDate() : new Date(b);
+  const s = Math.max(0, Math.floor((da - db2) / 1000));
+  return String(Math.floor(s/3600)).padStart(2,'0')+':'+String(Math.floor((s%3600)/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+}
 
-  // ── 工具函式 ──
-  function formatTime(ts) {
-    if (!ts) return '-';
-    const d = ts.toDate ? ts.toDate() : new Date(ts);
-    return d.toLocaleTimeString('zh-TW', { hour12: false });
+// ── 選手比對 ──
+function isSamePerson(a, b) {
+  if (a.idNumber && b.idNumber) return a.idNumber === b.idNumber;
+  if (a.gender && b.gender && a.gender !== b.gender) return false;
+  if (a.birthday && b.birthday && a.birthday !== b.birthday) return false;
+  const nameMatch = a.name && b.name && a.name === b.name;
+  const phoneMatch = a.phone && b.phone && a.phone === b.phone;
+  const emailMatch = a.email && b.email && a.email === b.email;
+  if (nameMatch && (phoneMatch || emailMatch)) return true;
+  let cnt = 0;
+  ['name','gender','birthday','phone','email'].forEach(f => { if (a[f] && b[f] && a[f]===b[f]) cnt++; });
+  return cnt >= 3;
+}
+
+// ── 登入 ──
+window.doLogin = async function() {
+  const email = document.getElementById('loginEmail').value;
+  const pw = document.getElementById('loginPassword').value;
+  const btn = document.getElementById('loginBtn');
+  btn.textContent='登入中...'; btn.disabled=true;
+  try { await signInWithEmailAndPassword(auth, email, pw); }
+  catch(e) { showToast('登入失敗：'+e.message,'error'); btn.textContent='登入'; btn.disabled=false; }
+}
+window.doLogout = async function() { await signOut(auth); }
+
+onAuthStateChanged(auth, user => {
+  if (user) {
+    document.getElementById('loginScreen').style.display='none';
+    document.getElementById('appScreen').style.display='block';
+    document.getElementById('userEmail').textContent=user.email;
+    document.getElementById('topUserEmail').textContent=user.email;
+    loadDashboard();
+  } else {
+    document.getElementById('loginScreen').style.display='flex';
+    document.getElementById('appScreen').style.display='none';
   }
-  function formatDate(ts) {
-    if (!ts) return '-';
-    const d = ts.toDate ? ts.toDate() : new Date(ts);
-    return d.toLocaleDateString('zh-TW');
-  }
-  function calcDiff(a, b) {
-    if (!a || !b) return '-';
-    const da = a.toDate ? a.toDate() : new Date(a);
-    const db2 = b.toDate ? b.toDate() : new Date(b);
-    const s = Math.abs(Math.floor((da - db2) / 1000));
-    const h = String(Math.floor(s / 3600)).padStart(2, '0');
-    const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
-    const sec = String(s % 60).padStart(2, '0');
-    return `${h}:${m}:${sec}`;
-  }
+});
 
-  // ── 選手比對邏輯 ──
-  function isSamePerson(a, b) {
-    // 步驟一：兩筆都有身分證
-    if (a.idNumber && b.idNumber) {
-      return a.idNumber === b.idNumber;
+// ── 導覽 ──
+window.showSection = function(id) {
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-item,.bottom-nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('sec-'+id).classList.add('active');
+  document.querySelectorAll('[data-nav="'+id+'"]').forEach(n=>n.classList.add('active'));
+  if(id==='dashboard') loadDashboard();
+  if(id==='runners') loadRunners();
+  if(id==='events') loadEvents();
+  if(id==='entries') loadEntriesSection();
+  if(id==='search') initSearchSection();
+  if(id==='stats') loadStatsSection();
+}
+
+// ── 儀表板 ──
+async function loadDashboard() {
+  const cfg = await getDoc(doc(db,'config','active'));
+  const activeId = cfg.exists() ? cfg.data().eventId : null;
+  let activeHtml = '<span style="color:var(--muted)">目前無進行中賽事</span>';
+  let statsHtml = '';
+  if (activeId) {
+    const ev = await getDoc(doc(db,'events',activeId));
+    if (ev.exists()) {
+      const d = ev.data();
+      activeHtml = '<strong>'+d.name+'</strong> <span class="badge badge-green">進行中</span>';
+      const recs = await getDocs(collection(db,'events',activeId,'records'));
+      const unique = new Set(recs.docs.map(x=>x.data().uniqueId)).size;
+      const groups = await getDocs(collection(db,'events',activeId,'groups'));
+      statsHtml = '<div class="stat-card"><div class="stat-num">'+unique+'</div><div class="stat-label">已打卡選手</div></div>'
+        +'<div class="stat-card"><div class="stat-num">'+recs.size+'</div><div class="stat-label">總掃描次數</div></div>'
+        +'<div class="stat-card"><div class="stat-num">'+groups.size+'</div><div class="stat-label">組別數</div></div>';
     }
-    // 步驟二：性別或生日有值且不同 → 不同人
-    if (a.gender && b.gender && a.gender !== b.gender) return false;
-    if (a.birthday && b.birthday && a.birthday !== b.birthday) return false;
-    // 步驟三：姓名相同 且 (手機相同 或 email相同)
-    const nameMatch = a.name && b.name && a.name === b.name;
-    const phoneMatch = a.phone && b.phone && a.phone === b.phone;
-    const emailMatch = a.email && b.email && a.email === b.email;
-    if (nameMatch && (phoneMatch || emailMatch)) return true;
-    // 步驟三補充：五欄位中3個以上相同
-    const fields = ['name', 'gender', 'birthday', 'phone', 'email'];
-    let matchCount = 0;
-    for (const f of fields) {
-      if (a[f] && b[f] && a[f] === b[f]) matchCount++;
-    }
-    return matchCount >= 3;
   }
+  document.getElementById('dashActiveEvent').innerHTML = activeHtml;
+  document.getElementById('dashStats').innerHTML = statsHtml;
+  const runners = await getDocs(collection(db,'runners'));
+  document.getElementById('dashTotalRunners').textContent = runners.size;
+  const events = await getDocs(collection(db,'events'));
+  document.getElementById('dashTotalEvents').textContent = events.size;
+}
 
-  // ── 登入 ──
-  window.doLogin = async function() {
-    const email = document.getElementById('loginEmail').value;
-    const password = document.getElementById('loginPassword').value;
-    const btn = document.getElementById('loginBtn');
-    btn.textContent = '登入中...';
-    btn.disabled = true;
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (e) {
-      showToast('登入失敗：' + e.message, 'error');
-      btn.textContent = '登入';
-      btn.disabled = false;
-    }
-  }
-  window.doLogout = async function() {
-    await signOut(auth);
-  }
+// ── 選手管理 ──
+async function loadRunners(search='') {
+  const tbody = document.getElementById('runnersTableBody');
+  tbody.innerHTML='<tr><td colspan="7" class="loading-cell">載入中...</td></tr>';
+  const snap = await getDocs(collection(db,'runners'));
+  let list = snap.docs.map(d=>({id:d.id,...d.data()}));
+  if (search) { const t=search.toLowerCase(); list=list.filter(r=>(r.name||'').toLowerCase().includes(t)||(r.uniqueId||'').toLowerCase().includes(t)||(r.phone||'').includes(t)||(r.email||'').toLowerCase().includes(t)); }
+  if (!list.length) { tbody.innerHTML='<tr><td colspan="7" class="loading-cell">無資料</td></tr>'; return; }
+  tbody.innerHTML=list.map(r=>'<tr><td><span class="mono">'+r.uniqueId+'</span></td><td>'+r.name+'</td><td>'+(r.gender||'-')+'</td><td>'+(r.birthday||'-')+'</td><td>'+(r.phone||'-')+'</td><td>'+(r.email||'-')+'</td><td><button class="btn btn-sm btn-ghost" onclick="editRunner(\''+r.id+'\')">編輯</button> <button class="btn btn-sm btn-danger" onclick="deleteRunner(\''+r.id+'\',\''+r.name+'\')">刪除</button></td></tr>').join('');
+}
+window.searchRunners=function(){ loadRunners(document.getElementById('runnerSearch').value); }
 
-  onAuthStateChanged(auth, user => {
-    if (user) {
-      document.getElementById('loginScreen').style.display = 'none';
-      document.getElementById('appScreen').style.display = 'flex';
-      document.getElementById('userEmail').textContent = user.email;
-      document.getElementById('topUserEmail').textContent = user.email;
-      loadDashboard();
-    } else {
-      document.getElementById('loginScreen').style.display = 'flex';
-      document.getElementById('appScreen').style.display = 'none';
+async function genUniqueId() {
+  const snap=await getDocs(collection(db,'runners'));
+  let max=0;
+  snap.docs.forEach(d=>{ const n=parseInt((d.data().uniqueId||'').replace('R',''))||0; if(n>max)max=n; });
+  return 'R'+String(max+1).padStart(6,'0');
+}
+
+window.showAddRunner=function(){
+  document.getElementById('runnerModalTitle').textContent='新增選手';
+  document.getElementById('runnerForm').reset();
+  document.getElementById('runnerDocId').value='';
+  document.getElementById('runnerModal').style.display='flex';
+}
+window.editRunner=async function(id){
+  const snap=await getDoc(doc(db,'runners',id));
+  if(!snap.exists())return;
+  const r=snap.data();
+  document.getElementById('runnerModalTitle').textContent='編輯選手';
+  document.getElementById('runnerDocId').value=id;
+  document.getElementById('rName').value=r.name||'';
+  document.getElementById('rGender').value=r.gender||'';
+  document.getElementById('rBirthday').value=r.birthday||'';
+  document.getElementById('rPhone').value=r.phone||'';
+  document.getElementById('rEmail').value=r.email||'';
+  document.getElementById('rIdNumber').value=r.idNumber||'';
+  document.getElementById('runnerModal').style.display='flex';
+}
+window.saveRunner=async function(){
+  const id=document.getElementById('runnerDocId').value;
+  const data={name:document.getElementById('rName').value.trim(),gender:document.getElementById('rGender').value,birthday:document.getElementById('rBirthday').value,phone:document.getElementById('rPhone').value.trim(),email:document.getElementById('rEmail').value.trim(),idNumber:document.getElementById('rIdNumber').value.trim(),updatedAt:serverTimestamp()};
+  if(!data.name){showToast('姓名為必填','error');return;}
+  if(id){await updateDoc(doc(db,'runners',id),data);showToast('已更新');}
+  else{data.uniqueId=await genUniqueId();data.createdAt=serverTimestamp();await addDoc(collection(db,'runners'),data);showToast('已新增');}
+  closeModal('runnerModal'); loadRunners();
+}
+window.deleteRunner=async function(id,name){
+  if(!confirm('確定刪除「'+name+'」？'))return;
+  await deleteDoc(doc(db,'runners',id)); showToast('已刪除'); loadRunners();
+}
+window.importCSV=function(){ document.getElementById('csvFile').click(); }
+window.handleCSV=async function(e){
+  const file=e.target.files[0]; if(!file)return;
+  const text=await file.text();
+  const lines=text.trim().split('\n');
+  const headers=lines[0].split(',').map(h=>h.trim().replace(/"/g,''));
+  const fm={'姓名':'name','name':'name','性別':'gender','gender':'gender','生日':'birthday','birthday':'birthday','手機':'phone','phone':'phone','電話':'phone','email':'email','Email':'email','電子郵件':'email','身分證':'idNumber','身分證號':'idNumber','idNumber':'idNumber'};
+  const existing=(await getDocs(collection(db,'runners'))).docs.map(d=>({id:d.id,...d.data()}));
+  let added=0,updated=0;
+  const batch=writeBatch(db);
+  for(let i=1;i<lines.length;i++){
+    const vals=lines[i].split(',').map(v=>v.trim().replace(/"/g,''));
+    if(vals.length<2)continue;
+    const row={};
+    headers.forEach((h,idx)=>{ const f=fm[h]; if(f)row[f]=vals[idx]||''; });
+    if(!row.name)continue;
+    const match=existing.find(e2=>isSamePerson(e2,row));
+    if(match){batch.update(doc(db,'runners',match.id),{...row,updatedAt:serverTimestamp()});updated++;}
+    else{
+      let max=0; existing.forEach(e2=>{ const n=parseInt((e2.uniqueId||'').replace('R',''))||0; if(n>max)max=n; }); max+=added+1;
+      const ref=doc(collection(db,'runners'));
+      batch.set(ref,{...row,uniqueId:'R'+String(max).padStart(6,'0'),createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+      existing.push({id:ref.id,...row,uniqueId:'R'+String(max).padStart(6,'0')});
+      added++;
     }
+  }
+  await batch.commit();
+  showToast('匯入完成：新增'+added+'筆，更新'+updated+'筆');
+  loadRunners(); e.target.value='';
+}
+
+// ── 賽事管理 ──
+async function loadEvents() {
+  const tbody=document.getElementById('eventsTableBody');
+  tbody.innerHTML='<tr><td colspan="5" class="loading-cell">載入中...</td></tr>';
+  const cfg=await getDoc(doc(db,'config','active'));
+  const activeId=cfg.exists()?cfg.data().eventId:null;
+  const snap=await getDocs(query(collection(db,'events'),orderBy('createdAt','desc')));
+  if(snap.empty){tbody.innerHTML='<tr><td colspan="5" class="loading-cell">無賽事資料</td></tr>';return;}
+  tbody.innerHTML=snap.docs.map(d=>{
+    const ev=d.data(); const isActive=d.id===activeId;
+    return '<tr'+(isActive?' class="row-active"':'')+'><td><strong>'+ev.name+'</strong></td><td>'+(ev.date||'-')+'</td><td>'+(ev.groupNames||[]).join('、')||'-'+'</td><td>'+(isActive?'<span class="badge badge-green">進行中</span>':'<span class="badge">已結束</span>')+'</td><td style="white-space:nowrap">'
+      +(!isActive?'<button class="btn btn-sm btn-green" onclick="activateEvent(\''+d.id+'\')">開放掃描</button> ':'<button class="btn btn-sm btn-danger" onclick="deactivateEvent()">關閉掃描</button> ')
+      +'<button class="btn btn-sm btn-ghost" onclick="editEvent(\''+d.id+'\')">編輯</button> '
+      +'<button class="btn btn-sm btn-ghost" onclick="manageGroups(\''+d.id+'\',\''+ev.name+'\')">組別</button></td></tr>';
+  }).join('');
+}
+window.activateEvent=async function(id){ await setDoc(doc(db,'config','active'),{eventId:id}); showToast('已開放掃描'); loadEvents(); }
+window.deactivateEvent=async function(){ await setDoc(doc(db,'config','active'),{eventId:null}); showToast('已關閉掃描'); loadEvents(); }
+
+window.showAddEvent=function(){
+  document.getElementById('eventModalTitle').textContent='新增賽事';
+  document.getElementById('eventForm').reset();
+  document.getElementById('eventDocId').value='';
+  document.getElementById('eventModal').style.display='flex';
+}
+window.editEvent=async function(id){
+  const snap=await getDoc(doc(db,'events',id));
+  if(!snap.exists())return;
+  const ev=snap.data();
+  document.getElementById('eventModalTitle').textContent='編輯賽事';
+  document.getElementById('eventDocId').value=id;
+  document.getElementById('evName').value=ev.name||'';
+  document.getElementById('evDate').value=ev.date||'';
+  document.getElementById('eventModal').style.display='flex';
+}
+window.saveEvent=async function(){
+  const id=document.getElementById('eventDocId').value;
+  const data={name:document.getElementById('evName').value.trim(),date:document.getElementById('evDate').value,updatedAt:serverTimestamp()};
+  if(!data.name){showToast('賽事名稱為必填','error');return;}
+  if(id){await updateDoc(doc(db,'events',id),data);showToast('已更新');}
+  else{data.createdAt=serverTimestamp();data.groupNames=[];await addDoc(collection(db,'events'),data);showToast('已新增');}
+  closeModal('eventModal'); loadEvents();
+}
+
+// ── 組別管理 ──
+let currentGroupEventId='', currentGroupEventName='';
+window.manageGroups=async function(eventId, eventName){
+  currentGroupEventId=eventId; currentGroupEventName=eventName;
+  document.getElementById('groupEventName').textContent=eventName;
+  await loadGroups();
+  document.getElementById('groupModal').style.display='flex';
+}
+async function loadGroups(){
+  const tbody=document.getElementById('groupsTableBody');
+  tbody.innerHTML='<tr><td colspan="3" class="loading-cell">載入中...</td></tr>';
+  const snap=await getDocs(collection(db,'events',currentGroupEventId,'groups'));
+  if(snap.empty){tbody.innerHTML='<tr><td colspan="3" class="loading-cell">尚無組別</td></tr>';return;}
+  tbody.innerHTML=snap.docs.map(d=>{
+    const g=d.data();
+    return '<tr><td><strong>'+g.name+'</strong></td><td style="font-size:.8rem;color:var(--muted)">'+(g.stations||[]).join(' → ')+'</td><td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="editGroup(\''+d.id+'\')">編輯</button> <button class="btn btn-sm btn-danger" onclick="deleteGroup(\''+d.id+'\',\''+g.name+'\')">刪除</button></td></tr>';
+  }).join('');
+}
+window.showAddGroup=function(){
+  document.getElementById('groupFormTitle').textContent='新增組別';
+  document.getElementById('groupDocId').value='';
+  document.getElementById('gName').value='';
+  document.getElementById('gStationList').innerHTML='';
+  addGStation();
+  document.getElementById('groupForm').style.display='block';
+}
+window.editGroup=async function(id){
+  const snap=await getDoc(doc(db,'events',currentGroupEventId,'groups',id));
+  if(!snap.exists())return;
+  const g=snap.data();
+  document.getElementById('groupFormTitle').textContent='編輯組別';
+  document.getElementById('groupDocId').value=id;
+  document.getElementById('gName').value=g.name||'';
+  document.getElementById('gStationList').innerHTML='';
+  (g.stations||[]).forEach(s=>addGStation(s));
+  document.getElementById('groupForm').style.display='block';
+}
+window.addGStation=function(val=''){
+  const div=document.createElement('div');
+  div.className='station-row';
+  div.innerHTML='<input type="text" class="input g-station-input" value="'+val+'" placeholder="站點名稱"><button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">✕</button>';
+  document.getElementById('gStationList').appendChild(div);
+}
+window.saveGroup=async function(){
+  const id=document.getElementById('groupDocId').value;
+  const name=document.getElementById('gName').value.trim();
+  const stations=Array.from(document.querySelectorAll('.g-station-input')).map(i=>i.value.trim()).filter(Boolean);
+  if(!name){showToast('組別名稱為必填','error');return;}
+  if(!stations.length){showToast('請至少新增一個站點','error');return;}
+  const data={name,stations,updatedAt:serverTimestamp()};
+  if(id){await updateDoc(doc(db,'events',currentGroupEventId,'groups',id),data);}
+  else{data.createdAt=serverTimestamp();await addDoc(collection(db,'events',currentGroupEventId,'groups'),data);}
+  // 更新 event 的 groupNames
+  const gSnap=await getDocs(collection(db,'events',currentGroupEventId,'groups'));
+  const gNames=gSnap.docs.map(d=>d.data().name);
+  if(id){ const existing=gNames; await updateDoc(doc(db,'events',currentGroupEventId),{groupNames:existing,updatedAt:serverTimestamp()}); }
+  else { await updateDoc(doc(db,'events',currentGroupEventId),{groupNames:[...gNames,name],updatedAt:serverTimestamp()}); }
+  document.getElementById('groupForm').style.display='none';
+  showToast('已儲存'); loadGroups();
+}
+window.deleteGroup=async function(id,name){
+  if(!confirm('確定刪除組別「'+name+'」？'))return;
+  await deleteDoc(doc(db,'events',currentGroupEventId,'groups',id));
+  const gSnap=await getDocs(collection(db,'events',currentGroupEventId,'groups'));
+  await updateDoc(doc(db,'events',currentGroupEventId),{groupNames:gSnap.docs.map(d=>d.data().name)});
+  showToast('已刪除'); loadGroups();
+}
+window.cancelGroupForm=function(){ document.getElementById('groupForm').style.display='none'; }
+
+// ── 報名管理 ──
+let allEntries=[];
+async function loadEntriesSection(){
+  await loadEntryEventSelect();
+}
+async function loadEntryEventSelect(){
+  const select=document.getElementById('entryEventSelect');
+  if(!select)return;
+  const snap=await getDocs(query(collection(db,'events'),orderBy('createdAt','desc')));
+  select.innerHTML='<option value="">請選擇賽事...</option>';
+  snap.docs.forEach(d=>{ const ev=d.data(); const o=document.createElement('option'); o.value=d.id; o.textContent=ev.name+(ev.date?' ('+ev.date+')':''); select.appendChild(o); });
+  const cfg=await getDoc(doc(db,'config','active'));
+  if(cfg.exists()&&cfg.data().eventId){ select.value=cfg.data().eventId; loadEntries(); }
+}
+window.loadEntries=async function(){
+  const eventId=document.getElementById('entryEventSelect').value;
+  const tbody=document.getElementById('entriesTableBody');
+  if(!eventId){tbody.innerHTML='<tr><td colspan="5" class="loading-cell">請先選擇賽事</td></tr>';return;}
+  tbody.innerHTML='<tr><td colspan="5" class="loading-cell">載入中...</td></tr>';
+  const snap=await getDocs(collection(db,'events',eventId,'runners'));
+  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
+  allEntries=snap.docs.map(d=>({id:d.id,...d.data(),runnerName:(rMap[d.data().uniqueId]||{}).name||''}));
+  renderEntries(allEntries);
+}
+function renderEntries(list){
+  const tbody=document.getElementById('entriesTableBody');
+  if(!list.length){tbody.innerHTML='<tr><td colspan="5" class="loading-cell">尚無報名資料</td></tr>';return;}
+  tbody.innerHTML=list.map(e=>'<tr><td><span class="mono">'+e.uniqueId+'</span></td><td>'+( e.runnerName||'-')+'</td><td><strong>'+(e.bibNumber||'-')+'</strong></td><td><span class="badge">'+(e.group||'-')+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="editEntry(\''+e.id+'\')">編輯</button> <button class="btn btn-sm btn-danger" onclick="deleteEntry(\''+e.id+'\',\''+(e.runnerName||'').replace(/'/g,'')+'\')">刪除</button></td></tr>').join('');
+}
+window.filterEntries=function(){
+  const t=document.getElementById('entrySearch').value.toLowerCase();
+  renderEntries(t?allEntries.filter(e=>(e.uniqueId||'').toLowerCase().includes(t)||(e.runnerName||'').toLowerCase().includes(t)||(e.bibNumber||'').includes(t)):allEntries);
+}
+window.showAddEntry=function(){
+  const eventId=document.getElementById('entryEventSelect').value;
+  if(!eventId){showToast('請先選擇賽事','error');return;}
+  document.getElementById('entryModalTitle').textContent='新增報名';
+  document.getElementById('entryDocId').value='';
+  document.getElementById('entryUniqueId').value='';
+  document.getElementById('entryRunnerSearch').value='';
+  document.getElementById('entryRunnerSelected').style.display='none';
+  document.getElementById('entryRunnerResults').style.display='none';
+  document.getElementById('entryBib').value='';
+  loadEntryGroupOptions();
+  document.getElementById('entryModal').style.display='flex';
+}
+async function loadEntryGroupOptions(selected=''){
+  const eventId=document.getElementById('entryEventSelect').value;
+  const sel=document.getElementById('entryGroup');
+  sel.innerHTML='';
+  if(!eventId)return;
+  const snap=await getDocs(collection(db,'events',eventId,'groups'));
+  snap.docs.forEach(d=>{ const o=document.createElement('option'); o.value=d.data().name; o.textContent=d.data().name; if(d.data().name===selected)o.selected=true; sel.appendChild(o); });
+  if(!snap.size) sel.innerHTML='<option value="未分組">未分組</option>';
+}
+window.editEntry=async function(id){
+  const eventId=document.getElementById('entryEventSelect').value;
+  const snap=await getDoc(doc(db,'events',eventId,'runners',id));
+  if(!snap.exists())return;
+  const e=snap.data();
+  const rSnap=await getDocs(query(collection(db,'runners'),where('uniqueId','==',e.uniqueId)));
+  const name=rSnap.empty?'':rSnap.docs[0].data().name;
+  document.getElementById('entryModalTitle').textContent='編輯報名';
+  document.getElementById('entryDocId').value=id;
+  document.getElementById('entryUniqueId').value=e.uniqueId;
+  document.getElementById('entryRunnerSearch').value=name;
+  document.getElementById('entryRunnerSelected').textContent='✅ '+e.uniqueId+' '+name;
+  document.getElementById('entryRunnerSelected').style.display='block';
+  document.getElementById('entryBib').value=e.bibNumber||'';
+  await loadEntryGroupOptions(e.group||'');
+  document.getElementById('entryModal').style.display='flex';
+}
+window.searchEntryRunner=async function(){
+  const t=document.getElementById('entryRunnerSearch').value.trim();
+  const results=document.getElementById('entryRunnerResults');
+  if(!t){results.style.display='none';return;}
+  const snap=await getDocs(collection(db,'runners'));
+  const matched=snap.docs.map(d=>d.data()).filter(r=>(r.name||'').includes(t)||(r.uniqueId||'').toLowerCase().includes(t.toLowerCase())).slice(0,8);
+  if(!matched.length){results.style.display='none';return;}
+  results.style.display='block';
+  results.innerHTML=matched.map(r=>'<div onclick="selectEntryRunner(\''+r.uniqueId+'\',\''+r.name.replace(/'/g,'')+'\''+')" style="padding:10px 14px;cursor:pointer;font-size:.85rem;border-bottom:1px solid var(--border)" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'"><span class="mono" style="font-size:.78rem">'+r.uniqueId+'</span> '+r.name+'</div>').join('');
+}
+window.selectEntryRunner=function(uid,name){
+  document.getElementById('entryUniqueId').value=uid;
+  document.getElementById('entryRunnerSearch').value=name;
+  document.getElementById('entryRunnerSelected').textContent='✅ '+uid+' '+name;
+  document.getElementById('entryRunnerSelected').style.display='block';
+  document.getElementById('entryRunnerResults').style.display='none';
+}
+window.saveEntry=async function(){
+  const eventId=document.getElementById('entryEventSelect').value;
+  const id=document.getElementById('entryDocId').value;
+  const uniqueId=document.getElementById('entryUniqueId').value;
+  const bibNumber=document.getElementById('entryBib').value.trim();
+  const group=document.getElementById('entryGroup').value;
+  if(!uniqueId){showToast('請選擇選手','error');return;}
+  if(!bibNumber){showToast('號碼牌為必填','error');return;}
+  const data={uniqueId,bibNumber,group,updatedAt:serverTimestamp()};
+  if(id){await updateDoc(doc(db,'events',eventId,'runners',id),data);showToast('已更新');}
+  else{data.createdAt=serverTimestamp();await addDoc(collection(db,'events',eventId,'runners'),data);showToast('已新增');}
+  closeModal('entryModal'); loadEntries();
+}
+window.deleteEntry=async function(id,name){
+  const eventId=document.getElementById('entryEventSelect').value;
+  if(!confirm('確定刪除「'+name+'」的報名資料？'))return;
+  await deleteDoc(doc(db,'events',eventId,'runners',id)); showToast('已刪除'); loadEntries();
+}
+window.handleEntryCSV=async function(e){
+  const eventId=document.getElementById('entryEventSelect').value;
+  if(!eventId){showToast('請先選擇賽事','error');e.target.value='';return;}
+  const file=e.target.files[0]; if(!file)return;
+  const text=await file.text();
+  const lines=text.trim().split('\n');
+  const headers=lines[0].split(',').map(h=>h.trim().replace(/"/g,'').toLowerCase());
+  const idxId=headers.findIndex(h=>h.includes('uniqueid')||h==='id'||h.includes('選手'));
+  const idxBib=headers.findIndex(h=>h.includes('bib')||h.includes('號碼'));
+  const idxGroup=headers.findIndex(h=>h.includes('group')||h.includes('組別'));
+  if(idxId<0||idxBib<0){showToast('CSV需包含uniqueId和號碼牌欄位','error');e.target.value='';return;}
+  const batch=writeBatch(db); let count=0;
+  for(let i=1;i<lines.length;i++){
+    const vals=lines[i].split(',').map(v=>v.trim().replace(/"/g,''));
+    if(!vals[idxId]||!vals[idxBib])continue;
+    const ref=doc(collection(db,'events',eventId,'runners'));
+    batch.set(ref,{uniqueId:vals[idxId],bibNumber:vals[idxBib],group:idxGroup>=0?(vals[idxGroup]||'未分組'):'未分組',createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+    count++;
+  }
+  await batch.commit(); showToast('匯入完成：'+count+'筆'); loadEntries(); e.target.value='';
+}
+
+// ── 打卡記錄 ──
+let recordsUnsub=null, currentRecordEventId=null;
+async function loadRecordsSection(){
+  await loadRecordEventSelect();
+}
+async function loadRecordEventSelect(){
+  const cfg=await getDoc(doc(db,'config','active'));
+  const activeId=cfg.exists()?cfg.data().eventId:null;
+  const select=document.getElementById('recordEventSelect');
+  const snap=await getDocs(query(collection(db,'events'),orderBy('createdAt','desc')));
+  select.innerHTML='<option value="">請選擇賽事...</option>';
+  snap.docs.forEach(d=>{ const ev=d.data(); const o=document.createElement('option'); o.value=d.id; o.textContent=ev.name+(ev.date?' ('+ev.date+')':''); if(activeId&&d.id!==activeId)o.disabled=!!activeId; select.appendChild(o); });
+  if(activeId){ select.value=activeId; select.disabled=true; currentRecordEventId=activeId; loadRecords(); }
+  else{ select.disabled=false; }
+}
+window.onRecordEventChange=async function(){
+  currentRecordEventId=document.getElementById('recordEventSelect').value;
+  loadRecords();
+}
+async function loadRecords(){
+  if(!currentRecordEventId)return;
+  const evDoc=await getDoc(doc(db,'events',currentRecordEventId));
+  if(evDoc.exists()) document.getElementById('recordsEventName').textContent=evDoc.data().name;
+  if(recordsUnsub) recordsUnsub();
+  recordsUnsub=onSnapshot(query(collection(db,'events',currentRecordEventId,'records'),orderBy('scanTime','desc')),async snap=>{
+    const tbody=document.getElementById('recordsTableBody');
+    if(snap.empty){tbody.innerHTML='<tr><td colspan="7" class="loading-cell">尚無打卡記錄</td></tr>';return;}
+    const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
+    tbody.innerHTML=snap.docs.map(d=>{
+      const r=d.data(); const runner=rMap[r.uniqueId]||{};
+      return '<tr><td><span class="mono">'+r.uniqueId+'</span></td><td><strong>'+(r.bibNumber||'-')+'</strong></td><td>'+(runner.name||'-')+'</td><td>'+(r.group||'-')+'</td><td>'+r.station+'</td><td>'+fmt(r.scanTime)+'</td><td>'+(r.timeDiff||'-')+'</td></tr>';
+    }).join('');
   });
+}
+window.exportCSV=async function(){
+  if(!currentRecordEventId){showToast('請先選擇賽事','error');return;}
+  const snap=await getDocs(query(collection(db,'events',currentRecordEventId,'records'),orderBy('scanTime','asc')));
+  if(snap.empty){showToast('無資料可匯出','error');return;}
+  const evDoc=await getDoc(doc(db,'events',currentRecordEventId));
+  const evName=evDoc.data()?.name||'賽事';
+  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
+  let csv='選手ID,號碼牌,姓名,組別,站點,掃描時間,段落時間,累計時間\n';
+  snap.docs.forEach(d=>{
+    const r=d.data(); const runner=rMap[r.uniqueId]||{};
+    const time=r.scanTime?.toDate?r.scanTime.toDate().toLocaleString('zh-TW'):'-';
+    csv+='"'+r.uniqueId+'","'+(r.bibNumber||'')+'","'+(runner.name||'')+'","'+(r.group||'')+'","'+r.station+'","'+time+'","'+(r.timeDiff||'')+'","'+(r.totalTime||'')+'"\n';
+  });
+  const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=evName+'_打卡記錄_'+new Date().toLocaleDateString('zh-TW').replace(/\//g,'-')+'.csv'; a.click();
+  showToast('CSV已下載');
+}
+window.printRecords=async function(){
+  if(!currentRecordEventId){showToast('請先選擇賽事','error');return;}
+  const evDoc=await getDoc(doc(db,'events',currentRecordEventId));
+  const evName=evDoc.data()?.name||'賽事';
+  const snap=await getDocs(query(collection(db,'events',currentRecordEventId,'records'),orderBy('scanTime','asc')));
+  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
+  const rows=snap.docs.map(d=>{ const r=d.data(); const runner=rMap[r.uniqueId]||{}; const time=r.scanTime?.toDate?r.scanTime.toDate().toLocaleTimeString('zh-TW',{hour12:false}):'-'; return '<tr><td>'+r.uniqueId+'</td><td>'+(r.bibNumber||'')+'</td><td>'+(runner.name||'')+'</td><td>'+(r.group||'')+'</td><td>'+r.station+'</td><td>'+time+'</td><td>'+(r.timeDiff||'')+'</td><td>'+(r.totalTime||'')+'</td></tr>'; }).join('');
+  const win=window.open('','_blank');
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+evName+'</title><style>body{font-family:sans-serif;padding:20px}h1{font-size:16px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f0f0f0;padding:6px;border:1px solid #ddd;text-align:left}td{padding:5px 6px;border:1px solid #ddd}@media print{button{display:none}}</style></head><body><h1>'+evName+' 打卡記錄</h1><p style="font-size:11px;color:#666">列印時間：'+new Date().toLocaleString('zh-TW')+' ｜ 共'+snap.size+'筆</p><button onclick="window.print()" style="margin-bottom:12px;padding:6px 14px;cursor:pointer">🖨️ 列印</button><table><thead><tr><th>選手ID</th><th>號碼牌</th><th>姓名</th><th>組別</th><th>站點</th><th>掃描時間</th><th>段落時間</th><th>累計時間</th></tr></thead><tbody>'+rows+'</tbody></table></body></html>');
+  win.document.close();
+}
 
-  // ── 導覽 ──
-  window.showSection = function(id) {
-    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-    document.querySelectorAll('.nav-item, .bottom-nav-item').forEach(n => n.classList.remove('active'));
-    document.getElementById('sec-' + id).classList.add('active');
-    document.querySelector(`[data-nav="${id}"]`).classList.add('active');
-    if (id === 'dashboard') loadDashboard();
-    if (id === 'runners') loadRunners();
-    if (id === 'events') loadEvents();
-    if (id === 'records') loadRecordsSection();
-    if (id === 'stats') loadStats();
-  }
+// ── 查詢頁面 ──
+async function initSearchSection(){
+  await loadSearchEventSelect();
+}
+async function loadSearchEventSelect(){
+  const cfg=await getDoc(doc(db,'config','active'));
+  const activeId=cfg.exists()?cfg.data().eventId:null;
+  const select=document.getElementById('searchEventSelect');
+  const snap=await getDocs(query(collection(db,'events'),orderBy('createdAt','desc')));
+  select.innerHTML='<option value="">請選擇賽事...</option>';
+  snap.docs.forEach(d=>{ const ev=d.data(); const o=document.createElement('option'); o.value=d.id; o.textContent=ev.name+(ev.date?' ('+ev.date+')':''); if(activeId&&d.id!==activeId)o.disabled=!!activeId; select.appendChild(o); });
+  if(activeId){ select.value=activeId; select.disabled=true; onSearchEventChange(); }
+  else select.disabled=false;
+}
+window.onSearchEventChange=async function(){
+  const eventId=document.getElementById('searchEventSelect').value;
+  if(!eventId)return;
+  // 載入組別選項
+  const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
+  const stationSel=document.getElementById('searchStationSelect');
+  stationSel.innerHTML='<option value="">所有站點</option>';
+  gSnap.docs.forEach(d=>{ (d.data().stations||[]).forEach(s=>{ const o=document.createElement('option'); o.value=s; o.textContent=s; stationSel.appendChild(o); }); });
+}
+window.doSearch=async function(){
+  const eventId=document.getElementById('searchEventSelect').value;
+  const mode=document.querySelector('input[name="searchMode"]:checked').value;
+  const keyword=document.getElementById('searchKeyword').value.trim();
+  const station=document.getElementById('searchStationSelect').value;
+  if(!eventId){showToast('請先選擇賽事','error');return;}
+  const result=document.getElementById('searchResult');
+  result.innerHTML='<div class="loading-cell">查詢中...</div>';
 
-  // ── 儀表板 ──
-  async function loadDashboard() {
-    // 取得 active 賽事
-    const cfgDoc = await getDoc(doc(db, 'config', 'active'));
-    const activeId = cfgDoc.exists() ? cfgDoc.data().eventId : null;
+  // 取得選手及記錄資料
+  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
+  const entryMap={}; (await getDocs(collection(db,'events',eventId,'runners'))).docs.forEach(d=>{entryMap[d.data().uniqueId]=d.data();});
+  const recSnap=await getDocs(query(collection(db,'events',eventId,'records'),orderBy('scanTime','asc')));
+  const allRecs=recSnap.docs.map(d=>({id:d.id,...d.data()}));
 
-    let activeHtml = '<span style="color:var(--muted)">目前無進行中賽事</span>';
-    let statsHtml = '';
+  // 取得組別站點順序
+  const groupStations={};
+  (await getDocs(collection(db,'events',eventId,'groups'))).docs.forEach(d=>{ groupStations[d.data().name]=d.data().stations||[]; });
 
-    if (activeId) {
-      const evDoc = await getDoc(doc(db, 'events', activeId));
-      if (evDoc.exists()) {
-        const ev = evDoc.data();
-        activeHtml = `<strong>${ev.name}</strong> <span class="badge badge-green">進行中</span>`;
-
-        const recs = await getDocs(collection(db, 'events', activeId, 'records'));
-        const uniqueRunners = new Set(recs.docs.map(d => d.data().uniqueId)).size;
-        const totalScans = recs.size;
-
-        statsHtml = `
-          <div class="stat-card"><div class="stat-num">${uniqueRunners}</div><div class="stat-label">已打卡選手</div></div>
-          <div class="stat-card"><div class="stat-num">${totalScans}</div><div class="stat-label">總掃描次數</div></div>
-          <div class="stat-card"><div class="stat-num">${ev.stations?.length || 0}</div><div class="stat-label">站點數</div></div>
-        `;
-      }
-    }
-
-    document.getElementById('dashActiveEvent').innerHTML = activeHtml;
-    document.getElementById('dashStats').innerHTML = statsHtml;
-
-    // 選手總數
-    const runners = await getDocs(collection(db, 'runners'));
-    document.getElementById('dashTotalRunners').textContent = runners.size;
-
-    // 賽事總數
-    const events = await getDocs(collection(db, 'events'));
-    document.getElementById('dashTotalEvents').textContent = events.size;
-  }
-
-  // ── 選手管理 ──
-  async function loadRunners(searchTerm = '') {
-    const tbody = document.getElementById('runnersTableBody');
-    tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">載入中...</td></tr>';
-    const snap = await getDocs(collection(db, 'runners'));
-    let runners = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (searchTerm) {
-      const t = searchTerm.toLowerCase();
-      runners = runners.filter(r =>
-        r.name?.toLowerCase().includes(t) ||
-        r.uniqueId?.toLowerCase().includes(t) ||
-        r.phone?.includes(t) ||
-        r.email?.toLowerCase().includes(t)
-      );
-    }
-    if (runners.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">無資料</td></tr>';
-      return;
-    }
-    tbody.innerHTML = runners.map(r => `
-      <tr>
-        <td><span class="mono">${r.uniqueId}</span></td>
-        <td>${r.name}</td>
-        <td>${r.gender || '-'}</td>
-        <td>${r.birthday || '-'}</td>
-        <td>${r.phone || '-'}</td>
-        <td>${r.email || '-'}</td>
-        <td>
-          <button class="btn btn-sm btn-ghost" onclick="editRunner('${r.id}')">編輯</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteRunner('${r.id}', '${r.name}')">刪除</button>
-        </td>
-      </tr>
-    `).join('');
-  }
-
-  window.searchRunners = function() {
-    const t = document.getElementById('runnerSearch').value;
-    loadRunners(t);
-  }
-
-  // 產生下一個 uniqueId
-  async function generateUniqueId() {
-    const snap = await getDocs(collection(db, 'runners'));
-    let max = 0;
-    snap.docs.forEach(d => {
-      const uid = d.data().uniqueId || '';
-      const num = parseInt(uid.replace('R', '')) || 0;
-      if (num > max) max = num;
+  if(mode==='runner'){
+    // 依選手查
+    if(!keyword){showToast('請輸入號碼牌或姓名','error');result.innerHTML='';return;}
+    const kw=keyword.toLowerCase();
+    // 找符合的 uniqueId
+    const matchIds=new Set();
+    Object.entries(entryMap).forEach(([uid,e])=>{
+      const runner=rMap[uid]||{};
+      if((e.bibNumber||'').toLowerCase().includes(kw)||(runner.name||'').toLowerCase().includes(kw)||(uid||'').toLowerCase().includes(kw)) matchIds.add(uid);
     });
-    return 'R' + String(max + 1).padStart(6, '0');
-  }
-
-  window.showAddRunner = function() {
-    document.getElementById('runnerModalTitle').textContent = '新增選手';
-    document.getElementById('runnerForm').reset();
-    document.getElementById('runnerDocId').value = '';
-    document.getElementById('runnerModal').style.display = 'flex';
-  }
-
-  window.editRunner = async function(docId) {
-    const snap = await getDoc(doc(db, 'runners', docId));
-    if (!snap.exists()) return;
-    const r = snap.data();
-    document.getElementById('runnerModalTitle').textContent = '編輯選手';
-    document.getElementById('runnerDocId').value = docId;
-    document.getElementById('rName').value = r.name || '';
-    document.getElementById('rGender').value = r.gender || '';
-    document.getElementById('rBirthday').value = r.birthday || '';
-    document.getElementById('rPhone').value = r.phone || '';
-    document.getElementById('rEmail').value = r.email || '';
-    document.getElementById('rIdNumber').value = r.idNumber || '';
-    document.getElementById('runnerModal').style.display = 'flex';
-  }
-
-  window.saveRunner = async function() {
-    const docId = document.getElementById('runnerDocId').value;
-    const data = {
-      name: document.getElementById('rName').value.trim(),
-      gender: document.getElementById('rGender').value,
-      birthday: document.getElementById('rBirthday').value,
-      phone: document.getElementById('rPhone').value.trim(),
-      email: document.getElementById('rEmail').value.trim(),
-      idNumber: document.getElementById('rIdNumber').value.trim(),
-      updatedAt: serverTimestamp()
-    };
-    if (!data.name) { showToast('姓名為必填', 'error'); return; }
-
-    if (docId) {
-      await updateDoc(doc(db, 'runners', docId), data);
-      showToast('選手已更新');
-    } else {
-      data.uniqueId = await generateUniqueId();
-      data.createdAt = serverTimestamp();
-      await addDoc(collection(db, 'runners'), data);
-      showToast('選手已新增');
+    if(!matchIds.size){result.innerHTML='<div class="loading-cell">找不到選手</div>';return;}
+    let html='';
+    for(const uid of matchIds){
+      const runner=rMap[uid]||{}; const entry=entryMap[uid]||{};
+      const recs=allRecs.filter(r=>r.uniqueId===uid).sort((a,b)=>{ const ta=a.scanTime?.toDate?a.scanTime.toDate():new Date(0); const tb=b.scanTime?.toDate?b.scanTime.toDate():new Date(0); return ta-tb; });
+      const stations=groupStations[entry.group]||[];
+      // 計算同組排名（依終點站累計時間）
+      const lastStation=stations[stations.length-1];
+      let rank='-';
+      if(lastStation){
+        const lastRec=recs.find(r=>r.station===lastStation);
+        if(lastRec){
+          const firstRec=recs[0];
+          const myTotal=lastRec.scanTime?.toDate?lastRec.scanTime.toDate()-firstRec.scanTime.toDate():0;
+          const sameGroupFinishers=[];
+          Object.entries(entryMap).filter(([id2,e2])=>e2.group===entry.group).forEach(([id2])=>{
+            const r2=allRecs.filter(r=>r.uniqueId===id2);
+            const last2=r2.find(r=>r.station===lastStation);
+            const first2=r2.sort((a,b)=>{ const ta=a.scanTime?.toDate?a.scanTime.toDate():new Date(0); const tb=b.scanTime?.toDate?b.scanTime.toDate():new Date(0); return ta-tb; })[0];
+            if(last2&&first2){ sameGroupFinishers.push({uid:id2,total:last2.scanTime?.toDate?last2.scanTime.toDate()-first2.scanTime.toDate():0}); }
+          });
+          sameGroupFinishers.sort((a,b)=>a.total-b.total);
+          rank=sameGroupFinishers.findIndex(f=>f.uid===uid)+1||'-';
+        }
+      }
+      html+='<div class="runner-card"><div class="runner-card-header"><span class="mono">'+uid+'</span> <strong>'+(runner.name||'-')+'</strong> <span class="badge">'+(entry.group||'-')+'</span> 號碼牌：<strong>'+(entry.bibNumber||'-')+'</strong>'+(rank!=='-'?' <span class="badge badge-green">終點排名第'+rank+'名</span>':'')+'</div>';
+      html+='<table style="width:100%;margin-top:8px"><thead><tr><th>站點</th><th>到達時間</th><th>段落時間</th><th>累計時間</th><th>站點排名</th></tr></thead><tbody>';
+      let firstTime=null;
+      for(const s of (stations.length?stations:recs.map(r=>r.station))){
+        const rec=recs.find(r=>r.station===s);
+        if(!rec){html+='<tr><td>'+s+'</td><td colspan="4" style="color:var(--muted)">未掃描</td></tr>';continue;}
+        const t=rec.scanTime?.toDate?rec.scanTime.toDate():null;
+        if(!firstTime) firstTime=t;
+        const seg=recs.indexOf(rec)>0?diffHMS(rec.scanTime,recs[recs.indexOf(rec)-1].scanTime):'-';
+        const total=firstTime&&t?diffHMS(rec.scanTime,{toDate:()=>firstTime}):'-';
+        // 站點排名
+        const stationRecs=allRecs.filter(r=>r.station===s&&entryMap[r.uniqueId]?.group===entry.group).sort((a,b)=>{ const ta=a.scanTime?.toDate?a.scanTime.toDate():new Date(0); const tb=b.scanTime?.toDate?b.scanTime.toDate():new Date(0); return ta-tb; });
+        const sRank=stationRecs.findIndex(r=>r.uniqueId===uid)+1;
+        html+='<tr><td>'+s+'</td><td>'+fmt(rec.scanTime)+'</td><td>'+seg+'</td><td>'+total+'</td><td>'+(sRank?'第'+sRank+'名':'-')+'</td></tr>';
+      }
+      html+='</tbody></table></div>';
     }
-    closeModal('runnerModal');
-    loadRunners();
-  }
-
-  window.deleteRunner = async function(docId, name) {
-    if (!confirm(`確定刪除選手「${name}」？`)) return;
-    await deleteDoc(doc(db, 'runners', docId));
-    showToast('已刪除');
-    loadRunners();
-  }
-
-  // CSV 匯入
-  window.importCSV = function() {
-    document.getElementById('csvFile').click();
-  }
-
-  window.handleCSV = async function(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    const text = await file.text();
-    const lines = text.trim().split('\n');
-    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-
-    // 欄位對應（支援中英文）
-    const fieldMap = {
-      '姓名': 'name', 'name': 'name',
-      '性別': 'gender', 'gender': 'gender',
-      '生日': 'birthday', 'birthday': 'birthday',
-      '手機': 'phone', 'phone': 'phone', '電話': 'phone',
-      'email': 'email', 'Email': 'email', '電子郵件': 'email',
-      '身分證': 'idNumber', '身分證號': 'idNumber', 'idNumber': 'idNumber'
-    };
-
-    const existingSnap = await getDocs(collection(db, 'runners'));
-    const existing = existingSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-    let added = 0, updated = 0, skipped = 0;
-    const batch = writeBatch(db);
-
-    for (let i = 1; i < lines.length; i++) {
-      const vals = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
-      if (vals.length < 2) continue;
-      const row = {};
-      headers.forEach((h, idx) => {
-        const field = fieldMap[h];
-        if (field) row[field] = vals[idx] || '';
+    result.innerHTML=html;
+  } else {
+    // 依站點查
+    if(!station){showToast('請選擇站點','error');result.innerHTML='';return;}
+    const stationRecs=allRecs.filter(r=>r.station===station).sort((a,b)=>{ const ta=a.scanTime?.toDate?a.scanTime.toDate():new Date(0); const tb=b.scanTime?.toDate?b.scanTime.toDate():new Date(0); return ta-tb; });
+    if(!stationRecs.length){result.innerHTML='<div class="loading-cell">此站點尚無打卡記錄</div>';return;}
+    // 依組別分組顯示
+    const byGroup={};
+    stationRecs.forEach(r=>{ const g=(entryMap[r.uniqueId]||{}).group||'未知'; if(!byGroup[g])byGroup[g]=[]; byGroup[g].push(r); });
+    let html='';
+    for(const [group,recs] of Object.entries(byGroup)){
+      const stations2=groupStations[group]||[];
+      html+='<div class="runner-card"><div class="runner-card-header"><strong>'+group+'</strong> <span class="badge">'+recs.length+' 人</span></div>';
+      html+='<table style="width:100%;margin-top:8px"><thead><tr><th>排名</th><th>號碼牌</th><th>姓名</th><th>到達時間</th><th>段落時間</th><th>累計時間</th></tr></thead><tbody>';
+      recs.forEach((r,idx)=>{
+        const runner=rMap[r.uniqueId]||{}; const entry=entryMap[r.uniqueId]||{};
+        const myRecs=allRecs.filter(x=>x.uniqueId===r.uniqueId).sort((a,b)=>{ const ta=a.scanTime?.toDate?a.scanTime.toDate():new Date(0); const tb=b.scanTime?.toDate?b.scanTime.toDate():new Date(0); return ta-tb; });
+        const firstRec=myRecs[0]; const prevRec=myRecs[myRecs.indexOf(myRecs.find(x=>x.station===station))-1];
+        const seg=prevRec?diffHMS(r.scanTime,prevRec.scanTime):'-';
+        const total=firstRec&&r.scanTime!==firstRec.scanTime?diffHMS(r.scanTime,firstRec.scanTime):'起跑站';
+        html+='<tr><td><strong>'+(idx+1)+'</strong></td><td>'+(entry.bibNumber||'-')+'</td><td>'+(runner.name||'-')+'</td><td>'+fmt(r.scanTime)+'</td><td>'+seg+'</td><td>'+total+'</td></tr>';
       });
-      if (!row.name) continue;
-
-      // 比對是否已存在
-      const match = existing.find(e2 => isSamePerson(e2, row));
-      if (match) {
-        // 更新現有資料
-        const ref = doc(db, 'runners', match.id);
-        batch.update(ref, { ...row, updatedAt: serverTimestamp() });
-        updated++;
-      } else {
-        // 新增
-        let max = 0;
-        existing.forEach(e2 => {
-          const num = parseInt((e2.uniqueId || '').replace('R', '')) || 0;
-          if (num > max) max = num;
-        });
-        max += added + 1;
-        const uniqueId = 'R' + String(max).padStart(6, '0');
-        const ref = doc(collection(db, 'runners'));
-        batch.set(ref, { ...row, uniqueId, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-        existing.push({ id: ref.id, ...row, uniqueId });
-        added++;
-      }
+      html+='</tbody></table></div>';
     }
-
-    await batch.commit();
-    showToast(`匯入完成：新增 ${added} 筆，更新 ${updated} 筆`);
-    loadRunners();
-    e.target.value = '';
+    result.innerHTML=html;
   }
+}
 
-  // ── 賽事管理 ──
-  async function loadEvents() {
-    const tbody = document.getElementById('eventsTableBody');
-    tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">載入中...</td></tr>';
-    const cfgDoc = await getDoc(doc(db, 'config', 'active'));
-    const activeId = cfgDoc.exists() ? cfgDoc.data().eventId : null;
-    const snap = await getDocs(query(collection(db, 'events'), orderBy('createdAt', 'desc')));
-    if (snap.empty) {
-      tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">無賽事資料</td></tr>';
-      return;
-    }
-    tbody.innerHTML = snap.docs.map(d => {
-      const ev = d.data();
-      const isActive = d.id === activeId;
-      return `
-        <tr ${isActive ? 'class="row-active"' : ''}>
-          <td><strong>${ev.name}</strong></td>
-          <td>${ev.date || '-'}</td>
-          <td>${(ev.stations || []).join('、')}</td>
-          <td>${isActive ? '<span class="badge badge-green">進行中</span>' : '<span class="badge">已結束</span>'}</td>
-          <td>
-            ${!isActive ? `<button class="btn btn-sm btn-green" onclick="activateEvent('${d.id}')">開放掃描</button>` : `<button class="btn btn-sm btn-danger" onclick="deactivateEvent()">關閉掃描</button>`}
-            <button class="btn btn-sm btn-ghost" onclick="editEvent('${d.id}')">編輯</button>
-            <button class="btn btn-sm btn-ghost" onclick="viewEventRecords('${d.id}', '${ev.name}')">查看記錄</button>
-          </td>
-        </tr>
-      `;
-    }).join('');
-  }
-
-  window.activateEvent = async function(eventId) {
-    await setDoc(doc(db, 'config', 'active'), { eventId });
-    showToast('已開放掃描');
-    loadEvents();
-  }
-
-  window.deactivateEvent = async function() {
-    await setDoc(doc(db, 'config', 'active'), { eventId: null });
-    showToast('已關閉掃描');
-    loadEvents();
-  }
-
-  window.showAddEvent = function() {
-    document.getElementById('eventModalTitle').textContent = '新增賽事';
-    document.getElementById('eventForm').reset();
-    document.getElementById('eventDocId').value = '';
-    document.getElementById('stationList').innerHTML = '';
-    addStation();
-    document.getElementById('eventModal').style.display = 'flex';
-  }
-
-  window.editEvent = async function(docId) {
-    const snap = await getDoc(doc(db, 'events', docId));
-    if (!snap.exists()) return;
-    const ev = snap.data();
-    document.getElementById('eventModalTitle').textContent = '編輯賽事';
-    document.getElementById('eventDocId').value = docId;
-    document.getElementById('evName').value = ev.name || '';
-    document.getElementById('evDate').value = ev.date || '';
-    document.getElementById('stationList').innerHTML = '';
-    (ev.stations || []).forEach(s => addStation(s));
-    document.getElementById('eventModal').style.display = 'flex';
-  }
-
-  window.addStation = function(value = '') {
-    const li = document.createElement('div');
-    li.className = 'station-row';
-    li.innerHTML = `
-      <input type="text" class="input station-input" value="${value}" placeholder="站點名稱">
-      <button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">✕</button>
-    `;
-    document.getElementById('stationList').appendChild(li);
-  }
-
-  window.saveEvent = async function() {
-    const docId = document.getElementById('eventDocId').value;
-    const stations = Array.from(document.querySelectorAll('.station-input'))
-      .map(i => i.value.trim()).filter(Boolean);
-    const data = {
-      name: document.getElementById('evName').value.trim(),
-      date: document.getElementById('evDate').value,
-      stations,
-      updatedAt: serverTimestamp()
-    };
-    if (!data.name) { showToast('賽事名稱為必填', 'error'); return; }
-    if (docId) {
-      await updateDoc(doc(db, 'events', docId), data);
-      showToast('賽事已更新');
-    } else {
-      data.isActive = false;
-      data.createdAt = serverTimestamp();
-      await addDoc(collection(db, 'events'), data);
-      showToast('賽事已新增');
-    }
-    closeModal('eventModal');
-    loadEvents();
-  }
-
-  window.viewEventRecords = async function(eventId, eventName) {
-    currentEventId = eventId;
-    document.getElementById('recordsEventName').textContent = eventName;
-    showSection('records');
-  }
-
-  // ── 打卡記錄 ──
-  async function loadRecordsSection() {
-    if (!currentEventId) {
-      // 預設載入 active 賽事
-      const cfgDoc = await getDoc(doc(db, 'config', 'active'));
-      currentEventId = cfgDoc.exists() ? cfgDoc.data().eventId : null;
-    }
-    if (!currentEventId) {
-      document.getElementById('recordsTableBody').innerHTML = '<tr><td colspan="7" class="loading-cell">請先選擇賽事</td></tr>';
-      return;
-    }
-    const evDoc = await getDoc(doc(db, 'events', currentEventId));
-    if (evDoc.exists()) document.getElementById('recordsEventName').textContent = evDoc.data().name;
-
-    if (recordsUnsubscribe) recordsUnsubscribe();
-    recordsUnsubscribe = onSnapshot(
-      query(collection(db, 'events', currentEventId, 'records'), orderBy('scanTime', 'desc')),
-      async snap => {
-        const tbody = document.getElementById('recordsTableBody');
-        if (snap.empty) {
-          tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">尚無打卡記錄</td></tr>';
-          return;
-        }
-        // 取得選手資料
-        const runnerIds = [...new Set(snap.docs.map(d => d.data().uniqueId))];
-        const runnerMap = {};
-        for (const uid of runnerIds) {
-          const rSnap = await getDocs(query(collection(db, 'runners'), where('uniqueId', '==', uid)));
-          if (!rSnap.empty) runnerMap[uid] = rSnap.docs[0].data();
-        }
-        tbody.innerHTML = snap.docs.map(d => {
-          const r = d.data();
-          const runner = runnerMap[r.uniqueId] || {};
-          return `
-            <tr>
-              <td><span class="mono">${r.uniqueId}</span></td>
-              <td>${runner.name || r.bibNumber || '-'}</td>
-              <td>${r.station}</td>
-              <td>${r.bibNumber || '-'}</td>
-              <td>${formatTime(r.scanTime)}</td>
-              <td>${r.timeDiff || '-'}</td>
-              <td><span class="device-tag">${r.deviceName || '-'}</span></td>
-            </tr>
-          `;
-        }).join('');
-      }
-    );
-  }
-
-  window.exportCSV = async function() {
-    if (!currentEventId) { showToast('請先選擇賽事', 'error'); return; }
-    const snap = await getDocs(query(collection(db, 'events', currentEventId, 'records'), orderBy('scanTime', 'asc')));
-    if (snap.empty) { showToast('無資料可匯出', 'error'); return; }
-
-    const evDoc = await getDoc(doc(db, 'events', currentEventId));
-    const evName = evDoc.data()?.name || '賽事';
-
-    // 取得選手資料
-    const runnerMap = {};
-    const rSnap = await getDocs(collection(db, 'runners'));
-    rSnap.docs.forEach(d => { runnerMap[d.data().uniqueId] = d.data(); });
-
-    let csv = '選手ID,姓名,號碼牌,站點,掃描時間,時間差,裝置\n';
-    snap.docs.forEach(d => {
-      const r = d.data();
-      const runner = runnerMap[r.uniqueId] || {};
-      const time = r.scanTime?.toDate ? r.scanTime.toDate().toLocaleString('zh-TW') : '-';
-      csv += `"${r.uniqueId}","${runner.name || ''}","${r.bibNumber || ''}","${r.station}","${time}","${r.timeDiff || ''}","${r.deviceName || ''}"\n`;
+// ── 統計 ──
+async function loadStatsSection(){
+  const cfg=await getDoc(doc(db,'config','active'));
+  const activeId=cfg.exists()?cfg.data().eventId:null;
+  const select=document.getElementById('statsEventSelect');
+  const snap=await getDocs(query(collection(db,'events'),orderBy('createdAt','desc')));
+  select.innerHTML='<option value="">請選擇賽事...</option>';
+  snap.docs.forEach(d=>{ const ev=d.data(); const o=document.createElement('option'); o.value=d.id; o.textContent=ev.name+(ev.date?' ('+ev.date+')':''); if(activeId&&d.id!==activeId)o.disabled=!!activeId; select.appendChild(o); });
+  if(activeId){ select.value=activeId; select.disabled=true; loadStats(); }
+  else select.disabled=false;
+}
+window.loadStats=async function(){
+  const eventId=document.getElementById('statsEventSelect').value;
+  const content=document.getElementById('statsContent');
+  if(!eventId){content.innerHTML='<p style="color:var(--muted);text-align:center;padding:40px">請選擇賽事</p>';return;}
+  content.innerHTML='<div class="loading-cell">載入中...</div>';
+  const evDoc=await getDoc(doc(db,'events',eventId));
+  const recSnap=await getDocs(collection(db,'events',eventId,'records'));
+  const entrySnap=await getDocs(collection(db,'events',eventId,'runners'));
+  const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
+  const records=recSnap.docs.map(d=>d.data());
+  const entries=entrySnap.docs.map(d=>d.data());
+  const groups=gSnap.docs.map(d=>d.data());
+  const uniqueRunners=new Set(records.map(r=>r.uniqueId)).size;
+  let html='<div class="stats-grid" style="margin-bottom:24px">'
+    +'<div class="stat-card large"><div class="stat-num">'+entries.length+'</div><div class="stat-label">報名人數</div></div>'
+    +'<div class="stat-card large"><div class="stat-num">'+uniqueRunners+'</div><div class="stat-label">已打卡人數</div></div>'
+    +'<div class="stat-card large"><div class="stat-num">'+records.length+'</div><div class="stat-label">總打卡次數</div></div>'
+    +'</div>';
+  for(const g of groups){
+    const gEntries=entries.filter(e=>e.group===g.name);
+    const lastStation=g.stations[g.stations.length-1];
+    const finishers=new Set(records.filter(r=>r.station===lastStation&&gEntries.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size;
+    html+='<div class="runner-card" style="margin-bottom:16px"><div class="runner-card-header"><strong>'+g.name+'</strong> <span class="badge">報名'+gEntries.length+'人</span> <span class="badge badge-green">完賽'+finishers+'人</span></div>';
+    html+='<div class="station-stats" style="margin-top:12px">';
+    g.stations.forEach((s,i)=>{
+      const cnt=new Set(records.filter(r=>r.station===s&&gEntries.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size;
+      const pct=gEntries.length>0?Math.round(cnt/gEntries.length*100):0;
+      html+='<div class="station-stat-row"><div class="station-stat-label"><span class="station-num">'+(i+1)+'</span><span>'+s+'</span></div><div class="station-stat-bar"><div class="station-stat-fill" style="width:'+pct+'%"></div></div><div class="station-stat-count">'+cnt+'人</div></div>';
     });
-
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${evName}_打卡記錄_${new Date().toLocaleDateString('zh-TW').replace(/\//g, '-')}.csv`;
-    a.click();
-    showToast('CSV 已下載');
+    html+='</div></div>';
   }
+  content.innerHTML=html;
+}
 
-  // ── 統計 ──
-  async function loadStats() {
-    if (!currentEventId) {
-      const cfgDoc = await getDoc(doc(db, 'config', 'active'));
-      currentEventId = cfgDoc.exists() ? cfgDoc.data().eventId : null;
-    }
-    if (!currentEventId) {
-      document.getElementById('statsContent').innerHTML = '<p style="color:var(--muted);text-align:center;padding:40px">請先選擇賽事</p>';
-      return;
-    }
-
-    const evDoc = await getDoc(doc(db, 'events', currentEventId));
-    const ev = evDoc.data();
-    const stations = ev.stations || [];
-
-    const snap = await getDocs(collection(db, 'events', currentEventId, 'records'));
-    const records = snap.docs.map(d => d.data());
-
-    // 各站統計
-    const stationStats = {};
-    stations.forEach(s => { stationStats[s] = { count: 0, times: [] }; });
-    records.forEach(r => {
-      if (!stationStats[r.station]) stationStats[r.station] = { count: 0, times: [] };
-      stationStats[r.station].count++;
-    });
-
-    // 選手完賽統計
-    const runnerStations = {};
-    records.forEach(r => {
-      if (!runnerStations[r.uniqueId]) runnerStations[r.uniqueId] = new Set();
-      runnerStations[r.uniqueId].add(r.station);
-    });
-    const finishedCount = Object.values(runnerStations).filter(s => s.has(stations[stations.length - 1])).length;
-
-    document.getElementById('statsContent').innerHTML = `
-      <div class="stats-grid">
-        <div class="stat-card large">
-          <div class="stat-num">${Object.keys(runnerStations).length}</div>
-          <div class="stat-label">總參賽人數</div>
-        </div>
-        <div class="stat-card large">
-          <div class="stat-num">${finishedCount}</div>
-          <div class="stat-label">已抵達終點</div>
-        </div>
-        <div class="stat-card large">
-          <div class="stat-num">${records.length}</div>
-          <div class="stat-label">總打卡次數</div>
-        </div>
-      </div>
-
-      <h3 style="margin:32px 0 16px;font-size:1rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">各站通過人數</h3>
-      <div class="station-stats">
-        ${stations.map((s, i) => {
-          const cnt = stationStats[s]?.count || 0;
-          const pct = Object.keys(runnerStations).length > 0
-            ? Math.round(cnt / Object.keys(runnerStations).length * 100) : 0;
-          return `
-            <div class="station-stat-row">
-              <div class="station-stat-label">
-                <span class="station-num">${i + 1}</span>
-                <span>${s}</span>
-              </div>
-              <div class="station-stat-bar">
-                <div class="station-stat-fill" style="width:${pct}%"></div>
-              </div>
-              <div class="station-stat-count">${cnt} 人</div>
-            </div>
-          `;
-        }).join('')}
-      </div>
-    `;
-  }
-
-  // ── 列印 ──
-  window.printRecords = async function() {
-    if (!currentEventId) { showToast('請先選擇賽事', 'error'); return; }
-    const evDoc = await getDoc(doc(db, 'events', currentEventId));
-    const evName = evDoc.data()?.name || '賽事';
-    const snap = await getDocs(query(collection(db, 'events', currentEventId, 'records'), orderBy('scanTime', 'asc')));
-
-    const runnerMap = {};
-    const rSnap = await getDocs(collection(db, 'runners'));
-    rSnap.docs.forEach(d => { runnerMap[d.data().uniqueId] = d.data(); });
-
-    const rows = snap.docs.map(d => {
-      const r = d.data();
-      const runner = runnerMap[r.uniqueId] || {};
-      const time = r.scanTime?.toDate ? r.scanTime.toDate().toLocaleTimeString('zh-TW', { hour12: false }) : '-';
-      return `<tr><td>${r.uniqueId}</td><td>${runner.name || ''}</td><td>${r.bibNumber || ''}</td><td>${r.station}</td><td>${time}</td><td>${r.timeDiff || ''}</td></tr>`;
-    }).join('');
-
-    const win = window.open('', '_blank');
-    win.document.write(`
-      <!DOCTYPE html><html><head>
-      <meta charset="UTF-8">
-      <title>${evName} 打卡記錄</title>
-      <style>
-        body { font-family: 'Noto Sans TC', sans-serif; padding: 20px; }
-        h1 { font-size: 18px; margin-bottom: 4px; }
-        p { color: #666; font-size: 12px; margin-bottom: 16px; }
-        table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        th { background: #f0f0f0; padding: 8px; text-align: left; border: 1px solid #ddd; }
-        td { padding: 6px 8px; border: 1px solid #ddd; }
-        tr:nth-child(even) { background: #fafafa; }
-        @media print { button { display: none; } }
-      </style></head><body>
-      <h1>${evName} 打卡記錄</h1>
-      <p>列印時間：${new Date().toLocaleString('zh-TW')} ｜ 共 ${snap.size} 筆</p>
-      <button onclick="window.print()" style="margin-bottom:16px;padding:8px 16px;cursor:pointer">🖨️ 列印</button>
-      <table>
-        <thead><tr><th>選手ID</th><th>姓名</th><th>號碼牌</th><th>站點</th><th>掃描時間</th><th>時間差</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      </body></html>
-    `);
-    win.document.close();
-  }
-
-  // ── Modal ──
-  window.closeModal = function(id) {
-    document.getElementById(id).style.display = 'none';
-  }
-
-  // ── Toast ──
-  function showToast(msg, type = 'success') {
-    const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = 'toast show ' + type;
-    setTimeout(() => t.classList.remove('show'), 3000);
-  }
-  window.showToast = showToast;
-
-  // Enter 登入
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && document.getElementById('loginScreen').style.display !== 'none') {
-      doLogin();
-    }
-  });
+// ── Modal & Toast ──
+window.closeModal=function(id){ document.getElementById(id).style.display='none'; }
+function showToast(msg,type='success'){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.className='toast show '+type;
+  setTimeout(()=>t.classList.remove('show'),3000);
+}
+window.showToast=showToast;
+document.addEventListener('keydown',e=>{ if(e.key==='Enter'&&document.getElementById('loginScreen').style.display!=='none') doLogin(); });
 </script>
-
 <style>
-:root {
-  --bg: #0f1117;
-  --surface: #1a1d27;
-  --surface2: #22263a;
-  --border: #2e3349;
-  --accent: #f97316;
-  --accent2: #fb923c;
-  --green: #22c55e;
-  --red: #ef4444;
-  --text: #e8eaf0;
-  --muted: #6b7280;
-  --mono: 'DM Mono', monospace;
-  --sans: 'Noto Sans TC', sans-serif;
+:root{--bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2e3349;--accent:#f97316;--accent2:#fb923c;--green:#22c55e;--red:#ef4444;--text:#e8eaf0;--muted:#6b7280;--mono:'DM Mono',monospace;--sans:'Noto Sans TC',sans-serif;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;}
+#loginScreen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:radial-gradient(ellipse at 30% 50%,#1a1020 0%,var(--bg) 60%);}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:48px 40px;width:380px;max-width:90vw;box-shadow:0 25px 60px rgba(0,0,0,.5);}
+.login-logo{font-size:2.5rem;margin-bottom:8px;text-align:center;}
+.login-title{font-size:1.25rem;font-weight:900;text-align:center;margin-bottom:4px;letter-spacing:-.02em;}
+.login-sub{font-size:.8rem;color:var(--muted);text-align:center;margin-bottom:32px;}
+.input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;color:var(--text);font-family:var(--sans);font-size:.9rem;outline:none;transition:border-color .2s;}
+.input:focus{border-color:var(--accent);}
+.input-group{margin-bottom:16px;}
+.input-group label{display:block;font-size:.78rem;color:var(--muted);margin-bottom:6px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border-radius:8px;border:none;font-family:var(--sans);font-size:.88rem;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap;}
+.btn-primary{background:var(--accent);color:#fff;}.btn-primary:hover{background:var(--accent2);}
+.btn-green{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.3);}.btn-green:hover{background:rgba(34,197,94,.25);}
+.btn-danger{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.2);}.btn-danger:hover{background:rgba(239,68,68,.2);}
+.btn-ghost{background:var(--surface2);color:var(--text);border:1px solid var(--border);}.btn-ghost:hover{border-color:var(--accent);color:var(--accent);}
+.btn-sm{padding:5px 10px;font-size:.78rem;border-radius:6px;}
+.btn-full{width:100%;justify-content:center;padding:13px;}
+#appScreen{display:none;min-height:100vh;}
+.sidebar{width:220px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;}
+.sidebar-logo{padding:24px 20px 16px;border-bottom:1px solid var(--border);}
+.sidebar-logo-icon{font-size:1.5rem;}
+.sidebar-logo-text{font-size:.95rem;font-weight:900;letter-spacing:-.02em;line-height:1.2;margin-top:4px;}
+.sidebar-logo-sub{font-size:.7rem;color:var(--muted);margin-top:2px;}
+.nav{padding:12px 0;flex:1;overflow-y:auto;}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 20px;color:var(--muted);cursor:pointer;font-size:.88rem;font-weight:500;transition:all .15s;border-left:3px solid transparent;}
+.nav-item:hover{color:var(--text);background:var(--surface2);}
+.nav-item.active{color:var(--accent);background:rgba(249,115,22,.08);border-left-color:var(--accent);}
+.nav-icon{font-size:1rem;width:20px;text-align:center;}
+.sidebar-footer{padding:16px 20px;border-top:1px solid var(--border);font-size:.75rem;color:var(--muted);}
+.user-email{font-weight:600;color:var(--text);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.main{margin-left:220px;padding:32px;max-width:1200px;}
+.section{display:none;}.section.active{display:block;}
+.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px;}
+.section-title{font-size:1.5rem;font-weight:900;letter-spacing:-.03em;}
+.section-actions{display:flex;gap:8px;flex-wrap:wrap;}
+.dash-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px;}
+.dash-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;}
+.dash-card-label{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}
+.dash-card-value{font-size:2rem;font-weight:900;font-family:var(--mono);color:var(--accent);}
+.active-event-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;margin-bottom:24px;display:flex;align-items:center;gap:12px;}
+.active-event-label{font-size:.75rem;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;}
+#dashStats{display:flex;gap:16px;flex-wrap:wrap;}
+.stat-card{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;min-width:120px;}
+.stat-card.large{min-width:160px;}
+.stat-num{font-size:1.8rem;font-weight:900;font-family:var(--mono);color:var(--text);}
+.stat-label{font-size:.75rem;color:var(--muted);margin-top:4px;}
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:auto;}
+table{width:100%;border-collapse:collapse;min-width:500px;}
+th{background:var(--surface2);padding:12px 16px;text-align:left;font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:600;white-space:nowrap;}
+td{padding:11px 16px;border-top:1px solid var(--border);font-size:.88rem;}
+tr:hover td{background:rgba(255,255,255,.02);}
+tr.row-active td{background:rgba(249,115,22,.05);}
+.loading-cell{text-align:center;color:var(--muted);padding:40px!important;}
+.mono{font-family:var(--mono);font-size:.82rem;color:var(--accent);}
+.device-tag{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:.75rem;font-family:var(--mono);}
+.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.72rem;font-weight:700;background:var(--surface2);color:var(--muted);border:1px solid var(--border);}
+.badge-green{background:rgba(34,197,94,.1);color:var(--green);border-color:rgba(34,197,94,.3);}
+.search-row{display:flex;gap:8px;margin-bottom:16px;}
+.search-row .input{flex:1;}
+.event-select-row{display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+.event-select-row label{font-size:.8rem;color:var(--muted);white-space:nowrap;}
+.event-select-row .input{width:auto;flex:1;min-width:200px;}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);align-items:center;justify-content:center;z-index:500;}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px;width:480px;max-width:90vw;max-height:85vh;overflow-y:auto;box-shadow:0 30px 80px rgba(0,0,0,.6);}
+.modal-title{font-size:1.1rem;font-weight:900;margin-bottom:24px;}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:24px;}
+.station-row{display:flex;gap:8px;margin-bottom:8px;}
+.station-row .input{flex:1;}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;}
+.station-stats{display:flex;flex-direction:column;gap:10px;}
+.station-stat-row{display:grid;grid-template-columns:180px 1fr 60px;align-items:center;gap:10px;}
+.station-stat-label{display:flex;align-items:center;gap:8px;font-size:.85rem;}
+.station-num{background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0;}
+.station-stat-bar{background:var(--surface2);border-radius:4px;height:8px;overflow:hidden;}
+.station-stat-fill{background:var(--accent);height:100%;border-radius:4px;transition:width .5s;}
+.station-stat-count{font-family:var(--mono);font-size:.82rem;color:var(--muted);text-align:right;}
+.runner-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;}
+.runner-card-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;font-size:.9rem;}
+.search-mode{display:flex;gap:16px;margin-bottom:16px;}
+.search-mode label{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.88rem;}
+.group-form{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:12px;}
+.toast{position:fixed;bottom:24px;right:24px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 20px;font-size:.88rem;font-weight:600;box-shadow:0 8px 30px rgba(0,0,0,.4);transform:translateY(80px);opacity:0;transition:all .25s;z-index:9999;}
+.toast.show{transform:translateY(0);opacity:1;}
+.toast.success{border-left:4px solid var(--green);}
+.toast.error{border-left:4px solid var(--red);}
+@media(max-width:768px){
+  .sidebar{display:none!important;}
+  .main{margin-left:0;padding:16px;padding-bottom:80px;}
+  .station-stat-row{grid-template-columns:120px 1fr 50px;}
+  .section-header{flex-direction:column;align-items:flex-start;}
+  .top-bar{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);margin:-16px -16px 16px;white-space:nowrap;overflow:hidden;}
+  .top-bar-title{font-size:1rem;font-weight:900;}
+  .top-bar-right{display:flex;align-items:center;gap:6px;font-size:.7rem;color:var(--muted);overflow:hidden;}
+  .bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);z-index:200;height:60px;}
+  .bottom-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--muted);cursor:pointer;font-size:.6rem;font-weight:600;transition:color .15s;}
+  .bottom-nav-item .nav-icon{font-size:1.2rem;}
+  .bottom-nav-item.active{color:var(--accent);}
 }
-
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; }
-
-/* ── LOGIN ── */
-#loginScreen {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  background: radial-gradient(ellipse at 30% 50%, #1a1020 0%, var(--bg) 60%);
-}
-.login-box {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 48px 40px;
-  width: 380px;
-  box-shadow: 0 25px 60px rgba(0,0,0,.5);
-}
-.login-logo {
-  font-size: 2.5rem;
-  margin-bottom: 8px;
-  text-align: center;
-}
-.login-title {
-  font-size: 1.25rem;
-  font-weight: 900;
-  text-align: center;
-  margin-bottom: 4px;
-  letter-spacing: -.02em;
-}
-.login-sub {
-  font-size: .8rem;
-  color: var(--muted);
-  text-align: center;
-  margin-bottom: 32px;
-}
-.input {
-  width: 100%;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: .9rem;
-  outline: none;
-  transition: border-color .2s;
-}
-.input:focus { border-color: var(--accent); }
-.input-group { margin-bottom: 16px; }
-.input-group label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 6px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; }
-
-/* ── BUTTONS ── */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 18px;
-  border-radius: 8px;
-  border: none;
-  font-family: var(--sans);
-  font-size: .88rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all .15s;
-  white-space: nowrap;
-}
-.btn-primary { background: var(--accent); color: #fff; }
-.btn-primary:hover { background: var(--accent2); }
-.btn-green { background: rgba(34,197,94,.15); color: var(--green); border: 1px solid rgba(34,197,94,.3); }
-.btn-green:hover { background: rgba(34,197,94,.25); }
-.btn-danger { background: rgba(239,68,68,.1); color: var(--red); border: 1px solid rgba(239,68,68,.2); }
-.btn-danger:hover { background: rgba(239,68,68,.2); }
-.btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
-.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
-.btn-sm { padding: 5px 10px; font-size: .78rem; border-radius: 6px; }
-.btn-full { width: 100%; justify-content: center; padding: 13px; }
-
-/* ── APP LAYOUT ── */
-#appScreen {
-  display: none;
-  min-height: 100vh;
-  flex-direction: column;
-}
-.sidebar {
-  width: 220px;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  position: fixed;
-  top: 0; left: 0; bottom: 0;
-  z-index: 100;
-}
-.sidebar-logo {
-  padding: 24px 20px 16px;
-  border-bottom: 1px solid var(--border);
-}
-.sidebar-logo-icon { font-size: 1.5rem; }
-.sidebar-logo-text { font-size: .95rem; font-weight: 900; letter-spacing: -.02em; line-height: 1.2; margin-top: 4px; }
-.sidebar-logo-sub { font-size: .7rem; color: var(--muted); margin-top: 2px; }
-
-.nav { padding: 12px 0; flex: 1; }
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 20px;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: .88rem;
-  font-weight: 500;
-  transition: all .15s;
-  border-left: 3px solid transparent;
-}
-.nav-item:hover { color: var(--text); background: var(--surface2); }
-.nav-item.active { color: var(--accent); background: rgba(249,115,22,.08); border-left-color: var(--accent); }
-.nav-icon { font-size: 1rem; width: 20px; text-align: center; }
-
-.sidebar-footer {
-  padding: 16px 20px;
-  border-top: 1px solid var(--border);
-  font-size: .75rem;
-  color: var(--muted);
-}
-.user-email { font-weight: 600; color: var(--text); margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.main {
-  margin-left: 220px;
-  flex: 1;
-  padding: 32px;
-  max-width: 1200px;
-}
-
-/* ── SECTIONS ── */
-.section { display: none; }
-.section.active { display: block; }
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 24px;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-.section-title {
-  font-size: 1.5rem;
-  font-weight: 900;
-  letter-spacing: -.03em;
-}
-.section-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-
-/* ── DASHBOARD ── */
-.dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-.dash-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px;
-}
-.dash-card-label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
-.dash-card-value { font-size: 2rem; font-weight: 900; font-family: var(--mono); color: var(--accent); }
-.active-event-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px 24px;
-  margin-bottom: 24px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.active-event-label { font-size: .75rem; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .06em; }
-#dashStats { display: flex; gap: 16px; flex-wrap: wrap; }
-.stat-card {
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 16px 20px;
-  min-width: 120px;
-}
-.stat-card.large { min-width: 160px; }
-.stat-num { font-size: 1.8rem; font-weight: 900; font-family: var(--mono); color: var(--text); }
-.stat-label { font-size: .75rem; color: var(--muted); margin-top: 4px; }
-
-/* ── TABLE ── */
-.table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-table { width: 100%; border-collapse: collapse; }
-th { background: var(--surface2); padding: 12px 16px; text-align: left; font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; font-weight: 600; }
-td { padding: 11px 16px; border-top: 1px solid var(--border); font-size: .88rem; }
-tr:hover td { background: rgba(255,255,255,.02); }
-tr.row-active td { background: rgba(249,115,22,.05); }
-.loading-cell { text-align: center; color: var(--muted); padding: 40px !important; }
-.mono { font-family: var(--mono); font-size: .82rem; color: var(--accent); }
-.device-tag { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; font-size: .75rem; font-family: var(--mono); }
-
-/* ── BADGES ── */
-.badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: .72rem; font-weight: 700; background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
-.badge-green { background: rgba(34,197,94,.1); color: var(--green); border-color: rgba(34,197,94,.3); }
-
-/* ── SEARCH ── */
-.search-row { display: flex; gap: 8px; margin-bottom: 16px; }
-.search-row .input { flex: 1; }
-
-/* ── MODAL ── */
-.modal-overlay {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,.7);
-  backdrop-filter: blur(4px);
-  align-items: center;
-  justify-content: center;
-  z-index: 500;
-}
-.modal {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 32px;
-  width: 480px;
-  max-width: 90vw;
-  max-height: 85vh;
-  overflow-y: auto;
-  box-shadow: 0 30px 80px rgba(0,0,0,.6);
-}
-.modal-title { font-size: 1.1rem; font-weight: 900; margin-bottom: 24px; }
-.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 24px; }
-.station-row { display: flex; gap: 8px; margin-bottom: 8px; }
-.station-row .input { flex: 1; }
-
-/* ── STATS ── */
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
-.station-stats { display: flex; flex-direction: column; gap: 12px; }
-.station-stat-row { display: grid; grid-template-columns: 200px 1fr 60px; align-items: center; gap: 12px; }
-.station-stat-label { display: flex; align-items: center; gap: 8px; font-size: .88rem; }
-.station-num { background: var(--accent); color: #fff; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: .7rem; font-weight: 700; flex-shrink: 0; }
-.station-stat-bar { background: var(--surface2); border-radius: 4px; height: 8px; overflow: hidden; }
-.station-stat-fill { background: var(--accent); height: 100%; border-radius: 4px; transition: width .5s; }
-.station-stat-count { font-family: var(--mono); font-size: .82rem; color: var(--muted); text-align: right; }
-
-/* ── TOAST ── */
-.toast {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 20px;
-  font-size: .88rem;
-  font-weight: 600;
-  box-shadow: 0 8px 30px rgba(0,0,0,.4);
-  transform: translateY(80px);
-  opacity: 0;
-  transition: all .25s;
-  z-index: 9999;
-}
-.toast.show { transform: translateY(0); opacity: 1; }
-.toast.success { border-left: 4px solid var(--green); }
-.toast.error { border-left: 4px solid var(--red); }
-
-@media (max-width: 768px) {
-  .sidebar { display: none !important; }
-  .main { margin-left: 0; padding: 16px; padding-bottom: 80px; }
-  .station-stat-row { grid-template-columns: 120px 1fr 50px; }
-  .section-header { flex-direction: column; align-items: flex-start; }
-
-  /* 底部導覽列 */
-  .bottom-nav {
-    display: flex;
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    background: var(--surface);
-    border-top: 1px solid var(--border);
-    z-index: 200;
-    height: 60px;
-  }
-  .bottom-nav-item {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 3px;
-    color: var(--muted);
-    cursor: pointer;
-    font-size: .62rem;
-    font-weight: 600;
-    transition: color .15s;
-    padding: 6px 0;
-  }
-  .bottom-nav-item .nav-icon { font-size: 1.2rem; }
-  .bottom-nav-item.active { color: var(--accent); }
-  .bottom-nav-item:hover { color: var(--text); }
-
-  /* 頂部標題列 */
-  .top-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 16px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    margin: -16px -16px 16px;
-    white-space: nowrap;
-    overflow: hidden;
-  }
-  .top-bar-title { font-size: 1rem; font-weight: 900; }
-  .top-bar-right { display: flex; align-items: center; gap: 6px; font-size: .7rem; color: var(--muted); overflow: hidden; }
-}
-@media (min-width: 769px) {
-  .bottom-nav { display: none; }
-  .top-bar { display: none; }
-}
+@media(min-width:769px){.bottom-nav{display:none;}.top-bar{display:none;}}
 </style>
 </head>
 <body>
-
-<!-- 登入畫面 -->
 <div id="loginScreen">
   <div class="login-box">
     <div class="login-logo">🏃</div>
     <div class="login-title">路跑打卡系統</div>
     <div class="login-sub">管理後台</div>
-    <div class="input-group">
-      <label>電子郵件</label>
-      <input id="loginEmail" type="email" class="input" placeholder="admin@example.com">
-    </div>
-    <div class="input-group">
-      <label>密碼</label>
-      <input id="loginPassword" type="password" class="input" placeholder="••••••••">
-    </div>
+    <div class="input-group"><label>電子郵件</label><input id="loginEmail" type="email" class="input" placeholder="admin@example.com"></div>
+    <div class="input-group"><label>密碼</label><input id="loginPassword" type="password" class="input" placeholder="••••••••"></div>
     <button id="loginBtn" class="btn btn-primary btn-full" onclick="doLogin()">登入</button>
   </div>
 </div>
 
-<!-- 主應用 -->
-<div id="appScreen" style="display:none">
-
-  <!-- 側邊欄 -->
+<div id="appScreen">
   <div class="sidebar">
     <div class="sidebar-logo">
       <div class="sidebar-logo-icon">🏃</div>
@@ -1019,21 +805,13 @@ tr.row-active td { background: rgba(249,115,22,.05); }
       <div class="sidebar-logo-sub">管理後台</div>
     </div>
     <nav class="nav">
-      <div class="nav-item active" data-nav="dashboard" onclick="showSection('dashboard')">
-        <span class="nav-icon">📊</span><span>儀表板</span>
-      </div>
-      <div class="nav-item" data-nav="runners" onclick="showSection('runners')">
-        <span class="nav-icon">👥</span><span>選手管理</span>
-      </div>
-      <div class="nav-item" data-nav="events" onclick="showSection('events')">
-        <span class="nav-icon">🏁</span><span>賽事管理</span>
-      </div>
-      <div class="nav-item" data-nav="records" onclick="showSection('records')">
-        <span class="nav-icon">📋</span><span>打卡記錄</span>
-      </div>
-      <div class="nav-item" data-nav="stats" onclick="showSection('stats')">
-        <span class="nav-icon">📈</span><span>統計分析</span>
-      </div>
+      <div class="nav-item active" data-nav="dashboard" onclick="showSection('dashboard')"><span class="nav-icon">📊</span><span>儀表板</span></div>
+      <div class="nav-item" data-nav="runners" onclick="showSection('runners')"><span class="nav-icon">👥</span><span>選手管理</span></div>
+      <div class="nav-item" data-nav="events" onclick="showSection('events')"><span class="nav-icon">🏁</span><span>賽事管理</span></div>
+      <div class="nav-item" data-nav="entries" onclick="showSection('entries')"><span class="nav-icon">📝</span><span>報名管理</span></div>
+      <div class="nav-item" data-nav="records" onclick="showSection('records')"><span class="nav-icon">📋</span><span>打卡記錄</span></div>
+      <div class="nav-item" data-nav="search" onclick="showSection('search')"><span class="nav-icon">🔍</span><span>查詢成績</span></div>
+      <div class="nav-item" data-nav="stats" onclick="showSection('stats')"><span class="nav-icon">📈</span><span>統計分析</span></div>
     </nav>
     <div class="sidebar-footer">
       <div class="user-email" id="userEmail"></div>
@@ -1041,60 +819,35 @@ tr.row-active td { background: rgba(249,115,22,.05); }
     </div>
   </div>
 
-  <!-- 頂部標題列（手機用） -->
   <div class="top-bar">
     <div class="top-bar-title">🏃 路跑打卡</div>
     <div class="top-bar-right">
-      <span id="topUserEmail" style="overflow:hidden;text-overflow:ellipsis;max-width:160px;display:inline-block"></span>
+      <span id="topUserEmail" style="overflow:hidden;text-overflow:ellipsis;max-width:130px;display:inline-block"></span>
       <button class="btn btn-ghost btn-sm" onclick="doLogout()">登出</button>
     </div>
   </div>
 
-  <!-- 底部導覽列（手機用） -->
   <div class="bottom-nav">
-    <div class="bottom-nav-item active" data-nav="dashboard" onclick="showSection('dashboard')">
-      <span class="nav-icon">📊</span><span>儀表板</span>
-    </div>
-    <div class="bottom-nav-item" data-nav="runners" onclick="showSection('runners')">
-      <span class="nav-icon">👥</span><span>選手</span>
-    </div>
-    <div class="bottom-nav-item" data-nav="events" onclick="showSection('events')">
-      <span class="nav-icon">🏁</span><span>賽事</span>
-    </div>
-    <div class="bottom-nav-item" data-nav="records" onclick="showSection('records')">
-      <span class="nav-icon">📋</span><span>記錄</span>
-    </div>
-    <div class="bottom-nav-item" data-nav="stats" onclick="showSection('stats')">
-      <span class="nav-icon">📈</span><span>統計</span>
-    </div>
+    <div class="bottom-nav-item active" data-nav="dashboard" onclick="showSection('dashboard')"><span class="nav-icon">📊</span><span>儀表板</span></div>
+    <div class="bottom-nav-item" data-nav="runners" onclick="showSection('runners')"><span class="nav-icon">👥</span><span>選手</span></div>
+    <div class="bottom-nav-item" data-nav="events" onclick="showSection('events')"><span class="nav-icon">🏁</span><span>賽事</span></div>
+    <div class="bottom-nav-item" data-nav="entries" onclick="showSection('entries')"><span class="nav-icon">📝</span><span>報名</span></div>
+    <div class="bottom-nav-item" data-nav="records" onclick="showSection('records')"><span class="nav-icon">📋</span><span>記錄</span></div>
+    <div class="bottom-nav-item" data-nav="search" onclick="showSection('search')"><span class="nav-icon">🔍</span><span>查詢</span></div>
+    <div class="bottom-nav-item" data-nav="stats" onclick="showSection('stats')"><span class="nav-icon">📈</span><span>統計</span></div>
   </div>
 
-  <!-- 主內容 -->
   <div class="main">
 
     <!-- 儀表板 -->
     <div id="sec-dashboard" class="section active">
-      <div class="section-header">
-        <div class="section-title">儀表板</div>
-      </div>
-      <div class="active-event-card">
-        <span style="font-size:1.5rem">🏁</span>
-        <div>
-          <div class="active-event-label">目前進行中賽事</div>
-          <div id="dashActiveEvent">載入中...</div>
-        </div>
-      </div>
+      <div class="section-header"><div class="section-title">儀表板</div></div>
+      <div class="active-event-card"><span style="font-size:1.5rem">🏁</span><div><div class="active-event-label">目前進行中賽事</div><div id="dashActiveEvent">載入中...</div></div></div>
       <div class="dash-grid">
-        <div class="dash-card">
-          <div class="dash-card-label">選手總數</div>
-          <div class="dash-card-value" id="dashTotalRunners">-</div>
-        </div>
-        <div class="dash-card">
-          <div class="dash-card-label">歷史賽事</div>
-          <div class="dash-card-value" id="dashTotalEvents">-</div>
-        </div>
+        <div class="dash-card"><div class="dash-card-label">選手總數</div><div class="dash-card-value" id="dashTotalRunners">-</div></div>
+        <div class="dash-card"><div class="dash-card-label">歷史賽事</div><div class="dash-card-value" id="dashTotalEvents">-</div></div>
       </div>
-      <div id="dashStats" style="display:flex;gap:16px;flex-wrap:wrap"></div>
+      <div id="dashStats"></div>
     </div>
 
     <!-- 選手管理 -->
@@ -1107,16 +860,8 @@ tr.row-active td { background: rgba(249,115,22,.05); }
           <button class="btn btn-primary" onclick="showAddRunner()">＋ 新增選手</button>
         </div>
       </div>
-      <div class="search-row">
-        <input id="runnerSearch" type="text" class="input" placeholder="搜尋姓名、ID、手機、Email...">
-        <button class="btn btn-ghost" onclick="searchRunners()">搜尋</button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>選手ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>操作</th></tr></thead>
-          <tbody id="runnersTableBody"><tr><td colspan="7" class="loading-cell">載入中...</td></tr></tbody>
-        </table>
-      </div>
+      <div class="search-row"><input id="runnerSearch" type="text" class="input" placeholder="搜尋姓名、ID、手機..."><button class="btn btn-ghost" onclick="searchRunners()">搜尋</button></div>
+      <div class="table-wrap"><table><thead><tr><th>選手ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>操作</th></tr></thead><tbody id="runnersTableBody"><tr><td colspan="7" class="loading-cell">載入中...</td></tr></tbody></table></div>
     </div>
 
     <!-- 賽事管理 -->
@@ -1125,41 +870,59 @@ tr.row-active td { background: rgba(249,115,22,.05); }
         <div class="section-title">賽事管理</div>
         <button class="btn btn-primary" onclick="showAddEvent()">＋ 新增賽事</button>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>賽事名稱</th><th>日期</th><th>站點</th><th>狀態</th><th>操作</th></tr></thead>
-          <tbody id="eventsTableBody"><tr><td colspan="5" class="loading-cell">載入中...</td></tr></tbody>
-        </table>
+      <div class="table-wrap"><table><thead><tr><th>賽事名稱</th><th>日期</th><th>組別</th><th>狀態</th><th>操作</th></tr></thead><tbody id="eventsTableBody"><tr><td colspan="5" class="loading-cell">載入中...</td></tr></tbody></table></div>
+    </div>
+
+    <!-- 報名管理 -->
+    <div id="sec-entries" class="section">
+      <div class="section-header">
+        <div class="section-title">報名管理</div>
+        <div class="section-actions">
+          <input type="file" id="entryCsvFile" accept=".csv" style="display:none" onchange="handleEntryCSV(event)">
+          <button class="btn btn-ghost" onclick="document.getElementById('entryCsvFile').click()">📥 匯入 CSV</button>
+          <button class="btn btn-primary" onclick="showAddEntry()">＋ 手動新增</button>
+        </div>
       </div>
+      <div class="event-select-row"><label>選擇賽事：</label><select id="entryEventSelect" class="input" onchange="loadEntries()"><option value="">請選擇賽事...</option></select></div>
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:12px">CSV格式：uniqueId, 號碼牌, 組別（第一行為標題）</div>
+      <div class="search-row"><input id="entrySearch" type="text" class="input" placeholder="搜尋選手ID、姓名、號碼牌..."><button class="btn btn-ghost" onclick="filterEntries()">搜尋</button></div>
+      <div class="table-wrap"><table><thead><tr><th>選手ID</th><th>姓名</th><th>號碼牌</th><th>組別</th><th>操作</th></tr></thead><tbody id="entriesTableBody"><tr><td colspan="5" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
     </div>
 
     <!-- 打卡記錄 -->
     <div id="sec-records" class="section">
       <div class="section-header">
-        <div>
-          <div class="section-title">打卡記錄</div>
-          <div style="font-size:.82rem;color:var(--muted);margin-top:4px" id="recordsEventName"></div>
-        </div>
+        <div><div class="section-title">打卡記錄</div><div style="font-size:.82rem;color:var(--muted);margin-top:4px" id="recordsEventName"></div></div>
         <div class="section-actions">
           <button class="btn btn-ghost" onclick="printRecords()">🖨️ 列印</button>
           <button class="btn btn-ghost" onclick="exportCSV()">📥 匯出 CSV</button>
         </div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>選手ID</th><th>姓名</th><th>站點</th><th>號碼牌</th><th>掃描時間</th><th>時間差</th><th>裝置</th></tr></thead>
-          <tbody id="recordsTableBody"><tr><td colspan="7" class="loading-cell">載入中...</td></tr></tbody>
-        </table>
+      <div class="event-select-row"><label>選擇賽事：</label><select id="recordEventSelect" class="input" onchange="onRecordEventChange()"><option value="">請選擇賽事...</option></select></div>
+      <div class="table-wrap"><table><thead><tr><th>選手ID</th><th>號碼牌</th><th>姓名</th><th>組別</th><th>站點</th><th>掃描時間</th><th>段落時間</th></tr></thead><tbody id="recordsTableBody"><tr><td colspan="7" class="loading-cell">載入中...</td></tr></tbody></table></div>
+    </div>
+
+    <!-- 查詢成績 -->
+    <div id="sec-search" class="section">
+      <div class="section-header"><div class="section-title">查詢成績</div></div>
+      <div class="event-select-row"><label>選擇賽事：</label><select id="searchEventSelect" class="input" onchange="onSearchEventChange()"><option value="">請選擇賽事...</option></select></div>
+      <div class="search-mode">
+        <label><input type="radio" name="searchMode" value="runner" checked> 依選手查</label>
+        <label><input type="radio" name="searchMode" value="station"> 依站點查</label>
       </div>
+      <div class="search-row">
+        <input id="searchKeyword" type="text" class="input" placeholder="輸入號碼牌、姓名或選手ID">
+        <select id="searchStationSelect" class="input" style="width:auto"><option value="">所有站點</option></select>
+        <button class="btn btn-primary" onclick="doSearch()">查詢</button>
+      </div>
+      <div id="searchResult"></div>
     </div>
 
     <!-- 統計分析 -->
     <div id="sec-stats" class="section">
-      <div class="section-header">
-        <div class="section-title">統計分析</div>
-        <button class="btn btn-ghost" onclick="printRecords()">🖨️ 列印記錄</button>
-      </div>
-      <div id="statsContent">載入中...</div>
+      <div class="section-header"><div class="section-title">統計分析</div></div>
+      <div class="event-select-row"><label>選擇賽事：</label><select id="statsEventSelect" class="input" onchange="loadStats()"><option value="">請選擇賽事...</option></select></div>
+      <div id="statsContent"><p style="color:var(--muted);text-align:center;padding:40px">請選擇賽事</p></div>
     </div>
 
   </div>
@@ -1172,22 +935,13 @@ tr.row-active td { background: rgba(249,115,22,.05); }
     <form id="runnerForm">
       <input type="hidden" id="runnerDocId">
       <div class="input-group"><label>姓名 *</label><input id="rName" type="text" class="input" placeholder="王小明"></div>
-      <div class="input-group"><label>性別</label>
-        <select id="rGender" class="input">
-          <option value="">不填</option>
-          <option value="男">男</option>
-          <option value="女">女</option>
-        </select>
-      </div>
+      <div class="input-group"><label>性別</label><select id="rGender" class="input"><option value="">不填</option><option value="男">男</option><option value="女">女</option></select></div>
       <div class="input-group"><label>生日</label><input id="rBirthday" type="date" class="input"></div>
       <div class="input-group"><label>手機</label><input id="rPhone" type="tel" class="input" placeholder="0912345678"></div>
-      <div class="input-group"><label>Email</label><input id="rEmail" type="email" class="input" placeholder="example@email.com"></div>
+      <div class="input-group"><label>Email</label><input id="rEmail" type="email" class="input"></div>
       <div class="input-group"><label>身分證號（選填，加密儲存）</label><input id="rIdNumber" type="text" class="input" placeholder="A123456789"></div>
     </form>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeModal('runnerModal')">取消</button>
-      <button class="btn btn-primary" onclick="saveRunner()">儲存</button>
-    </div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('runnerModal')">取消</button><button class="btn btn-primary" onclick="saveRunner()">儲存</button></div>
   </div>
 </div>
 
@@ -1199,21 +953,50 @@ tr.row-active td { background: rgba(249,115,22,.05); }
       <input type="hidden" id="eventDocId">
       <div class="input-group"><label>賽事名稱 *</label><input id="evName" type="text" class="input" placeholder="2026 台北馬拉松"></div>
       <div class="input-group"><label>比賽日期</label><input id="evDate" type="date" class="input"></div>
-      <div class="input-group">
-        <label>站點清單</label>
-        <div id="stationList"></div>
-        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addStation()">＋ 新增站點</button>
-      </div>
     </form>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeModal('eventModal')">取消</button>
-      <button class="btn btn-primary" onclick="saveEvent()">儲存</button>
-    </div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('eventModal')">取消</button><button class="btn btn-primary" onclick="saveEvent()">儲存</button></div>
   </div>
 </div>
 
-<!-- Toast -->
-<div id="toast" class="toast"></div>
+<!-- 組別 Modal -->
+<div id="groupModal" class="modal-overlay">
+  <div class="modal" style="width:560px">
+    <div class="modal-title">組別管理 — <span id="groupEventName"></span></div>
+    <div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>組別</th><th>站點順序</th><th>操作</th></tr></thead><tbody id="groupsTableBody"></tbody></table></div>
+    <button class="btn btn-primary btn-sm" onclick="showAddGroup()">＋ 新增組別</button>
+    <div id="groupForm" class="group-form" style="display:none;margin-top:12px">
+      <div class="modal-title" id="groupFormTitle" style="font-size:.95rem;margin-bottom:16px">新增組別</div>
+      <input type="hidden" id="groupDocId">
+      <div class="input-group"><label>組別名稱 *</label><input id="gName" type="text" class="input" placeholder="全馬、半馬、10K..."></div>
+      <div class="input-group">
+        <label>站點清單（依順序）</label>
+        <div id="gStationList"></div>
+        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addGStation()">＋ 新增站點</button>
+      </div>
+      <div class="modal-actions" style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="cancelGroupForm()">取消</button><button class="btn btn-primary btn-sm" onclick="saveGroup()">儲存組別</button></div>
+    </div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('groupModal')">關閉</button></div>
+  </div>
+</div>
 
+<!-- 報名 Modal -->
+<div id="entryModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-title" id="entryModalTitle">新增報名</div>
+    <div class="input-group">
+      <label>選手（輸入ID或姓名搜尋）</label>
+      <input id="entryRunnerSearch" type="text" class="input" placeholder="搜尋選手..." oninput="searchEntryRunner()">
+      <div id="entryRunnerResults" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-top:4px;max-height:160px;overflow-y:auto;display:none"></div>
+      <input type="hidden" id="entryUniqueId">
+      <div id="entryRunnerSelected" style="margin-top:8px;padding:8px 12px;background:var(--surface2);border-radius:8px;font-size:.85rem;display:none"></div>
+    </div>
+    <div class="input-group"><label>號碼牌 *</label><input id="entryBib" type="text" class="input" placeholder="001"></div>
+    <div class="input-group"><label>組別 *</label><select id="entryGroup" class="input"></select></div>
+    <input type="hidden" id="entryDocId">
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('entryModal')">取消</button><button class="btn btn-primary" onclick="saveEntry()">儲存</button></div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
 </body>
 </html>
