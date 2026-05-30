@@ -85,6 +85,7 @@ window.showSection = function(id) {
   if(id==='runners') loadRunners();
   if(id==='events') loadEvents();
   if(id==='entries') loadEntriesSection();
+  if(id==='records') loadRecordsSection();
   if(id==='search') initSearchSection();
   if(id==='stats') loadStatsSection();
 }
@@ -208,7 +209,7 @@ async function loadEvents() {
   if(snap.empty){tbody.innerHTML='<tr><td colspan="5" class="loading-cell">無賽事資料</td></tr>';return;}
   tbody.innerHTML=snap.docs.map(d=>{
     const ev=d.data(); const isActive=d.id===activeId;
-    return '<tr'+(isActive?' class="row-active"':'')+'><td><strong>'+ev.name+'</strong></td><td>'+(ev.date||'-')+'</td><td>'+(ev.groupNames||[]).join('、')||'-'+'</td><td>'+(isActive?'<span class="badge badge-green">進行中</span>':'<span class="badge">已結束</span>')+'</td><td style="white-space:nowrap">'
+    return '<tr'+(isActive?' class="row-active"':'')+'><td><strong>'+ev.name+'</strong></td><td>'+(ev.date||'-')+'</td><td>'+((ev.groupNames||[]).join('、')||'-')+'</td><td>'+(isActive?'<span class="badge badge-green">進行中</span>':'<span class="badge">已結束</span>')+'</td><td style="white-space:nowrap">'
       +(!isActive?'<button class="btn btn-sm btn-green" onclick="activateEvent(\''+d.id+'\')">開放掃描</button> ':'<button class="btn btn-sm btn-danger" onclick="deactivateEvent()">關閉掃描</button> ')
       +'<button class="btn btn-sm btn-ghost" onclick="editEvent(\''+d.id+'\')">編輯</button> '
       +'<button class="btn btn-sm btn-ghost" onclick="manageGroups(\''+d.id+'\',\''+ev.name+'\')">組別</button></td></tr>';
