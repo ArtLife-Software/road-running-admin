@@ -98,6 +98,7 @@
       document.getElementById('loginScreen').style.display = 'none';
       document.getElementById('appScreen').style.display = 'flex';
       document.getElementById('userEmail').textContent = user.email;
+      document.getElementById('topUserEmail').textContent = user.email;
       loadDashboard();
     } else {
       document.getElementById('loginScreen').style.display = 'flex';
@@ -108,7 +109,7 @@
   // ── 導覽 ──
   window.showSection = function(id) {
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.nav-item, .bottom-nav-item').forEach(n => n.classList.remove('active'));
     document.getElementById('sec-' + id).classList.add('active');
     document.querySelector(`[data-nav="${id}"]`).classList.add('active');
     if (id === 'dashboard') loadDashboard();
@@ -932,11 +933,55 @@ tr.row-active td { background: rgba(249,115,22,.05); }
 .toast.error { border-left: 4px solid var(--red); }
 
 @media (max-width: 768px) {
-  .sidebar { width: 60px; }
-  .sidebar-logo-text, .sidebar-logo-sub, .nav-item span, .user-email, .sidebar-footer .btn { display: none; }
-  .nav-item { padding: 12px; justify-content: center; }
-  .main { margin-left: 60px; padding: 16px; }
-  .station-stat-row { grid-template-columns: 140px 1fr 50px; }
+  .sidebar { display: none; }
+  .main { margin-left: 0; padding: 16px; padding-bottom: 80px; }
+  .station-stat-row { grid-template-columns: 120px 1fr 50px; }
+  .section-header { flex-direction: column; align-items: flex-start; }
+
+  /* 底部導覽列 */
+  .bottom-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    z-index: 200;
+    height: 60px;
+  }
+  .bottom-nav-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: .62rem;
+    font-weight: 600;
+    transition: color .15s;
+    padding: 6px 0;
+  }
+  .bottom-nav-item .nav-icon { font-size: 1.2rem; }
+  .bottom-nav-item.active { color: var(--accent); }
+  .bottom-nav-item:hover { color: var(--text); }
+
+  /* 頂部標題列 */
+  .top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    margin: -16px -16px 16px;
+  }
+  .top-bar-title { font-size: 1rem; font-weight: 900; }
+  .top-bar-right { display: flex; align-items: center; gap: 8px; font-size: .75rem; color: var(--muted); }
+}
+@media (min-width: 769px) {
+  .bottom-nav { display: none; }
+  .top-bar { display: none; }
 }
 </style>
 </head>
@@ -990,6 +1035,34 @@ tr.row-active td { background: rgba(249,115,22,.05); }
     <div class="sidebar-footer">
       <div class="user-email" id="userEmail"></div>
       <button class="btn btn-ghost btn-sm" onclick="doLogout()">登出</button>
+    </div>
+  </div>
+
+  <!-- 頂部標題列（手機用） -->
+  <div class="top-bar">
+    <div class="top-bar-title">🏃 路跑打卡</div>
+    <div class="top-bar-right">
+      <span id="topUserEmail"></span>
+      <button class="btn btn-ghost btn-sm" onclick="doLogout()">登出</button>
+    </div>
+  </div>
+
+  <!-- 底部導覽列（手機用） -->
+  <div class="bottom-nav">
+    <div class="bottom-nav-item active" data-nav="dashboard" onclick="showSection('dashboard')">
+      <span class="nav-icon">📊</span><span>儀表板</span>
+    </div>
+    <div class="bottom-nav-item" data-nav="runners" onclick="showSection('runners')">
+      <span class="nav-icon">👥</span><span>選手</span>
+    </div>
+    <div class="bottom-nav-item" data-nav="events" onclick="showSection('events')">
+      <span class="nav-icon">🏁</span><span>賽事</span>
+    </div>
+    <div class="bottom-nav-item" data-nav="records" onclick="showSection('records')">
+      <span class="nav-icon">📋</span><span>記錄</span>
+    </div>
+    <div class="bottom-nav-item" data-nav="stats" onclick="showSection('stats')">
+      <span class="nav-icon">📈</span><span>統計</span>
     </div>
   </div>
 
