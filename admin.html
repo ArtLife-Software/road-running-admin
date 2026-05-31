@@ -988,85 +988,120 @@ window.doSearch=async function(){
     }
   }
 
-  // 產生表格
-  const allStations=[];
-  const processedGroups=new Set();
+  // ── 一組一表格 ──
+  // 收集本次查詢涉及的組別（保持順序）
+  const groupOrder=[];
   for(const [uid,e] of targetEntries){
-    const g=e.group||'';
-    if(!processedGroups.has(g)){
-      processedGroups.add(g);
-      (groupStations[g]||[]).forEach(s=>{if(!allStations.includes(s))allStations.push(s);});
-    }
+    if(!groupOrder.includes(e.group||''))groupOrder.push(e.group||'');
   }
 
-  // 表頭
-  let thead='<tr><th>編號</th><th>組別</th><th>ID</th><th>姓名</th>';
-  allStations.forEach(s=>{thead+='<th>'+s+'<br><small style="font-weight:400;color:var(--muted)">到達</small></th><th>'+s+'<br><small style="font-weight:400;color:var(--muted)">區段</small></th><th>'+s+'<br><small style="font-weight:400;color:var(--muted)">累積</small></th><th>'+s+'<br><small style="font-weight:400;color:var(--muted)">名次</small></th>';});
-  thead+='<th>終點排名</th></tr>';
+  // 建立每個組別的表格
+  let resultHtml='';
+  for(const gName of groupOrder){
+    const gStations=groupStations[gName]||[];
+    const gEntries=targetEntries.filter(([,e])=>e.group===gName);
 
-  // 表身
-  let tbody='';
-  for(const [uid,e] of targetEntries){
-    const r=rMap[uid]||{};
-    const myRecs=allRecs.filter(x=>x.uniqueId===uid);
-    const stations=groupStations[e.group]||allStations;
-    let firstRec=null;
-    let row='<tr><td><strong>'+(e.bibNumber||'-')+'</strong></td>'
-      +'<td><span class="badge">'+(e.group||'-')+'</span></td>'
-      +'<td><span class="mono">'+uid+'</span></td>'
-      +'<td>'+(e.name||r.name||'-')+'</td>';
-    for(const s of allStations){
-      if(!stations.includes(s)){row+='<td colspan="4" style="color:var(--muted);text-align:center">-</td>';continue;}
-      const rec=myRecs.find(x=>x.station===s);
-      if(!rec){row+='<td colspan="4" style="color:var(--muted);text-align:center">未到</td>';continue;}
-      if(!firstRec)firstRec=rec;
-      const recIdx=myRecs.indexOf(rec);
-      const seg=recIdx>0?diffHMS(rec.scanTime,myRecs[recIdx-1].scanTime):'-';
-      const total=firstRec&&rec!==firstRec?diffHMS(rec.scanTime,firstRec.scanTime):'起跑';
-      const sRank=groupRankMap[uid+'_'+s]||'-';
-      row+='<td>'+fmt(rec.scanTime)+'</td><td>'+seg+'</td><td>'+total+'</td><td>'+(sRank!=='-'?'第'+sRank+'名':'-')+'</td>';
+    // 表頭：第1站只有「到達」，其餘站有「到達/區段/累積/名次」
+    let thead='<tr><th>編號</th><th>ID</th><th>姓名</th>';
+    gStations.forEach((s,i)=>{
+      if(i===0){
+        thead+='<th>'+s+'<br><small style="font-weight:400;color:var(--muted)">到達</small></th>';
+      } else {
+        thead+='<th>'+s+'<br><small style="font-weight:400;color:var(--muted)">到達</small></th>'
+          +'<th>'+s+'<br><small style="font-weight:400;color:var(--muted)">區段</small></th>'
+          +'<th>'+s+'<br><small style="font-weight:400;color:var(--muted)">累積</small></th>'
+          +'<th>'+s+'<br><small style="font-weight:400;color:var(--muted)">名次</small></th>';
+      }
+    });
+    thead+='<th>終點排名</th></tr>';
+
+    // 表身
+    let tbody='';
+    for(const [uid,e] of gEntries){
+      const r=rMap[uid]||{};
+      const myRecs=allRecs.filter(x=>x.uniqueId===uid);
+      let firstRec=null;
+      let row='<tr><td><strong>'+(e.bibNumber||'-')+'</strong></td>'
+        +'<td><span class="mono">'+uid+'</span></td>'
+        +'<td>'+(e.name||r.name||'-')+'</td>';
+      gStations.forEach((s,i)=>{
+        const rec=myRecs.find(x=>x.station===s);
+        if(!rec){
+          row+=i===0?'<td style="color:var(--muted)">未到</td>':'<td colspan="4" style="color:var(--muted);text-align:center">未到</td>';
+          return;
+        }
+        if(!firstRec)firstRec=rec;
+        if(i===0){
+          row+='<td>'+fmt(rec.scanTime)+'</td>';
+        } else {
+          const recIdx=myRecs.indexOf(rec);
+          const prevRec=myRecs[recIdx-1];
+          const seg=prevRec?diffHMS(rec.scanTime,prevRec.scanTime):'-';
+          const total=firstRec&&rec!==firstRec?diffHMS(rec.scanTime,firstRec.scanTime):'-';
+          const sRank=groupRankMap[uid+'_'+s]||'-';
+          row+='<td>'+fmt(rec.scanTime)+'</td><td>'+seg+'</td><td>'+total+'</td><td>'+(sRank!=='-'?'第'+sRank+'名':'-')+'</td>';
+        }
+      });
+      const finalRank=groupRankMap[uid]||'-';
+      row+='<td>'+(finalRank!=='-'?'<span class="badge badge-green">第'+finalRank+'名</span>':'-')+'</td></tr>';
+      tbody+=row;
     }
-    const finalRank=groupRankMap[uid]||'-';
-    row+='<td>'+(finalRank!=='-'?'<span class="badge badge-green">第'+finalRank+'名</span>':'-')+'</td></tr>';
-    tbody+=row;
+
+    resultHtml+='<div style="margin-bottom:28px">'
+      +'<div style="font-size:1rem;font-weight:700;margin-bottom:8px;color:var(--accent)">'+gName+'</div>'
+      +'<div class="table-wrap"><table><thead>'+thead+'</thead><tbody>'+tbody+'</tbody></table></div>'
+      +'</div>';
   }
 
-  result.innerHTML='<div class="table-wrap"><table><thead>'+thead+'</thead><tbody>'+tbody+'</tbody></table></div>';
-  // 顯示匯出按鈕
+  result.innerHTML=resultHtml||'<div class="loading-cell">找不到符合的選手</div>';
   document.getElementById('searchExportBtn').style.display='inline-flex';
-  // 儲存結果供匯出
-  window._lastSearchResult={targetEntries,groupStations,allStations,rMap,allRecs,groupRankMap};
+  window._lastSearchResult={targetEntries,groupStations,groupOrder,rMap,allRecs,groupRankMap};
 }
 
-// 查詢成績匯出CSV
+// 查詢成績匯出CSV（一組一檔）
 window.exportSearchCSV=function(){
   const d=window._lastSearchResult; if(!d){showToast('請先查詢','error');return;}
-  const {targetEntries,groupStations,allStations,rMap,allRecs,groupRankMap}=d;
-  let csv='編號,組別,ID,姓名';
-  allStations.forEach(s=>{csv+=','+s+'到達,'+s+'區段,'+s+'累積,'+s+'名次';});
-  csv+=',終點排名\n';
-  for(const [uid,e] of targetEntries){
-    const r=rMap[uid]||{};
-    const myRecs=allRecs.filter(x=>x.uniqueId===uid);
-    const stations=groupStations[e.group]||allStations;
-    let firstRec=null;
-    csv+='"'+(e.bibNumber||'')+'","'+(e.group||'')+'","'+uid+'","'+(e.name||r.name||'')+'"';
-    for(const s of allStations){
-      if(!stations.includes(s)){csv+=',,,,';continue;}
-      const rec=myRecs.find(x=>x.station===s);
-      if(!rec){csv+=',未到,,,';continue;}
-      if(!firstRec)firstRec=rec;
-      const recIdx=myRecs.indexOf(rec);
-      const seg=recIdx>0?diffHMS(rec.scanTime,myRecs[recIdx-1].scanTime):'-';
-      const total=firstRec&&rec!==firstRec?diffHMS(rec.scanTime,firstRec.scanTime):'起跑';
-      const sRank=groupRankMap[uid+'_'+s]||'-';
-      csv+=',"'+fmt(rec.scanTime)+'","'+seg+'","'+total+'",'+(sRank!=='-'?'第'+sRank+'名':'-');
+  const {targetEntries,groupStations,groupOrder,rMap,allRecs,groupRankMap}=d;
+  const dateStr=new Date().toLocaleDateString('zh-TW').replace(/\//g,'-');
+  let fileCount=0;
+  for(const gName of groupOrder){
+    const gStations=groupStations[gName]||[];
+    const gEntries=targetEntries.filter(([,e])=>e.group===gName);
+    if(!gEntries.length)continue;
+    // 表頭
+    let csv='編號,ID,姓名,'+gStations[0]+'到達';
+    for(let i=1;i<gStations.length;i++){
+      csv+=','+gStations[i]+'到達,'+gStations[i]+'區段,'+gStations[i]+'累積,'+gStations[i]+'名次';
     }
-    const finalRank=groupRankMap[uid]||'-';
-    csv+=','+(finalRank!=='-'?'第'+finalRank+'名':'-')+'\n';
+    csv+=',終點排名\n';
+    for(const [uid,e] of gEntries){
+      const r=rMap[uid]||{};
+      const myRecs=allRecs.filter(x=>x.uniqueId===uid);
+      let firstRec=null;
+      csv+='"'+(e.bibNumber||'')+'","'+uid+'","'+(e.name||r.name||'')+'"';
+      gStations.forEach((s,i)=>{
+        const rec=myRecs.find(x=>x.station===s);
+        if(!rec){csv+=i===0?',未到':',未到,,,';return;}
+        if(!firstRec)firstRec=rec;
+        if(i===0){
+          csv+=',"'+fmt(rec.scanTime)+'"';
+        } else {
+          const recIdx=myRecs.indexOf(rec);
+          const prevRec=myRecs[recIdx-1];
+          const seg=prevRec?diffHMS(rec.scanTime,prevRec.scanTime):'-';
+          const total=firstRec&&rec!==firstRec?diffHMS(rec.scanTime,firstRec.scanTime):'-';
+          const sRank=groupRankMap[uid+'_'+s]||'-';
+          csv+=',"'+fmt(rec.scanTime)+'","'+seg+'","'+total+'",'+(sRank!=='-'?'第'+sRank+'名':'-');
+        }
+      });
+      const finalRank=groupRankMap[uid]||'-';
+      csv+=','+(finalRank!=='-'?'第'+finalRank+'名':'-')+'\n';
+    }
+    // 延遲下載避免瀏覽器封鎖
+    setTimeout(()=>downloadCSV(csv,gName+'_成績_'+dateStr+'.csv'), fileCount*300);
+    fileCount++;
   }
-  downloadCSV(csv,'查詢成績_'+new Date().toLocaleDateString('zh-TW').replace(/\//g,'-')+'.csv');
-  showToast('CSV已下載');
+  showToast('共 '+fileCount+' 個檔案下載中...');
 }
 
 // ════════════════════════════
@@ -1113,8 +1148,8 @@ window.loadStats=async function(){
 
   let html='<div class="stats-grid" style="margin-bottom:24px">'
     +'<div class="stat-card large"><div class="stat-num">'+entries.length+'</div><div class="stat-label">報名總人數</div></div>'
-    +'<div class="stat-card large"><div class="stat-num">'+maleCount+'</div><div class="stat-label">報名男生人數</div></div>'
-    +'<div class="stat-card large"><div class="stat-num">'+femaleCount+'</div><div class="stat-label">報名女生人數</div></div>'
+    +'<div class="stat-card large"><div class="stat-num">'+maleCount+'</div><div class="stat-label">男生人數</div></div>'
+    +'<div class="stat-card large"><div class="stat-num">'+femaleCount+'</div><div class="stat-label">女生人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+totalFinishers+'</div><div class="stat-label">抵達終點總人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+overallProgress+'%</div><div class="stat-label">進度總百分比</div></div>'
     +'</div>';
@@ -1125,7 +1160,15 @@ window.loadStats=async function(){
     const lastStation=gStations[gStations.length-1];
     const finishers=lastStation?new Set(recs.filter(r=>r.station===lastStation&&ents.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size:0;
     const progress=calcProgress(ents,recs,gStations);
-    let card='<div class="runner-card" style="margin-bottom:16px"><div class="runner-card-header"><strong>'+label+'</strong> <span class="badge">報名'+ents.length+'人</span> <span class="badge badge-green">抵達終點'+finishers+'人</span> <span class="badge" style="background:rgba(249,115,22,.1);color:var(--accent);border-color:rgba(249,115,22,.3)">進度：'+progress+'%</span></div><div class="station-stats" style="margin-top:12px">';
+    const gMale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='男').length;
+    const gFemale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='女').length;
+    let card='<div class="runner-card" style="margin-bottom:16px"><div class="runner-card-header"><strong>'+label+'</strong>'
+      +' <span class="badge">報名'+ents.length+'人</span>'
+      +' <span class="badge">男生'+gMale+'人</span>'
+      +' <span class="badge">女生'+gFemale+'人</span>'
+      +' <span class="badge badge-green">抵達終點'+finishers+'人</span>'
+      +' <span class="badge" style="background:rgba(249,115,22,.1);color:var(--accent);border-color:rgba(249,115,22,.3)">進度：'+progress+'%</span>'
+      +'</div><div class="station-stats" style="margin-top:12px">';
     gStations.forEach((s,i)=>{
       const cnt=new Set(recs.filter(r=>r.station===s&&ents.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size;
       const pct=ents.length>0?Math.round(cnt/ents.length*100):0;
