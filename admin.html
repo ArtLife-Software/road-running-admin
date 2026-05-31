@@ -161,33 +161,69 @@ async function initLookupSection(){
     if(saved&&snap.docs.find(d=>d.id===saved))select.value=saved;
   }
   document.getElementById('lookupResult').innerHTML='';
+  // 重置 checkbox
+  document.getElementById('lookupAllEvents').checked=false;
+  document.getElementById('lookupEventRow').style.display='flex';
 }
+
+window.onLookupAllEventsChange=function(){
+  const isAll=document.getElementById('lookupAllEvents').checked;
+  document.getElementById('lookupEventRow').style.display=isAll?'none':'flex';
+}
+
 window.doLookup=async function(){
+  const isAll=document.getElementById('lookupAllEvents').checked;
   const eventId=document.getElementById('lookupEventSelect').value;
   const uid=document.getElementById('lookupId').value.trim();
   const idNum=document.getElementById('lookupIdNum').value.trim();
   const result=document.getElementById('lookupResult');
-  if(!eventId){showToast('請先選擇賽事','error');return;}
+  if(!isAll&&!eventId){showToast('請先選擇賽事','error');return;}
   if(!uid&&!idNum){showToast('請輸入 ID 或身分證字號','error');return;}
   result.innerHTML='<div class="loading-cell">查詢中...</div>';
 
   const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
-  const entrySnap=await getDocs(collection(db,'events',eventId,'runners'));
-  const entries=entrySnap.docs.map(d=>({id:d.id,...d.data()}));
 
-  const matched=entries.filter(e=>{
+  // 比對選手身分（找出 uniqueId）
+  function matchEntry(e){
     const r=rMap[e.uniqueId]||{};
     if(uid&&idNum) return (e.uniqueId||'').toLowerCase()===uid.toLowerCase()&&(r.idNumber||'').toLowerCase()===idNum.toLowerCase();
     if(uid) return (e.uniqueId||'').toLowerCase()===uid.toLowerCase();
     if(idNum) return (r.idNumber||'').toLowerCase()===idNum.toLowerCase();
     return false;
-  });
+  }
 
-  if(!matched.length){result.innerHTML='<div class="loading-cell" style="color:var(--red)">查無資料，請確認 ID 或身分證字號</div>';return;}
-  if(matched.length>1){result.innerHTML='<div class="loading-cell" style="color:var(--accent)">找到多筆符合資料，請同時輸入 ID 和身分證字號</div>';return;}
+  if(!isAll){
+    // 單一賽事
+    const entrySnap=await getDocs(collection(db,'events',eventId,'runners'));
+    const entries=entrySnap.docs.map(d=>({id:d.id,...d.data()}));
+    const matched=entries.filter(matchEntry);
+    if(!matched.length){result.innerHTML='<div class="loading-cell" style="color:var(--red)">查無資料，請確認 ID 或身分證字號</div>';return;}
+    if(matched.length>1){result.innerHTML='<div class="loading-cell" style="color:var(--accent)">找到多筆符合資料，請同時輸入 ID 和身分證字號</div>';return;}
+    result.innerHTML=await buildLookupCard(matched[0], eventId, rMap, null);
+  } else {
+    // 歷次賽事：依日期由新到舊
+    const evSnap=await getDocs(query(collection(db,'events'),orderBy('date','desc')));
+    let html='';
+    let found=false;
+    for(const evDoc of evSnap.docs){
+      const ev=evDoc.data();
+      const entrySnap=await getDocs(collection(db,'events',evDoc.id,'runners'));
+      const entries=entrySnap.docs.map(d=>({id:d.id,...d.data()}));
+      const matched=entries.filter(matchEntry);
+      if(!matched.length)continue;
+      if(matched.length>1){
+        html+='<div class="runner-card" style="margin-bottom:12px"><div style="font-size:.88rem;color:var(--muted)">'+ev.name+'（'+(ev.date||'日期不詳')+'）</div><div style="color:var(--accent);font-size:.85rem;margin-top:4px">找到多筆符合資料，請同時輸入 ID 和身分證字號</div></div>';
+        continue;
+      }
+      html+=await buildLookupCard(matched[0], evDoc.id, rMap, ev);
+      found=true;
+    }
+    if(!html){result.innerHTML='<div class="loading-cell" style="color:var(--red)">查無資料，請確認 ID 或身分證字號</div>';return;}
+    result.innerHTML=html;
+  }
+}
 
-  // 剛好一筆，顯示成績
-  const e=matched[0];
+async function buildLookupCard(e, eventId, rMap, evData){
   const r=rMap[e.uniqueId]||{};
   const recSnap=await getDocs(query(collection(db,'events',eventId,'records'),orderBy('scanTime','asc')));
   const allRecs=recSnap.docs.map(d=>d.data()).filter(x=>x.uniqueId===e.uniqueId);
@@ -196,29 +232,33 @@ window.doLookup=async function(){
   gSnap.docs.forEach(d=>{groupStations[d.data().name]=d.data().stations||[];});
   const stations=groupStations[e.group]||[];
 
-  let html='<div class="runner-card">'
+  // 賽事標題（歷次模式才顯示）
+  const evTitle=evData?'<div style="font-size:.75rem;color:var(--muted);margin-bottom:8px">'+evData.name+(evData.date?' ・ '+evData.date:'')+'</div>':'';
+
+  let html='<div class="runner-card" style="margin-bottom:16px">'+evTitle
     +'<div class="runner-card-header" style="margin-bottom:12px">'
     +'<strong style="font-size:1.1rem">'+(e.name||r.name||'')+'</strong>'
     +'<span class="badge" style="margin-left:8px">'+(e.group||'-')+'</span>'
     +'<span class="badge" style="margin-left:4px">號碼布 '+(e.bibNumber||'-')+'</span>'
     +'</div>';
-  if(!allRecs.length){html+='<p style="color:var(--muted);font-size:.88rem">尚無打卡記錄</p>';html+='</div>';result.innerHTML=html;return;}
+  if(!allRecs.length){html+='<p style="color:var(--muted);font-size:.88rem">尚無打卡記錄</p></div>';return html;}
   html+='<div class="station-stats">';
   const firstRec=allRecs[0];
   stations.forEach((s,i)=>{
     const rec=allRecs.find(x=>x.station===s);
     const arrived=!!rec;
-    const total=arrived&&rec!==firstRec?diffHMS(rec.scanTime,firstRec.scanTime):'起跑';
+    const total=arrived&&i>0?diffHMS(rec.scanTime,firstRec.scanTime):null;
     html+='<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">'
       +'<span class="station-num" style="background:'+(arrived?'var(--green)':'var(--surface2)')+';color:'+(arrived?'#fff':'var(--muted)')+';">'+(i+1)+'</span>'
       +'<span style="flex:1;font-size:.88rem">'+s+'</span>'
-      +(arrived?'<span style="font-family:var(--mono);font-size:.82rem">'+fmt(rec.scanTime)+'</span>'
-        +'<span style="font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-left:8px">'+total+'</span>'
+      +(arrived
+        ?'<span style="font-family:var(--mono);font-size:.82rem">'+fmt(rec.scanTime)+'</span>'
+          +(total?'<span style="font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-left:8px">'+total+'</span>':'')
         :'<span style="color:var(--muted);font-size:.82rem">未到</span>')
       +'</div>';
   });
   html+='</div></div>';
-  result.innerHTML=html;
+  return html;
 }
 
 // ════════════════════════════
@@ -321,7 +361,7 @@ async function loadEvents() {
     const gNames=gSnap.docs.map(g=>g.data().name).join('、')||'-';
     return '<tr'+(isActive?' class="row-active"':'')+'>'
       +'<td><strong>'+ev.name+'</strong></td><td>'+(ev.date||'-')+'</td><td>'+gNames+'</td>'
-      +'<td>'+(isActive?'<span class="badge badge-green">進行中</span>':'<span class="badge">已結束</span>')+'</td>'
+      +'<td>'+(isActive?'<span class="badge badge-green">進行中</span>':'<span class="badge">未啟用</span>')+'</td>'
       +'<td style="white-space:nowrap">'
       +(!isActive?'<button class="btn btn-sm btn-green" onclick="activateEvent(\''+d.id+'\')">開放掃描</button> ':'<button class="btn btn-sm btn-danger" onclick="deactivateEvent()">關閉掃描</button> ')
       +'<button class="btn btn-sm btn-ghost" onclick="editEvent(\''+d.id+'\')">編輯</button> '
@@ -1424,13 +1464,21 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <!-- 選手查詢成績（儀表板） -->
     <div id="sec-dashboard" class="section active">
       <div class="section-header"><div class="section-title">選手查詢成績</div></div>
-      <div class="event-select-row"><label>選擇賽事：</label><select id="lookupEventSelect" class="input"><option value="">請選擇賽事...</option></select></div>
       <div class="runner-card" style="margin-bottom:16px">
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:12px">
           <div class="input-group" style="margin:0"><label>ID</label><input id="lookupId" type="text" class="input" placeholder="R000001"></div>
           <div class="input-group" style="margin:0"><label>身分證字號</label><input id="lookupIdNum" type="text" class="input" placeholder="A123456789"></div>
         </div>
-        <button class="btn btn-primary" onclick="doLookup()">🔍 查詢成績</button>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <div id="lookupEventRow" class="event-select-row" style="margin:0;flex:1;min-width:200px"><label>選擇賽事：</label><select id="lookupEventSelect" class="input"><option value="">請選擇賽事...</option></select></div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;cursor:pointer;white-space:nowrap">
+            <input type="checkbox" id="lookupAllEvents" onchange="onLookupAllEventsChange()">
+            歷次賽事
+          </label>
+        </div>
+        <div style="margin-top:12px">
+          <button class="btn btn-primary" onclick="doLookup()">🔍 查詢成績</button>
+        </div>
       </div>
       <div id="lookupResult"></div>
     </div>
