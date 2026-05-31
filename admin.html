@@ -235,11 +235,13 @@ async function loadRunners() {
 }
 function renderRunners(list) {
   const tbody = document.getElementById('runnersTableBody');
-  if (!list.length) { tbody.innerHTML='<tr><td colspan="8" class="loading-cell">無資料</td></tr>'; return; }
+  if (!list.length) { tbody.innerHTML='<tr><td colspan="9" class="loading-cell">無資料</td></tr>'; return; }
   tbody.innerHTML = list.map(r =>
     '<tr><td><span class="mono">'+r.uniqueId+'</span></td>'
     +'<td>'+r.name+'</td><td>'+(r.gender||'-')+'</td><td>'+(r.birthday||'-')+'</td>'
-    +'<td>'+(r.phone||'-')+'</td><td>'+(r.email||'-')+'</td><td>'+(r.note||'-')+'</td>'
+    +'<td>'+(r.phone||'-')+'</td><td>'+(r.email||'-')+'</td>'
+    +'<td><span class="mono" style="font-size:.75rem">'+(r.idNumber||'-')+'</span></td>'
+    +'<td>'+(r.note||'-')+'</td>'
     +'<td style="white-space:nowrap">'
     +'<button class="btn btn-sm btn-ghost" onclick="editRunner(\''+r.id+'\')">編輯</button> '
     +'<button class="btn btn-sm btn-danger" onclick="deleteRunner(\''+r.id+'\',\''+r.name.replace(/'/g,'')+'\')">刪除</button>'
@@ -819,10 +821,10 @@ async function loadRecords(){
       if(snap.empty){tbody.innerHTML='<tr><td colspan="7" class="loading-cell">尚無打卡記錄</td></tr>';return;}
       tbody.innerHTML=snap.docs.map(d=>{
         const r=d.data();
-        return '<tr><td><span class="mono">'+(r.uniqueId||'')+'</span></td>'
-          +'<td><strong>'+(r.bibNumber||'-')+'</strong></td>'
-          +'<td>'+(r.name||'-')+'</td>'
+        return '<tr><td><strong>'+(r.bibNumber||'-')+'</strong></td>'
           +'<td><span class="badge">'+(r.group||'-')+'</span></td>'
+          +'<td><span class="mono">'+(r.uniqueId||'')+'</span></td>'
+          +'<td>'+(r.name||'-')+'</td>'
           +'<td>'+r.station+'</td>'
           +'<td>'+fmt(r.scanTime)+'</td>'
           +'<td><span style="font-size:.78rem;color:var(--muted)">'+(r.deviceName||'-')+'</span></td>'
@@ -852,28 +854,25 @@ window.printRecords=async function(){
   const snap=await getDocs(query(collection(db,'events',curRecordEventId,'records'),orderBy('scanTime','asc')));
   const rows=snap.docs.map(d=>{
     const r=d.data();
-    return '<tr><td>'+(r.uniqueId||'')+'</td><td>'+(r.bibNumber||'')+'</td><td>'+(r.name||'')+'</td><td>'+(r.group||'')+'</td><td>'+r.station+'</td><td>'+fmt(r.scanTime)+'</td><td>'+(r.deviceName||'-')+'</td></tr>';
+    return '<tr><td>'+(r.bibNumber||'')+'</td><td>'+(r.group||'')+'</td><td>'+(r.uniqueId||'')+'</td><td>'+(r.name||'')+'</td><td>'+r.station+'</td><td>'+fmt(r.scanTime)+'</td><td>'+(r.deviceName||'-')+'</td></tr>';
   }).join('');
   const win=window.open('','_blank');
   win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+evName+'</title><style>body{font-family:sans-serif;padding:20px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f0f0f0;padding:6px;border:1px solid #ddd}td{padding:5px 6px;border:1px solid #ddd}@media print{button{display:none}}</style></head><body>'
     +'<h2>'+evName+' 打卡記錄</h2><p style="font-size:11px;color:#666">'+new Date().toLocaleString('zh-TW')+' ｜ 共'+snap.size+'筆</p>'
     +'<button onclick="window.print()" style="margin-bottom:10px;padding:5px 12px;cursor:pointer">🖨️ 列印</button>'
-    +'<table><thead><tr><th>ID</th><th>編號</th><th>姓名</th><th>組別</th><th>站點</th><th>掃描時間</th><th>掃描器</th></tr></thead><tbody>'+rows+'</tbody></table></body></html>');
+    +'<table><thead><tr><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>站點</th><th>掃描時間</th><th>掃描器</th></tr></thead><tbody>'+rows+'</tbody></table></body></html>');
   win.document.close();
 }
 
-// ── 查詢全部選手切換 ──
-window.onSearchAllChange=function(){
-  const isAll=document.getElementById('searchAll').checked;
-  document.getElementById('searchKwArea').style.display=isAll?'none':'flex';
-  if(isAll) doSearch();
-}
+// ── 查詢全部選手切換（已移除，由欄位選項取代）──
 // ── 組別下拉切換（查詢成績）──
 window.onSearchFieldChange=async function(){
   const field=document.getElementById('searchField').value;
   const kwInput=document.getElementById('searchKw');
   const kwGroup=document.getElementById('searchKwGroup');
-  if(field==='group'){
+  if(field==='__all__'){
+    kwInput.style.display='none'; kwGroup.style.display='none';
+  } else if(field==='group'){
     kwInput.style.display='none'; kwGroup.style.display='block';
     await loadGroupDropdown('searchKwGroup','searchEventSelect');
   } else {
@@ -921,11 +920,11 @@ window.onSearchEventChange=async function(){
 }
 window.doSearch=async function(){
   const eventId=document.getElementById('searchEventSelect').value;
-  const isAll=document.getElementById('searchAll').checked;
   const field=document.getElementById('searchField').value;
+  const isAll=field==='__all__';
   const kw=field==='group'?(document.getElementById('searchKwGroup')?.value||''):document.getElementById('searchKw').value.trim().toLowerCase();
   if(!eventId){showToast('請先選擇賽事','error');return;}
-  if(!isAll&&!kw){showToast('請輸入查詢字詞','error');return;}
+  if(!isAll&&field!=='group'&&!kw){showToast('請輸入查詢字詞','error');return;}
   const result=document.getElementById('searchResult');
   result.innerHTML='<div class="loading-cell">查詢中...</div>';
 
@@ -946,6 +945,8 @@ window.doSearch=async function(){
       const val=f=>(e[f]||r[f]||'').toString().toLowerCase();
       if(field==='all') return ['uniqueId','name','bibNumber','group','gender','birthday','phone','email','idNumber','note'].some(f=>val(f).includes(kw))||(uid||'').toLowerCase().includes(kw);
       if(field==='uniqueId') return uid.toLowerCase().includes(kw);
+      if(field==='group') return (e.group||'')===kw;
+      if(field==='bibNumber') return (e.bibNumber||'').includes(kw);
       return val(field).includes(kw);
     });
   }
@@ -1000,7 +1001,7 @@ window.doSearch=async function(){
   }
 
   // 表頭
-  let thead='<tr><th>ID</th><th>姓名</th><th>編號</th><th>組別</th>';
+  let thead='<tr><th>編號</th><th>組別</th><th>ID</th><th>姓名</th>';
   allStations.forEach(s=>{thead+='<th>'+s+'<br><small style="font-weight:400;color:var(--muted)">到達</small></th><th>'+s+'<br><small style="font-weight:400;color:var(--muted)">區段</small></th><th>'+s+'<br><small style="font-weight:400;color:var(--muted)">累積</small></th><th>'+s+'<br><small style="font-weight:400;color:var(--muted)">名次</small></th>';});
   thead+='<th>終點排名</th></tr>';
 
@@ -1011,10 +1012,10 @@ window.doSearch=async function(){
     const myRecs=allRecs.filter(x=>x.uniqueId===uid);
     const stations=groupStations[e.group]||allStations;
     let firstRec=null;
-    let row='<tr><td><span class="mono">'+uid+'</span></td>'
-      +'<td>'+(e.name||r.name||'-')+'</td>'
-      +'<td><strong>'+(e.bibNumber||'-')+'</strong></td>'
-      +'<td><span class="badge">'+(e.group||'-')+'</span></td>';
+    let row='<tr><td><strong>'+(e.bibNumber||'-')+'</strong></td>'
+      +'<td><span class="badge">'+(e.group||'-')+'</span></td>'
+      +'<td><span class="mono">'+uid+'</span></td>'
+      +'<td>'+(e.name||r.name||'-')+'</td>';
     for(const s of allStations){
       if(!stations.includes(s)){row+='<td colspan="4" style="color:var(--muted);text-align:center">-</td>';continue;}
       const rec=myRecs.find(x=>x.station===s);
@@ -1073,9 +1074,13 @@ window.loadStats=async function(){
     return acc+new Set(records.filter(r=>r.station===lastStation&&entries.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size;
   },0);
   const overallProgress=calcProgress(entries, records, allStations);
+  const maleCount=entries.filter(e=>(rMap[e.uniqueId]?.gender)==='男').length;
+  const femaleCount=entries.filter(e=>(rMap[e.uniqueId]?.gender)==='女').length;
 
   let html='<div class="stats-grid" style="margin-bottom:24px">'
     +'<div class="stat-card large"><div class="stat-num">'+entries.length+'</div><div class="stat-label">報名總人數</div></div>'
+    +'<div class="stat-card large"><div class="stat-num">'+maleCount+'</div><div class="stat-label">報名男生人數</div></div>'
+    +'<div class="stat-card large"><div class="stat-num">'+femaleCount+'</div><div class="stat-label">報名女生人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+totalFinishers+'</div><div class="stat-label">抵達終點總人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+overallProgress+'%</div><div class="stat-label">進度總百分比</div></div>'
     +'</div>';
@@ -1238,6 +1243,9 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div class="input-group"><label>電子郵件</label><input id="loginEmail" type="email" class="input" placeholder="admin@example.com"></div>
     <div class="input-group"><label>密碼</label><input id="loginPassword" type="password" class="input" placeholder="••••••••"></div>
     <button id="loginBtn" class="btn btn-primary btn-full" onclick="doLogin()">登入</button>
+    <div style="text-align:center;margin-top:20px">
+      <a href="?mode=lookup" style="font-size:.82rem;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;gap:4px;transition:color .15s" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">🔍 選手查詢成績 →</a>
+    </div>
   </div>
 </div>
 
@@ -1323,7 +1331,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
         <input id="runnerSearchKw" type="text" class="input" placeholder="輸入查詢字詞...">
         <button class="btn btn-ghost" onclick="doRunnerSearch()">搜尋</button>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>備註</th><th>操作</th></tr></thead><tbody id="runnersTableBody"><tr><td colspan="8" class="loading-cell">載入中...</td></tr></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="runnersTableBody"><tr><td colspan="9" class="loading-cell">載入中...</td></tr></tbody></table></div>
     </div>
 
     <!-- 賽事管理 -->
@@ -1379,31 +1387,31 @@ tr.row-active td{background:rgba(249,115,22,.05);}
         </div>
       </div>
       <div class="event-select-row"><label>選擇賽事：</label><select id="recordEventSelect" class="input" onchange="onRecordEventChange()"><option value="">請選擇賽事...</option></select></div>
-      <div class="table-wrap"><table><thead><tr><th>ID</th><th>編號</th><th>姓名</th><th>組別</th><th>站點</th><th>掃描時間</th><th>掃描器</th></tr></thead><tbody id="recordsTableBody"><tr><td colspan="7" class="loading-cell">載入中...</td></tr></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>站點</th><th>掃描時間</th><th>掃描器</th></tr></thead><tbody id="recordsTableBody"><tr><td colspan="7" class="loading-cell">載入中...</td></tr></tbody></table></div>
     </div>
 
     <!-- 查詢成績 -->
     <div id="sec-search" class="section">
       <div class="section-header"><div class="section-title">查詢成績</div></div>
       <div class="event-select-row"><label>選擇賽事：</label><select id="searchEventSelect" class="input" onchange="onSearchEventChange()"><option value="">請選擇賽事...</option></select></div>
-      <div class="search-query-bar" style="flex-direction:column;align-items:stretch;gap:10px">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="searchAll" onchange="onSearchAllChange()"> 查詢全部選手</label>
-        <div id="searchKwArea" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <select id="searchField" class="input" style="width:auto" onchange="onSearchFieldChange()">
-            <option value="all">全部欄位</option>
-            <option value="uniqueId">ID</option>
-            <option value="name">姓名</option>
-            <option value="gender">性別</option>
-            <option value="birthday">生日</option>
-            <option value="phone">手機</option>
-            <option value="email">Email</option>
-            <option value="idNumber">身分證</option>
-            <option value="note">備註</option>
-          </select>
-          <input id="searchKw" type="text" class="input" placeholder="輸入查詢字詞..." style="flex:1;min-width:150px">
-          <select id="searchKwGroup" class="input" style="display:none;flex:1;min-width:150px"></select>
-          <button class="btn btn-primary" onclick="doSearch()">查詢</button>
-        </div>
+      <div class="search-query-bar" style="flex-direction:row;align-items:center;gap:8px;flex-wrap:wrap">
+        <select id="searchField" class="input" style="width:auto" onchange="onSearchFieldChange()">
+          <option value="__all__">全部選手</option>
+          <option value="bibNumber">編號</option>
+          <option value="group">組別</option>
+          <option value="all">全部欄位</option>
+          <option value="uniqueId">ID</option>
+          <option value="name">姓名</option>
+          <option value="gender">性別</option>
+          <option value="birthday">生日</option>
+          <option value="phone">手機</option>
+          <option value="email">Email</option>
+          <option value="idNumber">身分證</option>
+          <option value="note">備註</option>
+        </select>
+        <input id="searchKw" type="text" class="input" placeholder="輸入查詢字詞..." style="flex:1;min-width:150px;display:none">
+        <select id="searchKwGroup" class="input" style="display:none;flex:1;min-width:150px"></select>
+        <button class="btn btn-primary" onclick="doSearch()">查詢</button>
       </div>
       <div id="searchResult"></div>
     </div>
@@ -1482,7 +1490,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div class="modal-title" id="entryModalTitle">新增報名</div>
     <div class="input-group">
       <label>搜尋現有選手（ID或姓名）</label>
-      <input id="entryRunnerSearch" type="text" class="input" placeholder="輸入搜尋..." oninput="searchEntryRunner()">
+      <input id="entryRunnerSearch" type="text" class="input" placeholder="" oninput="searchEntryRunner()">
       <div id="entryRunnerResults" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-top:4px;max-height:150px;overflow-y:auto;display:none"></div>
       <input type="hidden" id="entryUniqueId">
       <div id="entryRunnerSelected" style="margin-top:6px;padding:7px 12px;background:var(--surface2);border-radius:8px;font-size:.82rem;display:none"></div>
