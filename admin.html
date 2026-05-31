@@ -87,7 +87,9 @@ function isSamePerson(a, b) {
   return cnt >= 3;
 }
 
-// ── 登入 ──
+// ── 登入 / 模式判斷 ──
+const isLookupMode = new URLSearchParams(location.search).get('mode')==='lookup';
+
 window.doLogin = async function() {
   const email = document.getElementById('loginEmail').value;
   const pw = document.getElementById('loginPassword').value;
@@ -98,6 +100,15 @@ window.doLogin = async function() {
 }
 window.doLogout = async function() { await signOut(auth); }
 onAuthStateChanged(auth, user => {
+  if (isLookupMode) {
+    // 選手查詢模式：不需登入，隱藏側邊欄/底部導覽，只顯示查詢頁
+    document.getElementById('loginScreen').style.display='none';
+    document.getElementById('appScreen').style.display='block';
+    document.getElementById('appScreen').classList.add('lookup-mode');
+    document.getElementById('sec-dashboard').classList.add('active');
+    initLookupSection();
+    return;
+  }
   if (user) {
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('appScreen').style.display='block';
@@ -129,7 +140,21 @@ window.showSection = function(id) {
 // 選手查詢成績（儀表板）
 // ════════════════════════════
 async function initLookupSection(){
-  await loadLockedEventSelect('lookupEventSelect', async activeId=>{ /* 已自動選取 */ });
+  const cfg=await getDoc(doc(db,'config','active'));
+  const activeId=cfg.exists()?cfg.data().eventId:null;
+  const select=document.getElementById('lookupEventSelect');
+  const snap=await getDocs(query(collection(db,'events'),orderBy('createdAt','desc')));
+  select.innerHTML='<option value="">請選擇賽事...</option>';
+  snap.docs.forEach(d=>{
+    const ev=d.data(); const o=document.createElement('option');
+    o.value=d.id; o.textContent=ev.name+(ev.date?' ('+ev.date+')':'');
+    select.appendChild(o);
+  });
+  if(activeId){select.value=activeId;}
+  else{
+    const saved=localStorage.getItem('lastEventId');
+    if(saved&&snap.docs.find(d=>d.id===saved))select.value=saved;
+  }
   document.getElementById('lookupResult').innerHTML='';
 }
 window.doLookup=async function(){
@@ -226,7 +251,7 @@ window.doRunnerSearch = function() {
   const kw = document.getElementById('runnerSearchKw').value.trim().toLowerCase();
   if (!kw) { renderRunners(allRunners); return; }
   renderRunners(allRunners.filter(r => {
-    if (field==='all') return ['uniqueId','name','phone','email','idNumber'].some(f=>(r[f]||'').toLowerCase().includes(kw));
+    if (field==='all') return ['uniqueId','name','gender','birthday','phone','email','idNumber','note'].some(f=>(r[f]||'').toLowerCase().includes(kw));
     return (r[field]||'').toLowerCase().includes(kw);
   }));
 }
@@ -408,14 +433,18 @@ async function loadLockedEntryEventSelect() {
     if(activeId&&d.id!==activeId)o.disabled=true;
     select.appendChild(o);
   });
-  if(activeId){select.value=activeId;select.disabled=true;loadEntries();}
-  else select.disabled=false;
+  if(activeId){select.value=activeId;select.disabled=true;localStorage.setItem('lastEventId',activeId);loadEntries();}
+  else{
+    select.disabled=false;
+    const saved=localStorage.getItem('lastEventId');
+    if(saved&&snap.docs.find(d=>d.id===saved)){select.value=saved;loadEntries();}
+  }
 }
 window.loadEntries=async function(){
   const eventId=document.getElementById('entryEventSelect').value;
   const tbody=document.getElementById('entriesTableBody');
-  if(!eventId){tbody.innerHTML='<tr><td colspan="5" class="loading-cell">請先選擇賽事</td></tr>';return;}
-  tbody.innerHTML='<tr><td colspan="5" class="loading-cell">載入中...</td></tr>';
+  if(!eventId){tbody.innerHTML='<tr><td colspan="11" class="loading-cell">請先選擇賽事</td></tr>';return;}
+  tbody.innerHTML='<tr><td colspan="11" class="loading-cell">載入中...</td></tr>';
   const snap=await getDocs(collection(db,'events',eventId,'runners'));
   const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
   allEntries=snap.docs.map(d=>({id:d.id,...d.data(),runnerData:rMap[d.data().uniqueId]||{}}));
@@ -423,30 +452,36 @@ window.loadEntries=async function(){
 }
 function renderEntries(list){
   const tbody=document.getElementById('entriesTableBody');
-  if(!list.length){tbody.innerHTML='<tr><td colspan="5" class="loading-cell">尚無報名資料</td></tr>';return;}
-  tbody.innerHTML=list.map(e=>
-    '<tr><td><span class="mono">'+(e.uniqueId||'')+'</span></td>'
-    +'<td>'+(e.name||e.runnerData?.name||'-')+'</td>'
-    +'<td><strong>'+(e.bibNumber||'-')+'</strong></td>'
-    +'<td><span class="badge">'+(e.group||'-')+'</span></td>'
-    +'<td style="white-space:nowrap">'
-    +'<button class="btn btn-sm btn-ghost" onclick="editEntry(\''+e.id+'\')">編輯</button> '
-    +'<button class="btn btn-sm btn-danger" onclick="deleteEntry(\''+e.id+'\',\''+(e.name||'').replace(/'/g,'')+'\')">刪除</button>'
-    +'</td></tr>'
-  ).join('');
+  if(!list.length){tbody.innerHTML='<tr><td colspan="11" class="loading-cell">尚無報名資料</td></tr>';return;}
+  tbody.innerHTML=list.map(e=>{
+    const r=e.runnerData||{};
+    return '<tr>'
+      +'<td><strong>'+(e.bibNumber||'-')+'</strong></td>'
+      +'<td><span class="badge">'+(e.group||'-')+'</span></td>'
+      +'<td><span class="mono">'+(e.uniqueId||'')+'</span></td>'
+      +'<td>'+(e.name||r.name||'-')+'</td>'
+      +'<td>'+(r.gender||'-')+'</td>'
+      +'<td>'+(r.birthday||'-')+'</td>'
+      +'<td>'+(r.phone||'-')+'</td>'
+      +'<td style="font-size:.78rem">'+(r.email||'-')+'</td>'
+      +'<td><span class="mono" style="font-size:.75rem">'+(r.idNumber||'-')+'</span></td>'
+      +'<td>'+(r.note||'-')+'</td>'
+      +'<td style="white-space:nowrap">'
+      +'<button class="btn btn-sm btn-ghost" onclick="editEntry(\''+e.id+'\')">編輯</button> '
+      +'<button class="btn btn-sm btn-danger" onclick="deleteEntry(\''+e.id+'\',\''+(e.name||'').replace(/'/g,'')+'\')">刪除</button>'
+      +'</td></tr>';
+  }).join('');
 }
 window.doEntrySearch=function(){
   const field=document.getElementById('entrySearchField').value;
-  const kw=document.getElementById('entrySearchKw').value.trim().toLowerCase();
+  const kw=field==='group'?(document.getElementById('entrySearchKwGroup')?.value||''):document.getElementById('entrySearchKw').value.trim().toLowerCase();
   if(!kw){renderEntries(allEntries);return;}
   renderEntries(allEntries.filter(e=>{
     const r=e.runnerData||{};
-    if(field==='all') return ['uniqueId','name','bibNumber','group'].some(f=>(e[f]||r[f]||'').toLowerCase().includes(kw));
-    if(field==='uniqueId') return (e.uniqueId||'').toLowerCase().includes(kw);
-    if(field==='name') return (e.name||r.name||'').toLowerCase().includes(kw);
-    if(field==='bibNumber') return (e.bibNumber||'').includes(kw);
-    if(field==='group') return (e.group||'').toLowerCase().includes(kw);
-    return false;
+    const val=f=>(e[f]||r[f]||'').toString().toLowerCase();
+    if(field==='all') return ['uniqueId','name','bibNumber','group','gender','birthday','phone','email','idNumber','note'].some(f=>val(f).includes(kw));
+    if(field==='group') return (e.group||'')===kw;
+    return val(field).includes(kw);
   }));
 }
 
@@ -612,34 +647,6 @@ window.autoFillBib=async function(){
   setFieldError('eBib',false);
 }
 
-// 日期選擇按鈕（報名 Modal）
-window.pickDate=function(){
-  const picker=document.getElementById('datePicker');
-  const newPicker=picker.cloneNode(true);
-  picker.parentNode.replaceChild(newPicker,picker);
-  newPicker.addEventListener('change',function(){
-    if(!newPicker.value)return;
-    const [y,m,d]=newPicker.value.split('-');
-    document.getElementById('eBirthday').value=y+'/'+m+'/'+d;
-    setFieldError('eBirthday',false);
-    newPicker.value='';
-  });
-  newPicker.click();
-}
-// 日期選擇按鈕（選手編輯 Modal）
-window.pickRunnerDate=function(){
-  const picker=document.getElementById('rDatePicker');
-  const newPicker=picker.cloneNode(true);
-  picker.parentNode.replaceChild(newPicker,picker);
-  newPicker.addEventListener('change',function(){
-    if(!newPicker.value)return;
-    const [y,m,d]=newPicker.value.split('-');
-    document.getElementById('rBirthday').value=y+'/'+m+'/'+d;
-    setFieldError('rBirthday',false);
-    newPicker.value='';
-  });
-  newPicker.click();
-}
 
 // 即時驗證
 window.validateEntryField=async function(field){
@@ -661,19 +668,23 @@ window.validateEntryField=async function(field){
 }
 
 window.searchEntryRunner=async function(){
-  const t=document.getElementById('entryRunnerSearch').value.trim();
+  const t=document.getElementById('entryRunnerSearch').value.trim().toLowerCase();
   const results=document.getElementById('entryRunnerResults');
   if(!t){results.style.display='none';return;}
   const snap=await getDocs(collection(db,'runners'));
-  const matched=snap.docs.map(d=>d.data()).filter(r=>(r.name||'').includes(t)||(r.uniqueId||'').toLowerCase().includes(t.toLowerCase())).slice(0,8);
+  const matched=snap.docs.map(d=>d.data()).filter(r=>
+    ['uniqueId','name','gender','birthday','phone','email','idNumber','note'].some(f=>(r[f]||'').toLowerCase().includes(t))
+  ).slice(0,8);
   if(!matched.length){results.style.display='none';return;}
   results.style.display='block';
   results.innerHTML=matched.map(r=>
     '<div onclick="selectEntryRunner(\''+r.uniqueId+'\',\''+r.name.replace(/'/g,'')+'\',\''+
-    (r.gender||'')+'\',\''+(r.birthday||'')+'\',\''+(r.phone||'')+'\',\''+(r.email||'')+'\',\''+(r.idNumber||'')+'\',\''+(r.note||'\'')+')" '
+    (r.gender||'')+'\',\''+(r.birthday||'')+'\',\''+(r.phone||'')+'\',\''+(r.email||'')+'\',\''+(r.idNumber||'')+'\',\''+(r.note||'').replace(/'/g,'')+'\'" '
     +'style="padding:10px 14px;cursor:pointer;font-size:.85rem;border-bottom:1px solid var(--border)" '
     +'onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'"> '
-    +'<span class="mono" style="font-size:.78rem">'+r.uniqueId+'</span> '+r.name+'</div>'
+    +'<span class="mono" style="font-size:.78rem">'+r.uniqueId+'</span> '+r.name
+    +(r.phone?'<span style="color:var(--muted);font-size:.78rem;margin-left:8px">'+r.phone+'</span>':'')
+    +'</div>'
   ).join('');
 }
 window.selectEntryRunner=function(uid,name,gender,birthday,phone,email,idNumber,note){
@@ -785,9 +796,13 @@ async function loadLockedEventSelect(selectId, cb) {
     if(activeId&&d.id!==activeId)o.disabled=true;
     select.appendChild(o);
   });
-  if(activeId){select.value=activeId;select.disabled=true;}
-  else select.disabled=false;
-  await cb(activeId);
+  if(activeId){select.value=activeId;select.disabled=true;localStorage.setItem('lastEventId',activeId);}
+  else{
+    select.disabled=false;
+    const saved=localStorage.getItem('lastEventId');
+    if(saved&&snap.docs.find(d=>d.id===saved))select.value=saved;
+  }
+  await cb(select.value||activeId);
 }
 window.onRecordEventChange=async function(){
   curRecordEventId=document.getElementById('recordEventSelect').value; loadRecords();
@@ -847,6 +862,12 @@ window.printRecords=async function(){
   win.document.close();
 }
 
+// ── 查詢全部選手切換 ──
+window.onSearchAllChange=function(){
+  const isAll=document.getElementById('searchAll').checked;
+  document.getElementById('searchKwArea').style.display=isAll?'none':'flex';
+  if(isAll) doSearch();
+}
 // ── 組別下拉切換（查詢成績）──
 window.onSearchFieldChange=async function(){
   const field=document.getElementById('searchField').value;
@@ -922,12 +943,10 @@ window.doSearch=async function(){
   if(!isAll){
     targetEntries=targetEntries.filter(([uid,e])=>{
       const r=rMap[uid]||{};
-      if(field==='all') return ['uniqueId','name','bibNumber','group'].some(f=>(e[f]||r[f]||'').toLowerCase().includes(kw))||(uid||'').toLowerCase().includes(kw);
+      const val=f=>(e[f]||r[f]||'').toString().toLowerCase();
+      if(field==='all') return ['uniqueId','name','bibNumber','group','gender','birthday','phone','email','idNumber','note'].some(f=>val(f).includes(kw))||(uid||'').toLowerCase().includes(kw);
       if(field==='uniqueId') return uid.toLowerCase().includes(kw);
-      if(field==='name') return (e.name||r.name||'').toLowerCase().includes(kw);
-      if(field==='bibNumber') return (e.bibNumber||'').toLowerCase().includes(kw);
-      if(field==='group') return (e.group||'')===kw;
-      return false;
+      return val(field).includes(kw);
     });
   }
   if(!targetEntries.length){result.innerHTML='<div class="loading-cell">找不到符合的選手</div>';return;}
@@ -1083,14 +1102,6 @@ window.loadStats=async function(){
     html+=renderGroupCard(g.name, gEntries, records, g.stations);
   }
 
-  // 男生統計
-  const maleEntries=entries.filter(e=>{const r=rMap[e.uniqueId];return (r?.gender||e.gender)==='男';});
-  if(maleEntries.length) html+=renderGroupCard('男生（全體）', maleEntries, records, allStations);
-
-  // 女生統計
-  const femaleEntries=entries.filter(e=>{const r=rMap[e.uniqueId];return (r?.gender||e.gender)==='女';});
-  if(femaleEntries.length) html+=renderGroupCard('女生（全體）', femaleEntries, records, allStations);
-
   content.innerHTML=html;
 }
 
@@ -1210,6 +1221,11 @@ tr.row-active td{background:rgba(249,115,22,.05);}
   .bottom-nav-item.active{color:var(--accent);}
 }
 @media(min-width:769px){.bottom-nav{display:none;}.top-bar{display:none;}}
+/* 選手查詢模式 */
+#appScreen.lookup-mode .sidebar{display:none!important;}
+#appScreen.lookup-mode .bottom-nav{display:none!important;}
+#appScreen.lookup-mode .top-bar{display:none!important;}
+#appScreen.lookup-mode .main{margin-left:0;max-width:700px;margin:0 auto;}
 </style>
 </head>
 <body>
@@ -1297,9 +1313,12 @@ tr.row-active td{background:rgba(249,115,22,.05);}
           <option value="all">全部欄位</option>
           <option value="uniqueId">ID</option>
           <option value="name">姓名</option>
+          <option value="gender">性別</option>
+          <option value="birthday">生日</option>
           <option value="phone">手機</option>
           <option value="email">Email</option>
           <option value="idNumber">身分證</option>
+          <option value="note">備註</option>
         </select>
         <input id="runnerSearchKw" type="text" class="input" placeholder="輸入查詢字詞...">
         <button class="btn btn-ghost" onclick="doRunnerSearch()">搜尋</button>
@@ -1332,16 +1351,22 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <div class="search-bar">
         <select id="entrySearchField" class="input" style="width:auto" onchange="onEntrySearchFieldChange()">
           <option value="all">全部欄位</option>
-          <option value="uniqueId">ID</option>
-          <option value="name">姓名</option>
           <option value="bibNumber">編號</option>
           <option value="group">組別</option>
+          <option value="uniqueId">ID</option>
+          <option value="name">姓名</option>
+          <option value="gender">性別</option>
+          <option value="birthday">生日</option>
+          <option value="phone">手機號碼</option>
+          <option value="email">E-Mail</option>
+          <option value="idNumber">身分證字號</option>
+          <option value="note">備註</option>
         </select>
         <input id="entrySearchKw" type="text" class="input" placeholder="輸入查詢字詞...">
         <select id="entrySearchKwGroup" class="input" style="display:none"></select>
         <button class="btn btn-ghost" onclick="doEntrySearch()">搜尋</button>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>編號</th><th>組別</th><th>操作</th></tr></thead><tbody id="entriesTableBody"><tr><td colspan="5" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="entriesTableBody"><tr><td colspan="11" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
     </div>
 
     <!-- 打卡記錄 -->
@@ -1362,14 +1387,18 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <div class="section-header"><div class="section-title">查詢成績</div></div>
       <div class="event-select-row"><label>選擇賽事：</label><select id="searchEventSelect" class="input" onchange="onSearchEventChange()"><option value="">請選擇賽事...</option></select></div>
       <div class="search-query-bar" style="flex-direction:column;align-items:stretch;gap:10px">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="searchAll" onchange="document.getElementById('searchKwArea').style.display=this.checked?'none':'flex'"> 查詢全部選手</label>
+        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="searchAll" onchange="onSearchAllChange()"> 查詢全部選手</label>
         <div id="searchKwArea" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <select id="searchField" class="input" style="width:auto" onchange="onSearchFieldChange()">
             <option value="all">全部欄位</option>
             <option value="uniqueId">ID</option>
             <option value="name">姓名</option>
-            <option value="bibNumber">編號</option>
-            <option value="group">組別</option>
+            <option value="gender">性別</option>
+            <option value="birthday">生日</option>
+            <option value="phone">手機</option>
+            <option value="email">Email</option>
+            <option value="idNumber">身分證</option>
+            <option value="note">備註</option>
           </select>
           <input id="searchKw" type="text" class="input" placeholder="輸入查詢字詞..." style="flex:1;min-width:150px">
           <select id="searchKwGroup" class="input" style="display:none;flex:1;min-width:150px"></select>
@@ -1399,8 +1428,10 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div class="input-group"><label>生日（yyyy/mm/dd）</label>
       <div class="input-row">
         <input id="rBirthday" type="text" class="input" placeholder="yyyy/mm/dd" oninput="setFieldError('rBirthday',!validateBirthday(this.value))">
-        <input type="date" id="rDatePicker" style="display:none">
-        <button type="button" class="btn btn-ghost btn-sm" onclick="pickRunnerDate()">📅</button>
+        <div style="position:relative">
+          <button type="button" class="btn btn-ghost btn-sm">📅</button>
+          <input type="date" id="rDatePicker" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('rBirthday').value=y+'/'+m+'/'+d;setFieldError('rBirthday',false);this.value=''}">
+        </div>
       </div>
     </div>
     <div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="rPhone" type="tel" class="input" oninput="setFieldError('rPhone',!validatePhone(this.value))"></div>
@@ -1468,8 +1499,10 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div class="input-group"><label>生日（yyyy/mm/dd）</label>
       <div class="input-row">
         <input id="eBirthday" type="text" class="input" placeholder="yyyy/mm/dd" onblur="validateEntryField('birthday')">
-        <input type="date" id="datePicker" style="display:none">
-        <button type="button" class="btn btn-ghost btn-sm" onclick="pickDate()">📅</button>
+        <div style="position:relative">
+          <button type="button" class="btn btn-ghost btn-sm">📅</button>
+          <input type="date" id="datePicker" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('eBirthday').value=y+'/'+m+'/'+d;setFieldError('eBirthday',false);this.value=''}">
+        </div>
       </div>
     </div>
     <div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="ePhone" type="tel" class="input" placeholder="0912345678" onblur="validateEntryField('phone')"></div>
