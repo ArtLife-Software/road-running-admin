@@ -46,6 +46,15 @@ function downloadCSV(csv, filename) {
   a.href = URL.createObjectURL(blob);
   a.download = filename; a.click();
 }
+function fmtFileDateTime() {
+  const now = new Date();
+  const d = now.toLocaleDateString('zh-TW').replace(/\//g,'-');
+  const t = now.toLocaleTimeString('zh-TW',{hour12:false}).replace(/:/g,'');
+  return d+'_'+t;
+}
+function evFileName(evName, evDate) {
+  return evName+(evDate?'('+evDate+')':'');
+}
 
 // ── 格式驗證 ──
 function validateBirthday(v) {
@@ -304,7 +313,7 @@ window.exportRunners = async function() {
       +(r.phone||'')+'","'+(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'","'
       +fmtDT(r.createdAt)+'","'+fmtDT(r.updatedAt)+'"\n';
   });
-  downloadCSV(csv, '選手資料_'+new Date().toLocaleDateString('zh-TW').replace(/\//g,'-')+'.csv');
+  downloadCSV(csv, '選手資料_'+fmtFileDateTime()+'.csv');
   showToast('選手資料已匯出');
 }
 window.editRunner = async function(id) {
@@ -630,6 +639,7 @@ window.exportEntries=async function(){
   const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
   const evDoc=await getDoc(doc(db,'events',eventId));
   const evName=evDoc.data()?.name||'賽事';
+  const evDate=evDoc.data()?.date||'';
   let csv='編號,組別,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註\n';
   snap.docs.forEach(d=>{
     const e=d.data(); const r=rMap[e.uniqueId]||{};
@@ -637,7 +647,7 @@ window.exportEntries=async function(){
       +(r.gender||'')+'","'+(r.birthday||'')+'","'+(r.phone||'')+'","'
       +(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'"\n';
   });
-  downloadCSV(csv,evName+'_報名資料_'+new Date().toLocaleDateString('zh-TW').replace(/\//g,'-')+'.csv');
+  downloadCSV(csv,evFileName(evName,evDate)+'_報名資料_'+fmtFileDateTime()+'.csv');
   showToast('報名資料已匯出');
 }
 
@@ -878,12 +888,13 @@ window.exportRecordsCSV=async function(){
   if(snap.empty){showToast('無資料','error');return;}
   const evDoc=await getDoc(doc(db,'events',curRecordEventId));
   const evName=evDoc.data()?.name||'賽事';
+  const evDate=evDoc.data()?.date||'';
   let csv='ID,姓名,編號,組別,站點,掃描時間\n';
   snap.docs.forEach(d=>{
     const r=d.data();
     csv+='"'+(r.uniqueId||'')+'","'+(r.name||'')+'","'+(r.bibNumber||'')+'","'+(r.group||'')+'","'+r.station+'","'+fmtDT(r.scanTime)+'"\n';
   });
-  downloadCSV(csv,evName+'_打卡記錄_'+new Date().toLocaleDateString('zh-TW').replace(/\//g,'-')+'.csv');
+  downloadCSV(csv,evFileName(evName,evDate)+'_打卡記錄_'+fmtFileDateTime()+'.csv');
   showToast('CSV已下載');
 }
 window.printRecords=async function(){
@@ -968,6 +979,9 @@ window.doSearch=async function(){
   result.innerHTML='<div class="loading-cell">查詢中...</div>';
 
   // 載入資料
+  const evDoc=await getDoc(doc(db,'events',eventId));
+  const evName=evDoc.data()?.name||'賽事';
+  const evDate=evDoc.data()?.date||'';
   const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
   const entryMap={};
   (await getDocs(collection(db,'events',eventId,'runners'))).docs.forEach(d=>{entryMap[d.data().uniqueId]=d.data();});
@@ -1095,14 +1109,14 @@ window.doSearch=async function(){
 
   result.innerHTML=resultHtml||'<div class="loading-cell">找不到符合的選手</div>';
   document.getElementById('searchExportBtn').style.display='inline-flex';
-  window._lastSearchResult={targetEntries,groupStations,groupOrder,rMap,allRecs,groupRankMap};
+  window._lastSearchResult={targetEntries,groupStations,groupOrder,rMap,allRecs,groupRankMap,evName,evDate};
 }
 
 // 查詢成績匯出CSV（一組一檔）
 window.exportSearchCSV=function(){
   const d=window._lastSearchResult; if(!d){showToast('請先查詢','error');return;}
-  const {targetEntries,groupStations,groupOrder,rMap,allRecs,groupRankMap}=d;
-  const dateStr=new Date().toLocaleDateString('zh-TW').replace(/\//g,'-');
+  const {targetEntries,groupStations,groupOrder,rMap,allRecs,groupRankMap,evName,evDate}=d;
+  const dateStr=fmtFileDateTime();
   let fileCount=0;
   for(const gName of groupOrder){
     const gStations=groupStations[gName]||[];
@@ -1138,7 +1152,7 @@ window.exportSearchCSV=function(){
       csv+=','+(finalRank!=='-'?'第'+finalRank+'名':'-')+'\n';
     }
     // 延遲下載避免瀏覽器封鎖
-    setTimeout(()=>downloadCSV(csv,gName+'_成績_'+dateStr+'.csv'), fileCount*300);
+    setTimeout(()=>downloadCSV(csv,evFileName(evName,evDate)+'_查詢成績_'+gName+'_'+dateStr+'.csv'), fileCount*300);
     fileCount++;
   }
   showToast('共 '+fileCount+' 個檔案下載中...');
