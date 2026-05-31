@@ -90,6 +90,8 @@ function isSamePerson(a, b) {
 // ── 登入 / 模式判斷 ──
 const isLookupMode = new URLSearchParams(location.search).get('mode')==='lookup';
 
+const ADMIN_EMAIL='lin.wushian@gmail.com';
+
 window.doLogin = async function() {
   const email = document.getElementById('loginEmail').value;
   const pw = document.getElementById('loginPassword').value;
@@ -101,7 +103,6 @@ window.doLogin = async function() {
 window.doLogout = async function() { await signOut(auth); }
 onAuthStateChanged(auth, user => {
   if (isLookupMode) {
-    // 選手查詢模式：不需登入，隱藏側邊欄/底部導覽，只顯示查詢頁
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('appScreen').style.display='block';
     document.getElementById('appScreen').classList.add('lookup-mode');
@@ -114,6 +115,9 @@ onAuthStateChanged(auth, user => {
     document.getElementById('appScreen').style.display='block';
     document.getElementById('userEmail').textContent=user.email;
     document.getElementById('topUserEmail').textContent=user.email;
+    // 管理員才顯示帳戶管理
+    const isAdmin=user.email===ADMIN_EMAIL;
+    document.querySelectorAll('.admin-only').forEach(el=>el.style.display=isAdmin?'flex':'none');
     initLookupSection();
   } else {
     document.getElementById('loginScreen').style.display='flex';
@@ -134,6 +138,7 @@ window.showSection = function(id) {
   if (id==='records')   loadRecordsSection();
   if (id==='search')    initSearchSection();
   if (id==='stats')     loadStatsSection();
+  if (id==='accounts')  loadAccountsSection();
 }
 
 // ════════════════════════════
@@ -160,32 +165,26 @@ async function initLookupSection(){
 window.doLookup=async function(){
   const eventId=document.getElementById('lookupEventSelect').value;
   const uid=document.getElementById('lookupId').value.trim();
-  const name=document.getElementById('lookupName').value.trim();
-  const phone=document.getElementById('lookupPhone').value.trim();
-  const email=document.getElementById('lookupEmail').value.trim();
   const idNum=document.getElementById('lookupIdNum').value.trim();
   const result=document.getElementById('lookupResult');
   if(!eventId){showToast('請先選擇賽事','error');return;}
-  if(!uid&&!name&&!phone&&!email&&!idNum){showToast('請至少輸入一個查詢條件','error');return;}
+  if(!uid&&!idNum){showToast('請輸入 ID 或身分證字號','error');return;}
   result.innerHTML='<div class="loading-cell">查詢中...</div>';
 
   const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
   const entrySnap=await getDocs(collection(db,'events',eventId,'runners'));
   const entries=entrySnap.docs.map(d=>({id:d.id,...d.data()}));
 
-  // 比對條件
   const matched=entries.filter(e=>{
     const r=rMap[e.uniqueId]||{};
-    if(uid&&!(e.uniqueId||'').toLowerCase().includes(uid.toLowerCase()))return false;
-    if(name&&!(e.name||r.name||'').includes(name))return false;
-    if(phone&&!(r.phone||'').includes(phone))return false;
-    if(email&&!(r.email||'').toLowerCase().includes(email.toLowerCase()))return false;
-    if(idNum&&!(r.idNumber||'').toLowerCase().includes(idNum.toLowerCase()))return false;
-    return true;
+    if(uid&&idNum) return (e.uniqueId||'').toLowerCase()===uid.toLowerCase()&&(r.idNumber||'').toLowerCase()===idNum.toLowerCase();
+    if(uid) return (e.uniqueId||'').toLowerCase()===uid.toLowerCase();
+    if(idNum) return (r.idNumber||'').toLowerCase()===idNum.toLowerCase();
+    return false;
   });
 
-  if(!matched.length){result.innerHTML='<div class="loading-cell" style="color:var(--red)">查無資料，請確認查詢條件</div>';return;}
-  if(matched.length>1){result.innerHTML='<div class="loading-cell" style="color:var(--accent)">找到 '+matched.length+' 筆結果，請增加查詢條件以精確定位</div>';return;}
+  if(!matched.length){result.innerHTML='<div class="loading-cell" style="color:var(--red)">查無資料，請確認 ID 或身分證字號</div>';return;}
+  if(matched.length>1){result.innerHTML='<div class="loading-cell" style="color:var(--accent)">找到多筆符合資料，請同時輸入 ID 和身分證字號</div>';return;}
 
   // 剛好一筆，顯示成績
   const e=matched[0];
@@ -1033,6 +1032,41 @@ window.doSearch=async function(){
   }
 
   result.innerHTML='<div class="table-wrap"><table><thead>'+thead+'</thead><tbody>'+tbody+'</tbody></table></div>';
+  // 顯示匯出按鈕
+  document.getElementById('searchExportBtn').style.display='inline-flex';
+  // 儲存結果供匯出
+  window._lastSearchResult={targetEntries,groupStations,allStations,rMap,allRecs,groupRankMap};
+}
+
+// 查詢成績匯出CSV
+window.exportSearchCSV=function(){
+  const d=window._lastSearchResult; if(!d){showToast('請先查詢','error');return;}
+  const {targetEntries,groupStations,allStations,rMap,allRecs,groupRankMap}=d;
+  let csv='編號,組別,ID,姓名';
+  allStations.forEach(s=>{csv+=','+s+'到達,'+s+'區段,'+s+'累積,'+s+'名次';});
+  csv+=',終點排名\n';
+  for(const [uid,e] of targetEntries){
+    const r=rMap[uid]||{};
+    const myRecs=allRecs.filter(x=>x.uniqueId===uid);
+    const stations=groupStations[e.group]||allStations;
+    let firstRec=null;
+    csv+='"'+(e.bibNumber||'')+'","'+(e.group||'')+'","'+uid+'","'+(e.name||r.name||'')+'"';
+    for(const s of allStations){
+      if(!stations.includes(s)){csv+=',,,,';continue;}
+      const rec=myRecs.find(x=>x.station===s);
+      if(!rec){csv+=',未到,,,';continue;}
+      if(!firstRec)firstRec=rec;
+      const recIdx=myRecs.indexOf(rec);
+      const seg=recIdx>0?diffHMS(rec.scanTime,myRecs[recIdx-1].scanTime):'-';
+      const total=firstRec&&rec!==firstRec?diffHMS(rec.scanTime,firstRec.scanTime):'起跑';
+      const sRank=groupRankMap[uid+'_'+s]||'-';
+      csv+=',"'+fmt(rec.scanTime)+'","'+seg+'","'+total+'",'+(sRank!=='-'?'第'+sRank+'名':'-');
+    }
+    const finalRank=groupRankMap[uid]||'-';
+    csv+=','+(finalRank!=='-'?'第'+finalRank+'名':'-')+'\n';
+  }
+  downloadCSV(csv,'查詢成績_'+new Date().toLocaleDateString('zh-TW').replace(/\//g,'-')+'.csv');
+  showToast('CSV已下載');
 }
 
 // ════════════════════════════
@@ -1108,6 +1142,58 @@ window.loadStats=async function(){
   }
 
   content.innerHTML=html;
+}
+
+// ════════════════════════════
+// 帳戶管理（管理員限定）
+// ════════════════════════════
+async function loadAccountsSection(){
+  const list=document.getElementById('accountsTableBody');
+  list.innerHTML='<tr><td colspan="3" class="loading-cell">載入中...</td></tr>';
+  const snap=await getDocs(collection(db,'accounts'));
+  if(snap.empty){list.innerHTML='<tr><td colspan="3" class="loading-cell">尚無其他帳戶</td></tr>';return;}
+  list.innerHTML=snap.docs.map(d=>{
+    const a=d.data();
+    return '<tr><td>'+a.email+'</td><td>'+(a.note||'-')+'</td>'
+      +'<td style="white-space:nowrap"><button class="btn btn-sm btn-danger" onclick="deleteAccount(\''+d.id+'\',\''+a.email+'\')">刪除</button></td></tr>';
+  }).join('');
+}
+window.showAddAccount=function(){
+  document.getElementById('newAccEmail').value='';
+  document.getElementById('newAccPassword').value='';
+  document.getElementById('newAccNote').value='';
+  document.getElementById('accountModal').style.display='flex';
+}
+window.saveAccount=async function(){
+  const email=document.getElementById('newAccEmail').value.trim();
+  const password=document.getElementById('newAccPassword').value.trim();
+  const note=document.getElementById('newAccNote').value.trim();
+  if(!email||!password){showToast('請填寫 Email 和密碼','error');return;}
+  if(password.length<6){showToast('密碼至少6碼','error');return;}
+  const btn=document.querySelector('#accountModal .btn-primary');
+  btn.textContent='建立中...'; btn.disabled=true;
+  try{
+    // 用第二個 Firebase App 實例建立帳號，不影響目前管理員登入
+    const {initializeApp:init2}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
+    const {getAuth:getAuth2,createUserWithEmailAndPassword:createUser2,signOut:signOut2}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
+    const secApp=init2(firebaseConfig,'sec_'+Date.now());
+    const secAuth=getAuth2(secApp);
+    const cred=await createUser2(secAuth,email,password);
+    await signOut2(secAuth);
+    await addDoc(collection(db,'accounts'),{email,note,createdAt:serverTimestamp()});
+    showToast('帳戶已建立');
+    closeModal('accountModal');
+    loadAccountsSection();
+  }catch(e){
+    if(e.code==='auth/email-already-in-use') showToast('此 Email 已被使用','error');
+    else showToast('建立失敗：'+e.message,'error');
+  }finally{btn.textContent='建立帳戶';btn.disabled=false;}
+}
+window.deleteAccount=async function(docId,email){
+  if(!confirm('確定刪除帳戶「'+email+'」？\n\n請注意：需另至 Firebase Console > Authentication 手動刪除 Auth 帳號。'))return;
+  await deleteDoc(doc(db,'accounts',docId));
+  showToast('記錄已刪除，請至 Firebase Console 刪除 Auth 帳號');
+  loadAccountsSection();
 }
 
 // ── Modal & Toast ──
@@ -1264,6 +1350,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <div class="nav-item" data-nav="records" onclick="showSection('records')"><span class="nav-icon">📋</span><span>打卡記錄</span></div>
       <div class="nav-item" data-nav="search" onclick="showSection('search')"><span class="nav-icon">🔍</span><span>查詢成績</span></div>
       <div class="nav-item" data-nav="stats" onclick="showSection('stats')"><span class="nav-icon">📈</span><span>統計分析</span></div>
+      <div class="nav-item admin-only" data-nav="accounts" onclick="showSection('accounts')" style="display:none"><span class="nav-icon">👤</span><span>帳戶管理</span></div>
     </nav>
     <div class="sidebar-footer">
       <div class="user-email" id="userEmail"></div>
@@ -1296,12 +1383,8 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <div class="section-header"><div class="section-title">選手查詢成績</div></div>
       <div class="event-select-row"><label>選擇賽事：</label><select id="lookupEventSelect" class="input"><option value="">請選擇賽事...</option></select></div>
       <div class="runner-card" style="margin-bottom:16px">
-        <div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">輸入一個或多個條件查詢，結果唯一才顯示成績</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:12px">
           <div class="input-group" style="margin:0"><label>ID</label><input id="lookupId" type="text" class="input" placeholder="R000001"></div>
-          <div class="input-group" style="margin:0"><label>姓名</label><input id="lookupName" type="text" class="input" placeholder="王小明"></div>
-          <div class="input-group" style="margin:0"><label>手機</label><input id="lookupPhone" type="tel" class="input" placeholder="0912345678"></div>
-          <div class="input-group" style="margin:0"><label>Email</label><input id="lookupEmail" type="email" class="input" placeholder="example@email.com"></div>
           <div class="input-group" style="margin:0"><label>身分證字號</label><input id="lookupIdNum" type="text" class="input" placeholder="A123456789"></div>
         </div>
         <button class="btn btn-primary" onclick="doLookup()">🔍 查詢成績</button>
@@ -1371,7 +1454,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
           <option value="note">備註</option>
         </select>
         <input id="entrySearchKw" type="text" class="input" placeholder="輸入查詢字詞...">
-        <select id="entrySearchKwGroup" class="input" style="display:none"></select>
+        <select id="entrySearchKwGroup" class="input" style="display:none;flex:1;min-width:150px"></select>
         <button class="btn btn-ghost" onclick="doEntrySearch()">搜尋</button>
       </div>
       <div class="table-wrap"><table><thead><tr><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="entriesTableBody"><tr><td colspan="11" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
@@ -1392,14 +1475,17 @@ tr.row-active td{background:rgba(249,115,22,.05);}
 
     <!-- 查詢成績 -->
     <div id="sec-search" class="section">
-      <div class="section-header"><div class="section-title">查詢成績</div></div>
+      <div class="section-header">
+        <div class="section-title">查詢成績</div>
+        <button class="btn btn-ghost" id="searchExportBtn" style="display:none" onclick="exportSearchCSV()">📤 匯出 CSV</button>
+      </div>
       <div class="event-select-row"><label>選擇賽事：</label><select id="searchEventSelect" class="input" onchange="onSearchEventChange()"><option value="">請選擇賽事...</option></select></div>
       <div class="search-query-bar" style="flex-direction:row;align-items:center;gap:8px;flex-wrap:wrap">
         <select id="searchField" class="input" style="width:auto" onchange="onSearchFieldChange()">
           <option value="__all__">全部選手</option>
+          <option value="all">全部欄位</option>
           <option value="bibNumber">編號</option>
           <option value="group">組別</option>
-          <option value="all">全部欄位</option>
           <option value="uniqueId">ID</option>
           <option value="name">姓名</option>
           <option value="gender">性別</option>
@@ -1421,6 +1507,16 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <div class="section-header"><div class="section-title">統計分析</div></div>
       <div class="event-select-row"><label>選擇賽事：</label><select id="statsEventSelect" class="input" onchange="loadStats()"><option value="">請選擇賽事...</option></select></div>
       <div id="statsContent"><p style="color:var(--muted);text-align:center;padding:40px">請選擇賽事</p></div>
+    </div>
+
+    <!-- 帳戶管理（管理員限定） -->
+    <div id="sec-accounts" class="section">
+      <div class="section-header">
+        <div class="section-title">帳戶管理</div>
+        <button class="btn btn-primary" onclick="showAddAccount()">＋ 新增帳戶</button>
+      </div>
+      <div class="csv-hint">此頁面僅管理員可見。新增的帳戶可登入管理後台，擁有與管理員相同權限，但無法進入此帳戶管理頁面。刪除帳戶後請至 Firebase Console 確認 Auth 端已移除。</div>
+      <div class="table-wrap"><table><thead><tr><th>Email</th><th>備註</th><th>操作</th></tr></thead><tbody id="accountsTableBody"><tr><td colspan="3" class="loading-cell">載入中...</td></tr></tbody></table></div>
     </div>
 
   </div>
@@ -1489,8 +1585,8 @@ tr.row-active td{background:rgba(249,115,22,.05);}
   <div class="modal">
     <div class="modal-title" id="entryModalTitle">新增報名</div>
     <div class="input-group">
-      <label>搜尋現有選手（ID或姓名）</label>
-      <input id="entryRunnerSearch" type="text" class="input" placeholder="" oninput="searchEntryRunner()">
+      <label>搜尋現有選手</label>
+      <input id="entryRunnerSearch" type="text" class="input" placeholder="輸入任意欄位資訊" oninput="searchEntryRunner()">
       <div id="entryRunnerResults" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-top:4px;max-height:150px;overflow-y:auto;display:none"></div>
       <input type="hidden" id="entryUniqueId">
       <div id="entryRunnerSelected" style="margin-top:6px;padding:7px 12px;background:var(--surface2);border-radius:8px;font-size:.82rem;display:none"></div>
@@ -1523,5 +1619,16 @@ tr.row-active td{background:rgba(249,115,22,.05);}
 </div>
 
 <div id="toast" class="toast"></div>
+
+<!-- 帳戶管理 Modal -->
+<div id="accountModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-title">新增帳戶</div>
+    <div class="input-group"><label>Email *</label><input id="newAccEmail" type="email" class="input" placeholder="user@example.com"></div>
+    <div class="input-group"><label>預設密碼 *（至少6碼）</label><input id="newAccPassword" type="text" class="input" placeholder="預設密碼"></div>
+    <div class="input-group"><label>備註</label><input id="newAccNote" type="text" class="input" placeholder="例：場地負責人"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('accountModal')">取消</button><button class="btn btn-primary" onclick="saveAccount()">建立帳戶</button></div>
+  </div>
+</div>
 </body>
 </html>
