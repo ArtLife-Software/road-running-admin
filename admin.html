@@ -298,10 +298,13 @@ function renderRunners(list) {
 }
 window.doRunnerSearch = function() {
   const field = document.getElementById('runnerSearchField').value;
-  const kw = document.getElementById('runnerSearchKw').value.trim().toLowerCase();
-  if (!kw) { renderRunners(allRunners); return; }
+  const kw = field==='gender'
+    ? document.getElementById('runnerSearchKwGender').value
+    : document.getElementById('runnerSearchKw').value.trim().toLowerCase();
+  if (!kw && field!=='gender') { renderRunners(allRunners); return; }
   renderRunners(allRunners.filter(r => {
     if (field==='all') return ['uniqueId','name','gender','birthday','phone','email','idNumber','note'].some(f=>(r[f]||'').toLowerCase().includes(kw));
+    if (field==='gender') return (r.gender||'')===kw;
     return (r[field]||'').toLowerCase().includes(kw);
   }));
 }
@@ -524,13 +527,17 @@ function renderEntries(list){
 }
 window.doEntrySearch=function(){
   const field=document.getElementById('entrySearchField').value;
-  const kw=field==='group'?(document.getElementById('entrySearchKwGroup')?.value||''):document.getElementById('entrySearchKw').value.trim().toLowerCase();
-  if(!kw){renderEntries(allEntries);return;}
+  let kw;
+  if(field==='group') kw=document.getElementById('entrySearchKwGroup')?.value||'';
+  else if(field==='gender') kw=document.getElementById('entrySearchKwGender').value;
+  else kw=document.getElementById('entrySearchKw').value.trim().toLowerCase();
+  if(!kw&&field!=='gender'){renderEntries(allEntries);return;}
   renderEntries(allEntries.filter(e=>{
     const r=e.runnerData||{};
     const val=f=>(e[f]||r[f]||'').toString().toLowerCase();
     if(field==='all') return ['uniqueId','name','bibNumber','group','gender','birthday','phone','email','idNumber','note'].some(f=>val(f).includes(kw));
     if(field==='group') return (e.group||'')===kw;
+    if(field==='gender') return (e.gender||r.gender||'')===kw;
     return val(field).includes(kw);
   }));
 }
@@ -916,30 +923,42 @@ window.printRecords=async function(){
 
 // ── 查詢全部選手切換（已移除，由欄位選項取代）──
 // ── 組別下拉切換（查詢成績）──
-window.onSearchFieldChange=async function(){
-  const field=document.getElementById('searchField').value;
-  const kwInput=document.getElementById('searchKw');
-  const kwGroup=document.getElementById('searchKwGroup');
-  if(field==='__all__'){
-    kwInput.style.display='none'; kwGroup.style.display='none';
-  } else if(field==='group'){
-    kwInput.style.display='none'; kwGroup.style.display='block';
-    await loadGroupDropdown('searchKwGroup','searchEventSelect');
-  } else {
-    kwInput.style.display='block'; kwGroup.style.display='none';
-  }
+// ── 共用：依欄位切換查詢字詞控制項 ──
+function switchKwControl(field, kwInputId, kwGroupId, kwGenderId, eventSelectId){
+  const kwInput=document.getElementById(kwInputId);
+  const kwGroup=document.getElementById(kwGroupId);
+  const kwGender=kwGenderId?document.getElementById(kwGenderId):null;
+  const hideAll=()=>{
+    kwInput.style.display='none';
+    if(kwGroup)kwGroup.style.display='none';
+    if(kwGender)kwGender.style.display='none';
+  };
+  hideAll();
+  if(field==='__all__'){ /* 全部選手：全隱藏 */ }
+  else if(field==='group'){ kwGroup.style.display='block'; if(eventSelectId)loadGroupDropdown(kwGroupId,eventSelectId); }
+  else if(field==='gender'){ if(kwGender)kwGender.style.display='block'; }
+  else { kwInput.style.display='block'; }
 }
-// ── 組別下拉切換（報名管理）──
+// ── 選手資料搜尋欄切換 ──
+window.onRunnerSearchFieldChange=function(){
+  switchKwControl(
+    document.getElementById('runnerSearchField').value,
+    'runnerSearchKw','',  'runnerSearchKwGender', null
+  );
+}
+// ── 查詢成績搜尋欄切換 ──
+window.onSearchFieldChange=async function(){
+  switchKwControl(
+    document.getElementById('searchField').value,
+    'searchKw','searchKwGroup','searchKwGender','searchEventSelect'
+  );
+}
+// ── 報名管理搜尋欄切換 ──
 window.onEntrySearchFieldChange=async function(){
-  const field=document.getElementById('entrySearchField').value;
-  const kwInput=document.getElementById('entrySearchKw');
-  const kwGroup=document.getElementById('entrySearchKwGroup');
-  if(field==='group'){
-    kwInput.style.display='none'; kwGroup.style.display='block';
-    await loadGroupDropdown('entrySearchKwGroup','entryEventSelect');
-  } else {
-    kwInput.style.display='block'; kwGroup.style.display='none';
-  }
+  switchKwControl(
+    document.getElementById('entrySearchField').value,
+    'entrySearchKw','entrySearchKwGroup','entrySearchKwGender','entryEventSelect'
+  );
 }
 async function loadGroupDropdown(selectId,eventSelectId){
   const eventId=document.getElementById(eventSelectId)?.value;
@@ -972,9 +991,12 @@ window.doSearch=async function(){
   const eventId=document.getElementById('searchEventSelect').value;
   const field=document.getElementById('searchField').value;
   const isAll=field==='__all__';
-  const kw=field==='group'?(document.getElementById('searchKwGroup')?.value||''):document.getElementById('searchKw').value.trim().toLowerCase();
+  let kw;
+  if(field==='group') kw=document.getElementById('searchKwGroup')?.value||'';
+  else if(field==='gender') kw=document.getElementById('searchKwGender').value;
+  else kw=document.getElementById('searchKw').value.trim().toLowerCase();
   if(!eventId){showToast('請先選擇賽事','error');return;}
-  if(!isAll&&field!=='group'&&!kw){showToast('請輸入查詢字詞','error');return;}
+  if(!isAll&&field!=='group'&&field!=='gender'&&!kw){showToast('請輸入查詢字詞','error');return;}
   const result=document.getElementById('searchResult');
   result.innerHTML='<div class="loading-cell">查詢中...</div>';
 
@@ -999,6 +1021,7 @@ window.doSearch=async function(){
       if(field==='all') return ['uniqueId','name','bibNumber','group','gender','birthday','phone','email','idNumber','note'].some(f=>val(f).includes(kw))||(uid||'').toLowerCase().includes(kw);
       if(field==='uniqueId') return uid.toLowerCase().includes(kw);
       if(field==='group') return (e.group||'')===kw;
+      if(field==='gender') return (val('gender'))===kw;
       if(field==='bibNumber') return (e.bibNumber||'').includes(kw);
       return val(field).includes(kw);
     });
@@ -1505,7 +1528,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       </div>
       <div class="csv-hint">選手資料由報名匯入時自動累積建立，如需修正可手動編輯。</div>
       <div class="search-bar">
-        <select id="runnerSearchField" class="input" style="width:auto">
+        <select id="runnerSearchField" class="input" style="width:auto" onchange="onRunnerSearchFieldChange()">
           <option value="all">全部欄位</option>
           <option value="uniqueId">ID</option>
           <option value="name">姓名</option>
@@ -1517,6 +1540,10 @@ tr.row-active td{background:rgba(249,115,22,.05);}
           <option value="note">備註</option>
         </select>
         <input id="runnerSearchKw" type="text" class="input" placeholder="輸入查詢字詞...">
+        <select id="runnerSearchKwGender" class="input" style="display:none">
+          <option value="男">男</option>
+          <option value="女">女</option>
+        </select>
         <button class="btn btn-ghost" onclick="doRunnerSearch()">搜尋</button>
       </div>
       <div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="runnersTableBody"><tr><td colspan="9" class="loading-cell">載入中...</td></tr></tbody></table></div>
@@ -1560,6 +1587,10 @@ tr.row-active td{background:rgba(249,115,22,.05);}
         </select>
         <input id="entrySearchKw" type="text" class="input" placeholder="輸入查詢字詞...">
         <select id="entrySearchKwGroup" class="input" style="display:none;flex:1;min-width:150px"></select>
+        <select id="entrySearchKwGender" class="input" style="display:none">
+          <option value="男">男</option>
+          <option value="女">女</option>
+        </select>
         <button class="btn btn-ghost" onclick="doEntrySearch()">搜尋</button>
       </div>
       <div class="table-wrap"><table><thead><tr><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="entriesTableBody"><tr><td colspan="11" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
@@ -1602,6 +1633,10 @@ tr.row-active td{background:rgba(249,115,22,.05);}
         </select>
         <input id="searchKw" type="text" class="input" placeholder="輸入查詢字詞..." style="flex:1;min-width:150px;display:none">
         <select id="searchKwGroup" class="input" style="display:none;flex:1;min-width:150px"></select>
+        <select id="searchKwGender" class="input" style="display:none">
+          <option value="男">男</option>
+          <option value="女">女</option>
+        </select>
         <button class="btn btn-primary" onclick="doSearch()">查詢</button>
       </div>
       <div id="searchResult"></div>
