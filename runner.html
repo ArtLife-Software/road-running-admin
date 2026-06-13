@@ -390,7 +390,7 @@ function showSignupSuccess(info){
   html+='<div class="csv-hint" style="text-align:left;margin-top:16px">請截圖保存此 QR Code，比賽當天報到時使用。也可至「報名結果」分頁，用編號＋姓名重新查詢。</div>';
   html+='</div>';
   content.innerHTML=html;
-  const qrText=[info.uniqueId,info.name,info.gender,info.group,info.bibNumber].join('|');
+  const qrText=[info.uniqueId,info.bibNumber].join('|');
   makeQRCode(document.getElementById('signupQR'), qrText, 200);
 }
 
@@ -456,7 +456,7 @@ window.doStatusQuery=async function(){
       if(entryName!==name)continue;
       const el=document.getElementById('statusQR_'+evDoc.id+'_'+eDoc.id);
       if(!el)continue;
-      const qrText=[e.uniqueId,entryName,r.gender||'',e.group||'',e.bibNumber||''].join('|');
+      const qrText=[e.uniqueId,e.bibNumber||''].join('|');
       makeQRCode(el, qrText, 180);
     }
   }
