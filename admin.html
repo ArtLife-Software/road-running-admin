@@ -96,9 +96,7 @@ function isSamePerson(a, b) {
   return cnt >= 3;
 }
 
-// ── 登入 / 模式判斷 ──
-const isLookupMode = new URLSearchParams(location.search).get('mode')==='lookup';
-
+// ── 登入 ──
 const ADMIN_EMAIL='lin.wushian@gmail.com';
 
 window.doLogin = async function() {
@@ -111,14 +109,6 @@ window.doLogin = async function() {
 }
 window.doLogout = async function() { await signOut(auth); }
 onAuthStateChanged(auth, user => {
-  if (isLookupMode) {
-    document.getElementById('loginScreen').style.display='none';
-    document.getElementById('appScreen').style.display='block';
-    document.getElementById('appScreen').classList.add('lookup-mode');
-    document.getElementById('sec-dashboard').classList.add('active');
-    initLookupSection();
-    return;
-  }
   if (user) {
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('appScreen').style.display='block';
@@ -127,7 +117,7 @@ onAuthStateChanged(auth, user => {
     // 管理員才顯示帳戶管理
     const isAdmin=user.email===ADMIN_EMAIL;
     document.querySelectorAll('.admin-only').forEach(el=>el.style.display=isAdmin?'flex':'none');
-    initLookupSection();
+    loadRunners();
   } else {
     document.getElementById('loginScreen').style.display='flex';
     document.getElementById('appScreen').style.display='none';
@@ -140,7 +130,6 @@ window.showSection = function(id) {
   document.querySelectorAll('.nav-item,.bottom-nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('sec-'+id).classList.add('active');
   document.querySelectorAll('[data-nav="'+id+'"]').forEach(n=>n.classList.add('active'));
-  if (id==='dashboard') initLookupSection();
   if (id==='runners')   loadRunners();
   if (id==='events')    loadEvents();
   if (id==='entries')   loadEntriesSection();
@@ -148,126 +137,6 @@ window.showSection = function(id) {
   if (id==='search')    initSearchSection();
   if (id==='stats')     loadStatsSection();
   if (id==='accounts')  loadAccountsSection();
-}
-
-// ════════════════════════════
-// 選手查詢成績（儀表板）
-// ════════════════════════════
-async function initLookupSection(){
-  const cfg=await getDoc(doc(db,'config','active'));
-  const activeId=cfg.exists()?cfg.data().eventId:null;
-  const select=document.getElementById('lookupEventSelect');
-  const snap=await getDocs(query(collection(db,'events'),orderBy('createdAt','desc')));
-  select.innerHTML='<option value="">請選擇賽事...</option>';
-  snap.docs.forEach(d=>{
-    const ev=d.data(); const o=document.createElement('option');
-    o.value=d.id; o.textContent=ev.name+(ev.date?' ('+ev.date+')':'');
-    select.appendChild(o);
-  });
-  if(activeId){select.value=activeId;}
-  else{
-    const saved=localStorage.getItem('lastEventId');
-    if(saved&&snap.docs.find(d=>d.id===saved))select.value=saved;
-  }
-  document.getElementById('lookupResult').innerHTML='';
-  // 重置 checkbox
-  document.getElementById('lookupAllEvents').checked=false;
-  document.getElementById('lookupEventRow').style.display='flex';
-}
-
-window.onLookupAllEventsChange=function(){
-  const isAll=document.getElementById('lookupAllEvents').checked;
-  document.getElementById('lookupEventRow').style.display=isAll?'none':'flex';
-}
-
-window.doLookup=async function(){
-  const isAll=document.getElementById('lookupAllEvents').checked;
-  const eventId=document.getElementById('lookupEventSelect').value;
-  const uid=document.getElementById('lookupId').value.trim();
-  const idNum=document.getElementById('lookupIdNum').value.trim();
-  const result=document.getElementById('lookupResult');
-  if(!isAll&&!eventId){showToast('請先選擇賽事','error');return;}
-  if(!uid&&!idNum){showToast('請輸入 ID 或身分證字號','error');return;}
-  result.innerHTML='<div class="loading-cell">查詢中...</div>';
-
-  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
-
-  // 比對選手身分（找出 uniqueId）
-  function matchEntry(e){
-    const r=rMap[e.uniqueId]||{};
-    if(uid&&idNum) return (e.uniqueId||'').toLowerCase()===uid.toLowerCase()&&(r.idNumber||'').toLowerCase()===idNum.toLowerCase();
-    if(uid) return (e.uniqueId||'').toLowerCase()===uid.toLowerCase();
-    if(idNum) return (r.idNumber||'').toLowerCase()===idNum.toLowerCase();
-    return false;
-  }
-
-  if(!isAll){
-    // 單一賽事
-    const entrySnap=await getDocs(collection(db,'events',eventId,'runners'));
-    const entries=entrySnap.docs.map(d=>({id:d.id,...d.data()}));
-    const matched=entries.filter(matchEntry);
-    if(!matched.length){result.innerHTML='<div class="loading-cell" style="color:var(--red)">查無資料，請確認 ID 或身分證字號</div>';return;}
-    if(matched.length>1){result.innerHTML='<div class="loading-cell" style="color:var(--accent)">找到多筆符合資料，請同時輸入 ID 和身分證字號</div>';return;}
-    result.innerHTML=await buildLookupCard(matched[0], eventId, rMap, null);
-  } else {
-    // 歷次賽事：依日期由新到舊
-    const evSnap=await getDocs(query(collection(db,'events'),orderBy('date','desc')));
-    let html='';
-    let found=false;
-    for(const evDoc of evSnap.docs){
-      const ev=evDoc.data();
-      const entrySnap=await getDocs(collection(db,'events',evDoc.id,'runners'));
-      const entries=entrySnap.docs.map(d=>({id:d.id,...d.data()}));
-      const matched=entries.filter(matchEntry);
-      if(!matched.length)continue;
-      if(matched.length>1){
-        html+='<div class="runner-card" style="margin-bottom:12px"><div style="font-size:.88rem;color:var(--muted)">'+ev.name+'（'+(ev.date||'日期不詳')+'）</div><div style="color:var(--accent);font-size:.85rem;margin-top:4px">找到多筆符合資料，請同時輸入 ID 和身分證字號</div></div>';
-        continue;
-      }
-      html+=await buildLookupCard(matched[0], evDoc.id, rMap, ev);
-      found=true;
-    }
-    if(!html){result.innerHTML='<div class="loading-cell" style="color:var(--red)">查無資料，請確認 ID 或身分證字號</div>';return;}
-    result.innerHTML=html;
-  }
-}
-
-async function buildLookupCard(e, eventId, rMap, evData){
-  const r=rMap[e.uniqueId]||{};
-  const recSnap=await getDocs(query(collection(db,'events',eventId,'records'),orderBy('scanTime','asc')));
-  const allRecs=recSnap.docs.map(d=>d.data()).filter(x=>x.uniqueId===e.uniqueId);
-  const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
-  const groupStations={};
-  gSnap.docs.forEach(d=>{groupStations[d.data().name]=d.data().stations||[];});
-  const stations=groupStations[e.group]||[];
-
-  // 賽事標題（歷次模式才顯示）
-  const evTitle=evData?'<div style="font-size:.75rem;color:var(--muted);margin-bottom:8px">'+evData.name+(evData.date?' ・ '+evData.date:'')+'</div>':'';
-
-  let html='<div class="runner-card" style="margin-bottom:16px">'+evTitle
-    +'<div class="runner-card-header" style="margin-bottom:12px">'
-    +'<strong style="font-size:1.1rem">'+(e.name||r.name||'')+'</strong>'
-    +'<span class="badge" style="margin-left:8px">'+(e.group||'-')+'</span>'
-    +'<span class="badge" style="margin-left:4px">號碼布 '+(e.bibNumber||'-')+'</span>'
-    +'</div>';
-  if(!allRecs.length){html+='<p style="color:var(--muted);font-size:.88rem">尚無打卡記錄</p></div>';return html;}
-  html+='<div class="station-stats">';
-  const firstRec=allRecs[0];
-  stations.forEach((s,i)=>{
-    const rec=allRecs.find(x=>x.station===s);
-    const arrived=!!rec;
-    const total=arrived&&i>0?diffHMS(rec.scanTime,firstRec.scanTime):null;
-    html+='<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">'
-      +'<span class="station-num" style="background:'+(arrived?'var(--green)':'var(--surface2)')+';color:'+(arrived?'#fff':'var(--muted)')+';">'+(i+1)+'</span>'
-      +'<span style="flex:1;font-size:.88rem">'+s+'</span>'
-      +(arrived
-        ?'<span style="font-family:var(--mono);font-size:.82rem">'+fmt(rec.scanTime)+'</span>'
-          +(total?'<span style="font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-left:8px">'+total+'</span>':'')
-        :'<span style="color:var(--muted);font-size:.82rem">未到</span>')
-      +'</div>';
-  });
-  html+='</div></div>';
-  return html;
 }
 
 // ════════════════════════════
@@ -373,14 +242,23 @@ async function loadEvents() {
     const gNames=gSnap.docs.map(g=>g.data().name).join('、')||'-';
     return '<tr'+(isActive?' class="row-active"':'')+'>'
       +'<td><strong>'+ev.name+'</strong></td><td>'+(ev.date||'-')+'</td><td>'+gNames+'</td>'
-      +'<td>'+(isActive?'<span class="badge badge-green">進行中</span>':'<span class="badge">未啟用</span>')+'</td>'
+      +'<td>'+(isActive?'<span class="badge badge-green">進行中</span>':'<span class="badge">未啟用</span>')
+      +(ev.registrationOpen?' <span class="badge badge-green">開放報名</span>':'')
+      +'</td>'
       +'<td style="white-space:nowrap">'
       +(!isActive?'<button class="btn btn-sm btn-green" onclick="activateEvent(\''+d.id+'\')">開放掃描</button> ':'<button class="btn btn-sm btn-danger" onclick="deactivateEvent()">關閉掃描</button> ')
+      +(!ev.registrationOpen?'<button class="btn btn-sm btn-green" onclick="toggleRegistration(\''+d.id+'\',true)">開放報名</button> ':'<button class="btn btn-sm btn-danger" onclick="toggleRegistration(\''+d.id+'\',false)">關閉報名</button> ')
       +'<button class="btn btn-sm btn-ghost" onclick="editEvent(\''+d.id+'\')">編輯</button> '
-      +'<button class="btn btn-sm btn-ghost" onclick="manageGroups(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\')">組別</button>'
+      +'<button class="btn btn-sm btn-ghost" onclick="manageGroups(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\')">組別</button> '
+      +'<button class="btn btn-sm btn-ghost" onclick="manageCustomFields(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\')">報名表單</button>'
       +'</td></tr>';
   }));
   tbody.innerHTML = rows.join('');
+}
+window.toggleRegistration = async function(id,open){
+  await updateDoc(doc(db,'events',id),{registrationOpen:open,updatedAt:serverTimestamp()});
+  showToast(open?'已開放報名':'已關閉報名');
+  loadEvents();
 }
 window.activateEvent = async function(id) { await setDoc(doc(db,'config','active'),{eventId:id}); showToast('已開放掃描'); loadEvents(); }
 window.deactivateEvent = async function() { await setDoc(doc(db,'config','active'),{eventId:null}); showToast('已關閉掃描'); loadEvents(); }
@@ -470,6 +348,106 @@ window.deleteGroup=async function(id,name){
 window.cancelGroupForm=function(){document.getElementById('groupForm').style.display='none';}
 
 // ════════════════════════════
+// 報名表單設定（自訂欄位）
+// ════════════════════════════
+let curCFEvId='';
+window.manageCustomFields=async function(eid,ename){
+  curCFEvId=eid;
+  document.getElementById('cfEventName').textContent=ename;
+  await loadCustomFields();
+  document.getElementById('customFieldsModal').style.display='flex';
+}
+async function loadCustomFields(){
+  const evDoc=await getDoc(doc(db,'events',curCFEvId));
+  const fields=evDoc.data()?.customFields||[];
+  const list=document.getElementById('cfList');
+  if(!fields.length){list.innerHTML='<div style="color:var(--muted);font-size:.85rem;padding:12px 0">尚無自訂欄位</div>';return;}
+  list.innerHTML=fields.map((f,i)=>{
+    const typeLabel={text:'文字',select:'下拉選單',checkbox:'是／否'}[f.type]||f.type;
+    let detail=typeLabel+(f.required?'　必填':'　選填');
+    if(f.type==='select')detail+='　選項：'+(f.options||[]).join('、');
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">'
+      +'<div><strong>'+f.label+'</strong><div style="font-size:.75rem;color:var(--muted)">'+detail+'</div></div>'
+      +'<div style="white-space:nowrap">'
+      +(i>0?'<button class="btn btn-sm btn-ghost" onclick="moveCustomField('+i+',-1)">↑</button> ':'')
+      +(i<fields.length-1?'<button class="btn btn-sm btn-ghost" onclick="moveCustomField('+i+',1)">↓</button> ':'')
+      +'<button class="btn btn-sm btn-ghost" onclick="editCustomField('+i+')">編輯</button> '
+      +'<button class="btn btn-sm btn-danger" onclick="deleteCustomField('+i+')">刪除</button>'
+      +'</div></div>';
+  }).join('');
+}
+window.moveCustomField=async function(i,dir){
+  const evDoc=await getDoc(doc(db,'events',curCFEvId));
+  const fields=evDoc.data()?.customFields||[];
+  const j=i+dir; if(j<0||j>=fields.length)return;
+  [fields[i],fields[j]]=[fields[j],fields[i]];
+  await updateDoc(doc(db,'events',curCFEvId),{customFields:fields,updatedAt:serverTimestamp()});
+  loadCustomFields();
+}
+window.showAddCustomField=function(){
+  document.getElementById('cfFormTitle').textContent='新增欄位';
+  document.getElementById('cfFieldIndex').value='';
+  document.getElementById('cfLabel').value='';
+  document.getElementById('cfType').value='text';
+  document.getElementById('cfRequired').checked=false;
+  document.getElementById('cfOptions').value='';
+  onCfTypeChange();
+  document.getElementById('cfForm').style.display='block';
+}
+window.editCustomField=async function(i){
+  const evDoc=await getDoc(doc(db,'events',curCFEvId));
+  const fields=evDoc.data()?.customFields||[];
+  const f=fields[i];
+  document.getElementById('cfFormTitle').textContent='編輯欄位';
+  document.getElementById('cfFieldIndex').value=i;
+  document.getElementById('cfLabel').value=f.label||'';
+  document.getElementById('cfType').value=f.type||'text';
+  document.getElementById('cfRequired').checked=!!f.required;
+  document.getElementById('cfOptions').value=(f.options||[]).join('\n');
+  onCfTypeChange();
+  document.getElementById('cfForm').style.display='block';
+}
+window.onCfTypeChange=function(){
+  document.getElementById('cfOptionsRow').style.display=document.getElementById('cfType').value==='select'?'block':'none';
+}
+window.cancelCustomField=function(){document.getElementById('cfForm').style.display='none';}
+window.saveCustomField=async function(){
+  const idx=document.getElementById('cfFieldIndex').value;
+  const label=document.getElementById('cfLabel').value.trim();
+  const type=document.getElementById('cfType').value;
+  const required=document.getElementById('cfRequired').checked;
+  if(!label){showToast('欄位名稱為必填','error');return;}
+  const field={id:'cf_'+Date.now()+'_'+Math.floor(Math.random()*1000), label, type, required};
+  if(type==='select'){
+    const options=document.getElementById('cfOptions').value.split('\n').map(s=>s.trim()).filter(Boolean);
+    if(!options.length){showToast('下拉選單請至少輸入一個選項','error');return;}
+    field.options=options;
+  }
+  const evDoc=await getDoc(doc(db,'events',curCFEvId));
+  const fields=evDoc.data()?.customFields||[];
+  if(idx!==''){
+    field.id=fields[idx].id; // 保留原id，避免已填資料的key對不上
+    fields[idx]=field;
+  } else {
+    fields.push(field);
+  }
+  await updateDoc(doc(db,'events',curCFEvId),{customFields:fields,updatedAt:serverTimestamp()});
+  document.getElementById('cfForm').style.display='none';
+  showToast('已儲存');
+  loadCustomFields();
+}
+window.deleteCustomField=async function(i){
+  const evDoc=await getDoc(doc(db,'events',curCFEvId));
+  const fields=evDoc.data()?.customFields||[];
+  const label=fields[i]?.label||'';
+  if(!confirm('確定刪除欄位「'+label+'」？已填寫的報名資料中此欄位的值將保留但不再顯示。'))return;
+  fields.splice(i,1);
+  await updateDoc(doc(db,'events',curCFEvId),{customFields:fields,updatedAt:serverTimestamp()});
+  showToast('已刪除');
+  loadCustomFields();
+}
+
+// ════════════════════════════
 // 報名管理
 // ════════════════════════════
 let allEntries=[];
@@ -493,11 +471,21 @@ async function loadLockedEntryEventSelect() {
     if(saved&&snap.docs.find(d=>d.id===saved)){select.value=saved;loadEntries();}
   }
 }
+let curEntryCustomFields=[];
 window.loadEntries=async function(){
   const eventId=document.getElementById('entryEventSelect').value;
   const tbody=document.getElementById('entriesTableBody');
-  if(!eventId){tbody.innerHTML='<tr><td colspan="11" class="loading-cell">請先選擇賽事</td></tr>';return;}
-  tbody.innerHTML='<tr><td colspan="11" class="loading-cell">載入中...</td></tr>';
+  const baseCols=11;
+  if(!eventId){tbody.innerHTML='<tr><td colspan="'+baseCols+'" class="loading-cell">請先選擇賽事</td></tr>';return;}
+  tbody.innerHTML='<tr><td colspan="'+baseCols+'" class="loading-cell">載入中...</td></tr>';
+  const evDoc=await getDoc(doc(db,'events',eventId));
+  curEntryCustomFields=evDoc.data()?.customFields||[];
+  // 更新表頭：標準欄位（去掉操作）+ 自訂欄位 + 操作
+  const thead=document.getElementById('entriesTableHead');
+  const baseHeads=['編號','組別','ID','姓名','性別','生日','手機','Email','身分證','備註'];
+  thead.innerHTML=baseHeads.map(h=>'<th>'+h+'</th>').join('')
+    +curEntryCustomFields.map(f=>'<th>'+f.label+'</th>').join('')
+    +'<th>操作</th>';
   const snap=await getDocs(collection(db,'events',eventId,'runners'));
   const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
   allEntries=snap.docs.map(d=>({id:d.id,...d.data(),runnerData:rMap[d.data().uniqueId]||{}}));
@@ -505,9 +493,17 @@ window.loadEntries=async function(){
 }
 function renderEntries(list){
   const tbody=document.getElementById('entriesTableBody');
-  if(!list.length){tbody.innerHTML='<tr><td colspan="11" class="loading-cell">尚無報名資料</td></tr>';return;}
+  const totalCols=11+curEntryCustomFields.length;
+  if(!list.length){tbody.innerHTML='<tr><td colspan="'+totalCols+'" class="loading-cell">尚無報名資料</td></tr>';return;}
   tbody.innerHTML=list.map(e=>{
     const r=e.runnerData||{};
+    const cd=e.customData||{};
+    let customCells='';
+    curEntryCustomFields.forEach(f=>{
+      let v=cd[f.id];
+      if(f.type==='checkbox') v=v?'是':'否';
+      customCells+='<td>'+(v!==undefined&&v!==''?v:'-')+'</td>';
+    });
     return '<tr>'
       +'<td><strong>'+(e.bibNumber||'-')+'</strong></td>'
       +'<td><span class="badge">'+(e.group||'-')+'</span></td>'
@@ -519,6 +515,7 @@ function renderEntries(list){
       +'<td style="font-size:.78rem">'+(r.email||'-')+'</td>'
       +'<td><span class="mono" style="font-size:.75rem">'+(r.idNumber||'-')+'</span></td>'
       +'<td>'+(r.note||'-')+'</td>'
+      +customCells
       +'<td style="white-space:nowrap">'
       +'<button class="btn btn-sm btn-ghost" onclick="editEntry(\''+e.id+'\')">編輯</button> '
       +'<button class="btn btn-sm btn-danger" onclick="deleteEntry(\''+e.id+'\',\''+(e.name||'').replace(/'/g,'')+'\')">刪除</button>'
@@ -647,15 +644,58 @@ window.exportEntries=async function(){
   const evDoc=await getDoc(doc(db,'events',eventId));
   const evName=evDoc.data()?.name||'賽事';
   const evDate=evDoc.data()?.date||'';
-  let csv='編號,組別,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註\n';
+  const customFields=evDoc.data()?.customFields||[];
+  let csv='編號,組別,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註'+customFields.map(f=>','+f.label).join('')+'\n';
   snap.docs.forEach(d=>{
     const e=d.data(); const r=rMap[e.uniqueId]||{};
+    const cd=e.customData||{};
     csv+='"'+(e.bibNumber||'')+'","'+(e.group||'')+'","'+(e.name||r.name||'')+'","'
       +(r.gender||'')+'","'+(r.birthday||'')+'","'+(r.phone||'')+'","'
-      +(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'"\n';
+      +(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'"';
+    customFields.forEach(f=>{
+      let v=cd[f.id];
+      if(f.type==='checkbox') v=v?'是':'否';
+      csv+=',"'+(v!==undefined?v:'')+'"';
+    });
+    csv+='\n';
   });
   downloadCSV(csv,evFileName(evName,evDate)+'_報名資料_'+fmtFileDateTime()+'.csv');
   showToast('報名資料已匯出');
+}
+
+// 渲染報名Modal的自訂欄位
+function renderEntryCustomFields(values){
+  const container=document.getElementById('entryCustomFieldsContainer');
+  values=values||{};
+  container.innerHTML=curEntryCustomFields.map(f=>{
+    const id='cfInput_'+f.id;
+    const reqMark=f.required?' *':'';
+    if(f.type==='select'){
+      const opts=(f.options||[]).map(o=>'<option value="'+o+'"'+(values[f.id]===o?' selected':'')+'>'+o+'</option>').join('');
+      return '<div class="input-group"><label>'+f.label+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select></div>';
+    } else if(f.type==='checkbox'){
+      return '<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+f.label+'</label></div>';
+    } else {
+      return '<div class="input-group"><label>'+f.label+reqMark+'</label><input id="'+id+'" type="text" class="input" value="'+(values[f.id]!==undefined?values[f.id]:'')+'"></div>';
+    }
+  }).join('');
+}
+function collectEntryCustomData(){
+  const data={};
+  for(const f of curEntryCustomFields){
+    const el=document.getElementById('cfInput_'+f.id);
+    if(!el)continue;
+    data[f.id]=f.type==='checkbox'?el.checked:el.value.trim();
+  }
+  return data;
+}
+function validateEntryCustomFields(){
+  for(const f of curEntryCustomFields){
+    if(!f.required||f.type==='checkbox')continue;
+    const el=document.getElementById('cfInput_'+f.id);
+    if(el&&!el.value.trim())return f.label;
+  }
+  return null;
 }
 
 // 手動新增報名
@@ -680,6 +720,7 @@ window.showAddEntry=function(){
   // 清除錯誤樣式
   ['eBib','eBirthday','ePhone','eEmail','eIdNumber'].forEach(id=>setFieldError(id,false));
   loadEntryGroupOptions('');
+  renderEntryCustomFields({});
   document.getElementById('entryModal').style.display='flex';
 }
 async function loadEntryGroupOptions(selected){
@@ -781,6 +822,7 @@ window.editEntry=async function(id){
   document.getElementById('eIdNumber').value=r.idNumber||'';
   document.getElementById('eNote').value=r.note||'';
   ['eBib','eBirthday','ePhone','eEmail','eIdNumber'].forEach(fid=>setFieldError(fid,false));
+  renderEntryCustomFields(e.customData||{});
   document.getElementById('entryModal').style.display='flex';
 }
 window.saveEntry=async function(){
@@ -806,6 +848,10 @@ window.saveEntry=async function(){
   if(!validateEmail(email)){setFieldError('eEmail',true);hasErr=true;}else setFieldError('eEmail',false);
   if(!validateId(idNum)){setFieldError('eIdNumber',true);hasErr=true;}else setFieldError('eIdNumber',false);
   if(hasErr){showToast('請修正格式錯誤','error');return;}
+  // 自訂欄位必填驗證
+  const missingLabel=validateEntryCustomFields();
+  if(missingLabel){showToast('「'+missingLabel+'」為必填','error');return;}
+  const customData=collectEntryCustomData();
   // 編號重複檢查
   const snap=await getDocs(collection(db,'events',eventId,'runners'));
   const dup=snap.docs.find(d=>d.data().bibNumber===bibNumber&&d.id!==id);
@@ -821,7 +867,7 @@ window.saveEntry=async function(){
     uniqueId='R'+String(maxId).padStart(6,'0');
     await setDoc(doc(collection(db,'runners')),{uniqueId,name,gender,birthday,phone,email,idNumber:idNum,note,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
   }
-  const data={uniqueId,name,bibNumber,group,updatedAt:serverTimestamp()};
+  const data={uniqueId,name,bibNumber,group,customData,updatedAt:serverTimestamp()};
   if(id){await updateDoc(doc(db,'events',eventId,'runners',id),data);showToast('已更新');}
   else{data.createdAt=serverTimestamp();await addDoc(collection(db,'events',eventId,'runners'),data);showToast('已新增');}
   closeModal('entryModal'); loadEntries();
@@ -1528,11 +1574,6 @@ tr.row-active td{background:rgba(249,115,22,.05);}
   .bottom-nav-item.active{color:var(--accent);}
 }
 @media(min-width:769px){.bottom-nav{display:none;}.top-bar{display:none;}}
-/* 選手查詢模式 */
-#appScreen.lookup-mode .sidebar{display:none!important;}
-#appScreen.lookup-mode .bottom-nav{display:none!important;}
-#appScreen.lookup-mode .top-bar{display:none!important;}
-#appScreen.lookup-mode .main{margin-left:0;max-width:700px;margin:0 auto;}
 </style>
 </head>
 <body>
@@ -1546,7 +1587,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div class="input-group"><label>密碼</label><input id="loginPassword" type="password" class="input" placeholder="••••••••"></div>
     <button id="loginBtn" class="btn btn-primary btn-full" onclick="doLogin()">登入</button>
     <div style="text-align:center;margin-top:20px">
-      <a href="?mode=lookup" style="font-size:.82rem;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;gap:4px;transition:color .15s" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">🔍 選手查詢成績 →</a>
+      <a href="runner.html" style="font-size:.82rem;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;gap:4px;transition:color .15s" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">🔍 選手服務（報名／查詢成績） →</a>
     </div>
   </div>
 </div>
@@ -1559,8 +1600,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <div class="sidebar-logo-sub">管理後台</div>
     </div>
     <nav class="nav">
-      <div class="nav-item active" data-nav="dashboard" onclick="showSection('dashboard')"><span class="nav-icon">🔍</span><span>選手查詢</span></div>
-      <div class="nav-item" data-nav="runners" onclick="showSection('runners')"><span class="nav-icon">👥</span><span>選手資料</span></div>
+      <div class="nav-item active" data-nav="runners" onclick="showSection('runners')"><span class="nav-icon">👥</span><span>選手資料</span></div>
       <div class="nav-item" data-nav="events" onclick="showSection('events')"><span class="nav-icon">🏁</span><span>賽事管理</span></div>
       <div class="nav-item" data-nav="entries" onclick="showSection('entries')"><span class="nav-icon">📝</span><span>報名管理</span></div>
       <div class="nav-item" data-nav="records" onclick="showSection('records')"><span class="nav-icon">📋</span><span>打卡記錄</span></div>
@@ -1583,8 +1623,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
   </div>
 
   <div class="bottom-nav">
-    <div class="bottom-nav-item active" data-nav="dashboard" onclick="showSection('dashboard')"><span class="nav-icon">🔍</span><span>查詢</span></div>
-    <div class="bottom-nav-item" data-nav="runners" onclick="showSection('runners')"><span class="nav-icon">👥</span><span>選手</span></div>
+    <div class="bottom-nav-item active" data-nav="runners" onclick="showSection('runners')"><span class="nav-icon">👥</span><span>選手</span></div>
     <div class="bottom-nav-item" data-nav="events" onclick="showSection('events')"><span class="nav-icon">🏁</span><span>賽事</span></div>
     <div class="bottom-nav-item" data-nav="entries" onclick="showSection('entries')"><span class="nav-icon">📝</span><span>報名</span></div>
     <div class="bottom-nav-item" data-nav="records" onclick="showSection('records')"><span class="nav-icon">📋</span><span>記錄</span></div>
@@ -1594,30 +1633,8 @@ tr.row-active td{background:rgba(249,115,22,.05);}
 
   <div class="main">
 
-    <!-- 選手查詢成績（儀表板） -->
-    <div id="sec-dashboard" class="section active">
-      <div class="section-header"><div class="section-title">選手查詢成績</div></div>
-      <div class="runner-card" style="margin-bottom:16px">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:12px">
-          <div class="input-group" style="margin:0"><label>ID</label><input id="lookupId" type="text" class="input" placeholder="R000001"></div>
-          <div class="input-group" style="margin:0"><label>身分證字號</label><input id="lookupIdNum" type="text" class="input" placeholder="A123456789"></div>
-        </div>
-        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-          <div id="lookupEventRow" class="event-select-row" style="margin:0;flex:1;min-width:200px"><label>選擇賽事：</label><select id="lookupEventSelect" class="input"><option value="">請選擇賽事...</option></select></div>
-          <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;cursor:pointer;white-space:nowrap">
-            <input type="checkbox" id="lookupAllEvents" onchange="onLookupAllEventsChange()">
-            歷次賽事
-          </label>
-        </div>
-        <div style="margin-top:12px">
-          <button class="btn btn-primary" onclick="doLookup()">🔍 查詢成績</button>
-        </div>
-      </div>
-      <div id="lookupResult"></div>
-    </div>
-
     <!-- 選手資料 -->
-    <div id="sec-runners" class="section">
+    <div id="sec-runners" class="section active">
       <div class="section-header">
         <div class="section-title">選手資料</div>
         <button class="btn btn-ghost" onclick="exportRunners()">📤 匯出 CSV</button>
@@ -1689,7 +1706,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
         </select>
         <button class="btn btn-ghost" onclick="doEntrySearch()">搜尋</button>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="entriesTableBody"><tr><td colspan="11" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr id="entriesTableHead"><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="entriesTableBody"><tr><td colspan="11" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
     </div>
 
     <!-- 打卡記錄 -->
@@ -1817,6 +1834,35 @@ tr.row-active td{background:rgba(249,115,22,.05);}
   </div>
 </div>
 
+<!-- 報名表單設定 Modal -->
+<div id="customFieldsModal" class="modal-overlay">
+  <div class="modal" style="width:560px">
+    <div class="modal-title">報名表單設定 — <span id="cfEventName"></span></div>
+    <div class="csv-hint">標準欄位（編號、組別、姓名、性別、生日、手機、Email、身分證、備註）一律顯示。以下為此賽事額外新增的自訂欄位，會出現在報名表單、報名管理表格與匯出 CSV 中。</div>
+    <div id="cfList" style="margin-bottom:12px"></div>
+    <button class="btn btn-primary btn-sm" onclick="showAddCustomField()">＋ 新增欄位</button>
+    <div id="cfForm" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+      <div class="modal-title" id="cfFormTitle" style="font-size:.95rem;margin-bottom:16px">新增欄位</div>
+      <input type="hidden" id="cfFieldIndex">
+      <div class="input-group"><label>欄位名稱 *</label><input id="cfLabel" type="text" class="input" placeholder="例：T恤尺寸"></div>
+      <div class="input-group"><label>欄位類型</label>
+        <select id="cfType" class="input" onchange="onCfTypeChange()">
+          <option value="text">文字</option>
+          <option value="select">下拉選單</option>
+          <option value="checkbox">是／否</option>
+        </select>
+      </div>
+      <div class="input-group" id="cfOptionsRow" style="display:none">
+        <label>選項（每行一個）</label>
+        <textarea id="cfOptions" class="input" rows="3" placeholder="S&#10;M&#10;L&#10;XL"></textarea>
+      </div>
+      <div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="cfRequired"> 必填</label></div>
+      <div class="modal-actions" style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="cancelCustomField()">取消</button><button class="btn btn-primary btn-sm" onclick="saveCustomField()">儲存欄位</button></div>
+    </div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('customFieldsModal')">關閉</button></div>
+  </div>
+</div>
+
 <!-- 報名 Modal -->
 <div id="entryModal" class="modal-overlay">
   <div class="modal">
@@ -1850,6 +1896,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div class="input-group"><label>E-Mail</label><input id="eEmail" type="email" class="input" placeholder="example@email.com" onblur="validateEntryField('email')"></div>
     <div class="input-group"><label>身分證字號（1英文+9數字）</label><input id="eIdNumber" type="text" class="input" placeholder="A123456789" onblur="validateEntryField('idNumber')"></div>
     <div class="input-group"><label>備註</label><input id="eNote" type="text" class="input"></div>
+    <div id="entryCustomFieldsContainer"></div>
     <input type="hidden" id="entryDocId">
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('entryModal')">取消</button><button class="btn btn-primary" onclick="saveEntry()">儲存</button></div>
   </div>
