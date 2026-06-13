@@ -169,6 +169,28 @@ function showToast(msg,type='success'){
   t.textContent=msg; t.className='toast show '+type;
   setTimeout(()=>t.classList.remove('show'),3500);
 }
+// qrcodejs 對多位元組(中文)字元處理有bug，需先轉換為UTF-8位元組序列
+function utf16to8(str){
+  let out='';
+  for(let i=0;i<str.length;i++){
+    const c=str.charCodeAt(i);
+    if(c>=0x0001&&c<=0x007F){
+      out+=str.charAt(i);
+    }else if(c>0x07FF){
+      out+=String.fromCharCode(0xE0|((c>>12)&0x0F));
+      out+=String.fromCharCode(0x80|((c>>6)&0x3F));
+      out+=String.fromCharCode(0x80|((c>>0)&0x3F));
+    }else{
+      out+=String.fromCharCode(0xC0|((c>>6)&0x1F));
+      out+=String.fromCharCode(0x80|((c>>0)&0x3F));
+    }
+  }
+  return out;
+}
+function makeQRCode(el,text,size){
+  el.innerHTML='';
+  new QRCode(el,{text:utf16to8(text),width:size,height:size});
+}
 
 // ── 頁籤切換 ──
 window.showPage=function(id){
@@ -369,7 +391,7 @@ function showSignupSuccess(info){
   html+='</div>';
   content.innerHTML=html;
   const qrText=[info.uniqueId,info.name,info.gender,info.group,info.bibNumber].join('|');
-  new QRCode(document.getElementById('signupQR'), {text:qrText, width:200, height:200});
+  makeQRCode(document.getElementById('signupQR'), qrText, 200);
 }
 
 // 把驗證函式掛到全域，供 inline onblur 使用
@@ -435,7 +457,7 @@ window.doStatusQuery=async function(){
       const el=document.getElementById('statusQR_'+evDoc.id+'_'+eDoc.id);
       if(!el)continue;
       const qrText=[e.uniqueId,entryName,r.gender||'',e.group||'',e.bibNumber||''].join('|');
-      new QRCode(el, {text:qrText, width:180, height:180});
+      makeQRCode(el, qrText, 180);
     }
   }
 }
@@ -446,10 +468,9 @@ window.showEditVerify=function(eventId,entryDocId,cardId){
   if(box.dataset.open==='1'){box.innerHTML='';box.dataset.open='';return;}
   box.dataset.open='1';
   let html='<div class="card" style="background:var(--surface2)">';
-  html+='<div class="csv-hint">為確保是本人操作，請再次輸入以下完整資訊，全部正確才能修改：</div>';
-  html+='<div class="input-group"><label>ID</label><input id="'+cardId+'_vUid" type="text" class="input" placeholder="R000001"></div>';
+  html+='<div class="csv-hint">為確保是本人操作，請輸入報名時填寫的性別與生日，正確才能修改：</div>';
   html+='<div class="input-group"><label>性別</label><select id="'+cardId+'_vGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>';
-  html+='<div class="input-group"><label>組別</label><input id="'+cardId+'_vGroup" type="text" class="input"></div>';
+  html+='<div class="input-group"><label>生日（yyyy/mm/dd）</label><input id="'+cardId+'_vBirthday" type="text" class="input" placeholder="yyyy/mm/dd"></div>';
   html+='<button class="btn btn-primary btn-full" onclick="verifyAndEdit(\''+eventId+'\',\''+entryDocId+'\',\''+cardId+'\')">驗證並進入修改</button>';
   html+='</div>';
   box.innerHTML=html;
@@ -457,9 +478,8 @@ window.showEditVerify=function(eventId,entryDocId,cardId){
 
 // ── 修改報名資料：驗證通過後顯示編輯表單 ──
 window.verifyAndEdit=async function(eventId,entryDocId,cardId){
-  const vUid=document.getElementById(cardId+'_vUid').value.trim();
   const vGender=document.getElementById(cardId+'_vGender').value;
-  const vGroup=document.getElementById(cardId+'_vGroup').value.trim();
+  const vBirthday=document.getElementById(cardId+'_vBirthday').value.trim();
 
   const eDoc=await getDoc(doc(db,'events',eventId,'runners',entryDocId));
   const e=eDoc.data();
@@ -467,8 +487,8 @@ window.verifyAndEdit=async function(eventId,entryDocId,cardId){
   const rDocRef=rSnap.empty?null:rSnap.docs[0];
   const r=rDocRef?rDocRef.data():{};
 
-  if(vUid!==e.uniqueId||vGender!==(r.gender||'')||vGroup!==(e.group||'')){
-    showToast('驗證資料有誤，請確認 ID、性別、組別是否正確','error');
+  if(vGender!==(r.gender||'')||vBirthday!==(r.birthday||'')){
+    showToast('驗證資料有誤，請確認性別與生日是否正確','error');
     return;
   }
 
