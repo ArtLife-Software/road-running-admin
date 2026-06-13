@@ -7,7 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, where, onSnapshot, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, where, onSnapshot, serverTimestamp, writeBatch, Timestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
@@ -1316,6 +1316,102 @@ window.deleteAccount=async function(docId,email){
   loadAccountsSection();
 }
 
+// ════════════════════════════
+// 虛擬起跑
+// ════════════════════════════
+window.showVirtualStart=async function(){
+  if(!curRecordEventId){showToast('請先選擇賽事','error');return;}
+  // 載入組別清單
+  const gSnap=await getDocs(collection(db,'events',curRecordEventId,'groups'));
+  const gSel=document.getElementById('vstartGroup');
+  gSel.innerHTML='';
+  gSnap.docs.forEach(d=>{
+    const o=document.createElement('option'); o.value=d.data().name; o.textContent=d.data().name; gSel.appendChild(o);
+  });
+  document.getElementById('vstartScope').value='all';
+  document.getElementById('vstartGroupRow').style.display='none';
+  document.getElementById('vstartTimeMode').value='now';
+  document.getElementById('vstartCustomTimeRow').style.display='none';
+  // 預設指定時間為現在
+  const now=new Date();
+  now.setMinutes(now.getMinutes()-now.getTimezoneOffset());
+  document.getElementById('vstartCustomTime').value=now.toISOString().slice(0,16);
+  document.getElementById('vstartPreview').textContent='';
+  document.getElementById('vstartModal').style.display='flex';
+}
+window.onVstartScopeChange=function(){
+  document.getElementById('vstartGroupRow').style.display=document.getElementById('vstartScope').value==='group'?'block':'none';
+}
+window.onVstartTimeModeChange=function(){
+  document.getElementById('vstartCustomTimeRow').style.display=document.getElementById('vstartTimeMode').value==='custom'?'block':'none';
+}
+window.runVirtualStart=async function(){
+  const eventId=curRecordEventId;
+  const scope=document.getElementById('vstartScope').value;
+  const groupFilter=scope==='group'?document.getElementById('vstartGroup').value:null;
+  const timeMode=document.getElementById('vstartTimeMode').value;
+  let scanTime;
+  if(timeMode==='custom'){
+    const v=document.getElementById('vstartCustomTime').value;
+    if(!v){showToast('請選擇時間','error');return;}
+    scanTime=Timestamp.fromDate(new Date(v));
+  }else{
+    scanTime=Timestamp.now();
+  }
+
+  // 載入組別站點設定
+  const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
+  const groupStations={};
+  gSnap.docs.forEach(d=>{groupStations[d.data().name]=d.data().stations||[];});
+
+  // 載入報名選手
+  const entrySnap=await getDocs(collection(db,'events',eventId,'runners'));
+  let entries=entrySnap.docs.map(d=>d.data());
+  if(groupFilter) entries=entries.filter(e=>e.group===groupFilter);
+
+  // 載入既有第一站記錄，避免重複
+  const recSnap=await getDocs(collection(db,'events',eventId,'records'));
+  const existingKey=new Set();
+  recSnap.docs.forEach(d=>{const r=d.data(); existingKey.add(r.uniqueId+'|'+r.station);});
+
+  // 篩選出尚未有第一站記錄的選手
+  const targets=entries.filter(e=>{
+    const stations=groupStations[e.group]||[];
+    if(!stations.length)return false;
+    return !existingKey.has(e.uniqueId+'|'+stations[0]);
+  });
+
+  if(!targets.length){showToast('所有選手已有第一站記錄，無需執行','error');return;}
+
+  if(!confirm('將為 '+targets.length+' 位選手寫入第一站起跑記錄（時間：'+fmt(scanTime)+'），確定執行？'))return;
+
+  const btn=document.querySelector('#vstartModal .btn-primary');
+  btn.textContent='執行中...'; btn.disabled=true;
+  try{
+    // Firestore batch 上限 500，分批處理
+    for(let i=0;i<targets.length;i+=400){
+      const batch=writeBatch(db);
+      const chunk=targets.slice(i,i+400);
+      chunk.forEach(e=>{
+        const stations=groupStations[e.group]||[];
+        const ref=doc(collection(db,'events',eventId,'records'));
+        batch.set(ref,{
+          uniqueId:e.uniqueId, name:e.name||'', bibNumber:e.bibNumber||'', group:e.group||'',
+          station:stations[0], scanTime, deviceName:'虛擬起跑'
+        });
+      });
+      await batch.commit();
+    }
+    showToast('已為 '+targets.length+' 位選手完成虛擬起跑');
+    closeModal('vstartModal');
+    loadRecords();
+  }catch(e){
+    showToast('執行失敗：'+e.message,'error');
+  }finally{
+    btn.textContent='執行'; btn.disabled=false;
+  }
+}
+
 // ── Modal & Toast ──
 window.closeModal=function(id){document.getElementById(id).style.display='none';}
 function showToast(msg,type='success'){
@@ -1601,6 +1697,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <div class="section-header">
         <div><div class="section-title">打卡記錄</div><div style="font-size:.82rem;color:var(--muted);margin-top:4px" id="recordsEventName"></div></div>
         <div class="section-actions">
+          <button class="btn btn-ghost" onclick="showVirtualStart()">🚩 虛擬起跑</button>
           <button class="btn btn-ghost" onclick="printRecords()">🖨️ 列印</button>
           <button class="btn btn-ghost" onclick="exportRecordsCSV()">📤 匯出 CSV</button>
         </div>
@@ -1768,6 +1865,37 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div class="input-group"><label>預設密碼 *（至少6碼）</label><input id="newAccPassword" type="text" class="input" placeholder="預設密碼"></div>
     <div class="input-group"><label>備註</label><input id="newAccNote" type="text" class="input" placeholder="例：場地負責人"></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('accountModal')">取消</button><button class="btn btn-primary" onclick="saveAccount()">建立帳戶</button></div>
+  </div>
+</div>
+
+<!-- 虛擬起跑 Modal -->
+<div id="vstartModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-title">🚩 虛擬起跑</div>
+    <div class="csv-hint">為選手寫入第一站的到達記錄，作為起跑時間，避免起跑時大量掃描。已有第一站記錄的選手會自動跳過，不會重複寫入。</div>
+    <div class="input-group">
+      <label>適用範圍</label>
+      <select id="vstartScope" class="input" onchange="onVstartScopeChange()">
+        <option value="all">全部選手</option>
+        <option value="group">指定組別</option>
+      </select>
+    </div>
+    <div class="input-group" id="vstartGroupRow" style="display:none">
+      <label>選擇組別</label>
+      <select id="vstartGroup" class="input"></select>
+    </div>
+    <div class="input-group">
+      <label>起跑時間</label>
+      <select id="vstartTimeMode" class="input" onchange="onVstartTimeModeChange()">
+        <option value="now">現在</option>
+        <option value="custom">指定時間</option>
+      </select>
+    </div>
+    <div class="input-group" id="vstartCustomTimeRow" style="display:none">
+      <input id="vstartCustomTime" type="datetime-local" class="input">
+    </div>
+    <div id="vstartPreview" style="font-size:.82rem;color:var(--muted);margin-bottom:8px"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('vstartModal')">取消</button><button class="btn btn-primary" onclick="runVirtualStart()">執行</button></div>
   </div>
 </div>
 </body>
