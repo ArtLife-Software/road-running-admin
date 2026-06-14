@@ -1325,10 +1325,12 @@ async function loadStatsForEvent(eventId){
   const recSnap=await getDocs(collection(db,'events',eventId,'records'));
   const entrySnap=await getDocs(collection(db,'events',eventId,'runners'));
   const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
+  const checkinSnap=await getDocs(collection(db,'events',eventId,'checkins'));
   const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
   const records=recSnap.docs.map(d=>d.data());
   const entries=entrySnap.docs.map(d=>d.data());
   const groups=gSnap.docs.map(d=>d.data());
+  const checkinIds=new Set(checkinSnap.docs.map(d=>d.id));
 
   // 計算整體進度
   function calcProgress(ents, recs, stations){
@@ -1352,11 +1354,13 @@ async function loadStatsForEvent(eventId){
   const overallProgress=calcProgress(entries, records, allStations);
   const maleCount=entries.filter(e=>(rMap[e.uniqueId]?.gender)==='男').length;
   const femaleCount=entries.filter(e=>(rMap[e.uniqueId]?.gender)==='女').length;
+  const totalCheckin=entries.filter(e=>checkinIds.has(e.uniqueId)).length;
 
   let html='<div class="stats-grid" style="margin-bottom:24px">'
     +'<div class="stat-card large"><div class="stat-num">'+entries.length+'</div><div class="stat-label">報名總人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+maleCount+'</div><div class="stat-label">男生人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+femaleCount+'</div><div class="stat-label">女生人數</div></div>'
+    +'<div class="stat-card large"><div class="stat-num">'+totalCheckin+'</div><div class="stat-label">報到總人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+totalFinishers+'</div><div class="stat-label">抵達終點總人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+overallProgress+'%</div><div class="stat-label">進度總百分比</div></div>'
     +'</div>';
@@ -1369,13 +1373,19 @@ async function loadStatsForEvent(eventId){
     const progress=calcProgress(ents,recs,gStations);
     const gMale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='男').length;
     const gFemale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='女').length;
-    let card='<div class="runner-card" style="margin-bottom:16px"><div class="runner-card-header"><strong>'+label+'</strong>'
+    const gCheckin=ents.filter(e=>checkinIds.has(e.uniqueId)).length;
+    let card='<div class="runner-card" style="margin-bottom:16px">'
+      +'<div class="runner-card-header"><strong>'+label+'</strong>'
       +' <span class="badge">報名'+ents.length+'人</span>'
       +' <span class="badge">男生'+gMale+'人</span>'
       +' <span class="badge">女生'+gFemale+'人</span>'
+      +' <span class="badge badge-green">報到'+gCheckin+'人</span>'
+      +'</div>'
+      +'<div style="margin-top:6px;margin-bottom:8px">'
       +' <span class="badge badge-green">抵達終點'+finishers+'人</span>'
       +' <span class="badge" style="background:rgba(249,115,22,.1);color:var(--accent);border-color:rgba(249,115,22,.3)">進度：'+progress+'%</span>'
-      +'</div><div class="station-stats" style="margin-top:12px">';
+      +'</div>'
+      +'<div class="station-stats">';
     gStations.forEach((s,i)=>{
       const cnt=new Set(recs.filter(r=>r.station===s&&ents.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size;
       const pct=ents.length>0?Math.round(cnt/ents.length*100):0;
