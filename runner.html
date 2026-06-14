@@ -260,7 +260,7 @@ async function selectSignupEvent(eventId, keepWrapper){
   formHtml+='<div class="input-row"><input id="suBirthday" type="text" class="input" placeholder="yyyy/mm/dd" onblur="setFieldError(\'suBirthday\',!validateBirthday(this.value.trim()))">';
   formHtml+='<div style="position:relative"><button type="button" class="btn btn-ghost btn-sm">📅</button>';
   formHtml+='<input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'suBirthday\').value=y+\'/\'+m+\'/\'+d;setFieldError(\'suBirthday\',false);this.value=\'\'}"></div></div></div>';
-  formHtml+='<div class="input-group"><label>手機號碼（09開頭10碼）*</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
+  formHtml+='<div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="if(this.value.trim())setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
   formHtml+='<div class="input-group"><label>E-Mail</label><input id="suEmail" type="email" class="input" placeholder="example@email.com" onblur="setFieldError(\'suEmail\',!validateEmail(this.value.trim()))"></div>';
   formHtml+='<div class="input-group"><label>身分證字號（1英文+9數字）</label><input id="suIdNumber" type="text" class="input" placeholder="A123456789" onblur="setFieldError(\'suIdNumber\',!validateId(this.value.trim()))"></div>';
   formHtml+='<div class="input-group"><label>備註</label><input id="suNote" type="text" class="input"></div>';
@@ -304,7 +304,7 @@ window.submitSignup=async function(){
   if(!name){showToast('請填寫姓名','error');return;}
   if(!gender){showToast('請選擇性別','error');return;}
   if(!birthday||!validateBirthday(birthday)){setFieldError('suBirthday',true);showToast('請填寫正確的生日格式','error');return;}
-  if(!validatePhone(phone)){setFieldError('suPhone',true);showToast('請填寫正確的手機號碼','error');return;}
+  if(!validatePhone(phone)&&phone){setFieldError('suPhone',true);showToast('手機號碼格式錯誤（09開頭10碼）','error');return;}
   if(!validateEmail(email)){setFieldError('suEmail',true);showToast('請填寫正確的Email格式','error');return;}
   if(!validateId(idNumber)){setFieldError('suIdNumber',true);showToast('請填寫正確的身分證字號格式','error');return;}
 
