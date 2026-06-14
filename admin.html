@@ -114,6 +114,7 @@ onAuthStateChanged(auth, user => {
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('appScreen').style.display='block';
     document.getElementById('appScreen').classList.add('stats-mode');
+    document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
     document.getElementById('sec-stats').classList.add('active');
     loadStatsSection();
     return;
@@ -950,12 +951,17 @@ async function loadRecords(){
     async snap=>{
       const tbody=document.getElementById('recordsTableBody');
       if(snap.empty){tbody.innerHTML='<tr><td colspan="7" class="loading-cell">尚無打卡記錄</td></tr>';return;}
+      // 補查報名資料取得姓名
+      const entrySnap=await getDocs(collection(db,'events',curRecordEventId,'runners'));
+      const nameMap={};
+      entrySnap.docs.forEach(d=>{const e=d.data();nameMap[e.uniqueId]=e.name||'';});
       tbody.innerHTML=snap.docs.map(d=>{
         const r=d.data();
+        const name=r.name||nameMap[r.uniqueId]||'-';
         return '<tr><td><strong>'+(r.bibNumber||'-')+'</strong></td>'
           +'<td><span class="badge">'+(r.group||'-')+'</span></td>'
           +'<td><span class="mono">'+(r.uniqueId||'')+'</span></td>'
-          +'<td>'+(r.name||'-')+'</td>'
+          +'<td>'+name+'</td>'
           +'<td>'+r.station+'</td>'
           +'<td>'+fmt(r.scanTime)+'</td>'
           +'<td><span style="font-size:.78rem;color:var(--muted)">'+(r.deviceName||'-')+'</span></td>'
