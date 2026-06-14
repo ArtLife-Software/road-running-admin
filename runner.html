@@ -61,6 +61,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
     <div class="tab" data-page="status" onclick="showPage('status')">🎫 報名結果</div>
     <div class="tab" data-page="lookup" onclick="showPage('lookup')">🏆 查詢成績</div>
   </div>
+  <div style="text-align:right;margin-bottom:12px">
+    <a href="admin.html?mode=stats" target="_blank" style="font-size:.78rem;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;gap:4px" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">📊 即時統計 →</a>
+  </div>
 
   <!-- ════════ 報名 ════════ -->
   <div id="page-signup" class="page active">
