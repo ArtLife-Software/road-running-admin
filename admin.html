@@ -521,7 +521,8 @@ function renderEntries(list){
       customCells+='<td>'+(v!==undefined&&v!==''?v:'-')+'</td>';
     });
     const checkinCell=ci
-      ?'<td><span class="badge badge-green">✅ 已報到</span><div style="font-size:.7rem;color:var(--muted)">'+(ci.checkedInAt?.toDate?ci.checkedInAt.toDate().toLocaleTimeString('zh-TW',{hour12:false}):'-')+'</div></td>'
+      ?'<td><span class="badge badge-green">✅ 已報到</span><div style="font-size:.7rem;color:var(--muted)">'+(ci.checkedInAt?.toDate?ci.checkedInAt.toDate().toLocaleTimeString('zh-TW',{hour12:false}):'-')+'</div>'
+        +'<button class="btn btn-sm btn-danger" style="margin-top:4px" onclick="cancelCheckin(\''+eventId+'\',\''+e.uniqueId+'\')">取消報到</button></td>'
       :'<td><button class="btn btn-sm btn-ghost" onclick="manualCheckin(\''+eventId+'\',\''+e.uniqueId+'\')">標記報到</button></td>';
     return '<tr>'
       +'<td><strong>'+(e.bibNumber||'-')+'</strong></td>'
@@ -718,6 +719,12 @@ function validateEntryCustomFields(){
   return null;
 }
 
+window.cancelCheckin=async function(eventId,uniqueId){
+  if(!confirm('確定取消此選手的報到記錄？'))return;
+  await deleteDoc(doc(db,'events',eventId,'checkins',uniqueId));
+  showToast('已取消報到');
+  loadEntries();
+}
 // 手動標記報到
 window.manualCheckin=async function(eventId,uniqueId){
   if(!confirm('確定為此選手標記報到？'))return;
@@ -950,7 +957,7 @@ async function loadRecords(){
     query(collection(db,'events',curRecordEventId,'records'),orderBy('scanTime','desc')),
     async snap=>{
       const tbody=document.getElementById('recordsTableBody');
-      if(snap.empty){tbody.innerHTML='<tr><td colspan="7" class="loading-cell">尚無打卡記錄</td></tr>';return;}
+      if(snap.empty){tbody.innerHTML='<tr><td colspan="8" class="loading-cell">尚無打卡記錄</td></tr>';return;}
       // 補查報名資料取得姓名
       const entrySnap=await getDocs(collection(db,'events',curRecordEventId,'runners'));
       const nameMap={};
@@ -965,10 +972,16 @@ async function loadRecords(){
           +'<td>'+r.station+'</td>'
           +'<td>'+fmt(r.scanTime)+'</td>'
           +'<td><span style="font-size:.78rem;color:var(--muted)">'+(r.deviceName||'-')+'</span></td>'
+          +'<td><button class="btn btn-sm btn-danger" onclick="deleteRecord(\''+d.id+'\',\''+(r.uniqueId||'')+'\',\''+(r.station||'')+'\')">刪除</button></td>'
           +'</tr>';
       }).join('');
     }
   );
+}
+window.deleteRecord=async function(docId,uniqueId,station){
+  if(!confirm('確定刪除此打卡記錄？\nID：'+uniqueId+'　站點：'+station))return;
+  await deleteDoc(doc(db,'events',curRecordEventId,'records',docId));
+  showToast('已刪除');
 }
 window.exportRecordsCSV=async function(){
   if(!curRecordEventId){showToast('請先選擇賽事','error');return;}
@@ -1445,7 +1458,7 @@ window.showVirtualStart=async function(){
   // 載入組別清單
   const gSnap=await getDocs(collection(db,'events',curRecordEventId,'groups'));
   const gSel=document.getElementById('vstartGroup');
-  gSel.innerHTML='';
+  gSel.innerHTML='<option value="">全部組別</option>';
   gSnap.docs.forEach(d=>{
     const o=document.createElement('option'); o.value=d.data().name; o.textContent=d.data().name; gSel.appendChild(o);
   });
@@ -1461,7 +1474,11 @@ window.showVirtualStart=async function(){
   document.getElementById('vstartModal').style.display='flex';
 }
 window.onVstartScopeChange=function(){
-  document.getElementById('vstartGroupRow').style.display=document.getElementById('vstartScope').value==='group'?'block':'none';
+  // 組別行：scope=group 或 scope=checkin 都可以顯示
+  const scope=document.getElementById('vstartScope').value;
+  document.getElementById('vstartGroupRow').style.display=(scope==='group'||scope==='checkin')?'block':'none';
+  // 組別選項文字調整
+  document.getElementById('vstartGroupLabel').textContent=scope==='checkin'?'限定組別（可選）':'選擇組別';
 }
 window.onVstartTimeModeChange=function(){
   document.getElementById('vstartCustomTimeRow').style.display=document.getElementById('vstartTimeMode').value==='custom'?'block':'none';
@@ -1469,7 +1486,9 @@ window.onVstartTimeModeChange=function(){
 window.runVirtualStart=async function(){
   const eventId=curRecordEventId;
   const scope=document.getElementById('vstartScope').value;
-  const groupFilter=scope==='group'?document.getElementById('vstartGroup').value:null;
+  const groupSel=document.getElementById('vstartGroup').value;
+  // group模式：必須選組別；checkin模式：組別可選（空=全部）
+  const groupFilter=(scope==='group')?groupSel:(scope==='checkin'&&groupSel?groupSel:null);
   const timeMode=document.getElementById('vstartTimeMode').value;
   let scanTime;
   if(timeMode==='custom'){
@@ -1495,7 +1514,7 @@ window.runVirtualStart=async function(){
     const checkinSnap=await getDocs(collection(db,'events',eventId,'checkins'));
     const checkedIds=new Set(checkinSnap.docs.map(d=>d.id));
     entries=entries.filter(e=>checkedIds.has(e.uniqueId));
-    if(!entries.length){showToast('目前尚無已報到選手','error');btn.textContent='執行';btn.disabled=false;return;}
+    if(!entries.length){showToast('目前尚無已報到選手','error');return;}
   }
 
   // 載入既有第一站記錄，避免重複
@@ -1808,7 +1827,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
         </div>
       </div>
       <div class="event-select-row"><label>選擇賽事：</label><select id="recordEventSelect" class="input" onchange="onRecordEventChange()"><option value="">請選擇賽事...</option></select></div>
-      <div class="table-wrap"><table><thead><tr><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>站點</th><th>掃描時間</th><th>掃描器</th></tr></thead><tbody id="recordsTableBody"><tr><td colspan="7" class="loading-cell">載入中...</td></tr></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>站點</th><th>掃描時間</th><th>掃描器</th><th>操作</th></tr></thead><tbody id="recordsTableBody"><tr><td colspan="8" class="loading-cell">載入中...</td></tr></tbody></table></div>
     </div>
 
     <!-- 查詢成績 -->
@@ -2019,8 +2038,10 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       </select>
     </div>
     <div class="input-group" id="vstartGroupRow" style="display:none">
-      <label>選擇組別</label>
-      <select id="vstartGroup" class="input"></select>
+      <label id="vstartGroupLabel">選擇組別</label>
+      <select id="vstartGroup" class="input">
+        <option value="">全部組別</option>
+      </select>
     </div>
     <div class="input-group">
       <label>起跑時間</label>
