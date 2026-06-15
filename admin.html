@@ -945,14 +945,14 @@ window.saveEntry=async function(){
     const match=existingRunners.find(r=>isSamePerson(r,runnerData));
     if(match){
       const fields=[
-        {label:'姓名',old:match.name,new:name},
-        {label:'性別',old:match.gender,new:gender},
-        {label:'生日',old:match.birthday,new:birthday},
-        {label:'手機',old:match.phone,new:phone},
-        {label:'Email',old:match.email,new:email},
-        {label:'身分證',old:match.idNumber,new:idNum},
+        {label:'姓名',old:match.name||'',new:name},
+        {label:'性別',old:match.gender||'',new:gender},
+        {label:'生日',old:match.birthday||'',new:birthday},
+        {label:'手機',old:match.phone||'',new:phone},
+        {label:'Email',old:match.email||'',new:email},
+        {label:'身分證',old:match.idNumber||'',new:idNum},
       ];
-      const hasDiff=fields.some(f=>f.old&&f.new&&f.old!==f.new);
+      const hasDiff=fields.some(f=>f.old!==f.new);
       if(hasDiff){
         const result=await showSimilarPersonDialog(match,runnerData);
         if(result==='refill') return;
@@ -1855,7 +1855,7 @@ function showSimilarPersonDialog(match, runnerData){
       {label:'身分證',old:match.idNumber,new:runnerData.idNumber},
     ];
     let rows=fields.map(f=>{
-      const diff=f.old&&f.new&&f.old!==f.new;
+      const diff=(f.old||'')!==(f.new||'');
       return '<tr style="'+(diff?'color:var(--accent)':'')+'">'
         +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted)">'+f.label+'</td>'
         +'<td style="padding:4px 8px;font-size:.85rem">'+(f.old||'-')+'</td>'
