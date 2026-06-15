@@ -88,11 +88,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   <!-- ════════ 查詢成績 ════════ -->
   <div id="page-lookup" class="page">
     <div class="card">
-      <div class="csv-hint">生日為必填；ID 或身分證字號填寫其中一個即可，兩個都填時符合任一即可查詢。</div>
+      <div class="csv-hint">ID 或身分證字號填寫其中一個即可，兩個都填時符合任一即可查詢。</div>
       <div class="input-group"><label>生日（yyyy/mm/dd）*</label><input id="lookupBirthday" type="text" class="input" placeholder="1990/01/01"></div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px">
-        <div class="input-group" style="margin:0"><label>ID（二擇一）</label><input id="lookupId" type="text" class="input" placeholder="R000001"></div>
-        <div class="input-group" style="margin:0"><label>身分證字號（二擇一）</label><input id="lookupIdNum" type="text" class="input" placeholder="A123456789"></div>
+        <div class="input-group" style="margin:0"><label>ID</label><input id="lookupId" type="text" class="input" placeholder="R000001"></div>
+        <div class="input-group" style="margin:0"><label>身分證字號</label><input id="lookupIdNum" type="text" class="input" placeholder="A123456789"></div>
       </div>
       <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
         <div class="input-group" id="lookupEventRow" style="margin:0;flex:1;min-width:160px"><label>選擇賽事</label><select id="lookupEventSelect" class="input"><option value="">請選擇賽事...</option></select></div>
