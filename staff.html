@@ -229,7 +229,7 @@ window.submitSignup=async function(){
       +'<div style="font-size:1.05rem;font-weight:900;margin-bottom:4px">報名成功！</div>'
       +'<div style="font-size:.82rem;color:var(--muted)">'+curSignupEvent.name+'</div>'
       +'<div style="margin-top:16px;font-size:.88rem">'+name+'　'+gender+'　'+birthday+'</div>'
-      +'<div class="csv-hint" style="margin-top:16px;text-align:left">如需修改，請至「查詢／修改」分頁輸入身分證字號查詢。</div>'
+      +'<div class="csv-hint" style="margin-top:16px;text-align:left">如需修改，請至「查詢報名／修改」分頁輸入身分證字號查詢。</div>'
       +'</div>';
   }catch(e){showToast('報名失敗：'+e.message,'error');btn.textContent='送出報名';btn.disabled=false;}
 }
