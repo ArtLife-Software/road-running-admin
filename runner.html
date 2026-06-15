@@ -213,7 +213,7 @@ let curSignupEvent=null;
 let curSignupCustomFields=[];
 
 async function initSignupPage(){
-  if(signupEvents.length)return; // 已載入過
+  signupEvents=[];
   const content=document.getElementById('signupContent');
   const snap=await getDocs(query(collection(db,'events'),where('registrationOpen','==',true)));
   signupEvents=snap.docs.map(d=>({id:d.id,...d.data()}));
