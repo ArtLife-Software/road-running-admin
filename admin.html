@@ -1853,23 +1853,25 @@ window.exportStaff=async function(){
   showToast('已匯出');
 }
 
-// ── 相似選手確認對話框（共用）──
+// ── 相似選手確認對話框（管理員用：完整顯示新舊資料）──
 function showSimilarPersonDialog(match, runnerData){
   return new Promise(resolve=>{
     const fields=[
-      {label:'姓名',old:match.name,new:runnerData.name},
-      {label:'性別',old:match.gender,new:runnerData.gender},
-      {label:'生日',old:match.birthday,new:runnerData.birthday},
-      {label:'手機',old:match.phone,new:runnerData.phone},
-      {label:'Email',old:match.email,new:runnerData.email},
-      {label:'身分證',old:match.idNumber,new:runnerData.idNumber},
+      {label:'姓名',  old:match.name,      cur:runnerData.name},
+      {label:'性別',  old:match.gender,    cur:runnerData.gender},
+      {label:'生日',  old:match.birthday,  cur:runnerData.birthday},
+      {label:'手機',  old:match.phone,     cur:runnerData.phone},
+      {label:'Email', old:match.email,     cur:runnerData.email},
+      {label:'身分證',old:match.idNumber,  cur:runnerData.idNumber},
     ];
     let rows=fields.map(f=>{
-      const diff=(f.old||'')!==(f.new||'');
+      const oldVal=(f.old||'').trim();
+      const curVal=(f.cur||'').trim();
+      const diff=oldVal!==curVal;
       return '<tr style="'+(diff?'color:var(--accent)':'')+'">'
         +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted)">'+f.label+'</td>'
-        +'<td style="padding:4px 8px;font-size:.85rem">'+(f.old||'-')+'</td>'
-        +'<td style="padding:4px 8px;font-size:.85rem">'+(f.new||'-')+'</td>'
+        +'<td style="padding:4px 8px;font-size:.85rem">'+(oldVal||'')+'</td>'
+        +'<td style="padding:4px 8px;font-size:.85rem">'+(curVal||'')+'</td>'
         +'</tr>';
     }).join('');
     const dialog=document.createElement('div');
