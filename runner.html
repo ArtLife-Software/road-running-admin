@@ -438,9 +438,9 @@ async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,
       // 檢查是否已報名此賽事
       const entrySnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
       if(!entrySnap.empty){
-        // 已報名：更新選手資料及 customData
+        // 已報名：更新選手資料、group 及 customData
         await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
-        await updateDoc(doc(db,'events',eventId,'runners',entrySnap.docs[0].id),{customData,updatedAt:serverTimestamp()});
+        await updateDoc(doc(db,'events',eventId,'runners',entrySnap.docs[0].id),{group,customData,updatedAt:serverTimestamp()});
         showToast('選手資料已更新，您已報名過此賽事');
         if(btn){btn.textContent='送出報名';btn.disabled=false;}
         return;

@@ -982,9 +982,9 @@ window.saveEntry=async function(){
   if(!id){
     const existingEntry=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
     if(!existingEntry.empty){
-      // 已報名：更新 customData 後提示
-      await updateDoc(doc(db,'events',eventId,'runners',existingEntry.docs[0].id),{customData,updatedAt:serverTimestamp()});
-      showToast('此選手已報名過此賽事，自訂欄位已更新');
+      // 已報名：更新 bibNumber、group、customData
+      await updateDoc(doc(db,'events',eventId,'runners',existingEntry.docs[0].id),{bibNumber,group,customData,updatedAt:serverTimestamp()});
+      showToast('此選手已報名過此賽事，資料已更新');
       closeModal('entryModal'); loadEntries();
       return;
     }
