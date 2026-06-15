@@ -978,6 +978,12 @@ window.saveEntry=async function(){
       await setDoc(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
     }
   }
+  // 已報名檢查（新增時才需要，編輯時跳過）
+  if(!id){
+    const existingEntry=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
+    const dup=existingEntry.docs.find(d=>d.id!==id);
+    if(dup){showToast('此選手已報名過此賽事','error');return;}
+  }
   const data={uniqueId,name,bibNumber,group,customData,updatedAt:serverTimestamp()};
   if(id){await updateDoc(doc(db,'events',eventId,'runners',id),data);showToast('已更新');}
   else{data.createdAt=serverTimestamp();await addDoc(collection(db,'events',eventId,'runners'),data);showToast('已新增');}

@@ -408,11 +408,13 @@ async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,
       // 檢查是否已報名此賽事
       const entrySnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
       if(!entrySnap.empty){
-        showToast('您已報名過此賽事，請至「查詢報名」查詢','error');
+        // 已報名：只更新選手資料，不新增報名記錄
+        await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
+        showToast('選手資料已更新，您已報名過此賽事','success');
         if(btn){btn.textContent='送出報名';btn.disabled=false;}
         return;
       }
-      // 用新資料更新選手
+      // 未報名：更新選手資料並新增報名記錄
       batch.update(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
     } else {
       let maxId=0;
