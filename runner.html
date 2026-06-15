@@ -75,9 +75,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   <!-- ════════ 查詢報名結果 ════════ -->
   <div id="page-status" class="page">
     <div class="card">
-      <div class="csv-hint">輸入報名時取得的編號（號碼布）與姓名，查詢報名狀態與 QR Code，開放報名期間可修改資料。</div>
+      <div class="csv-hint">輸入編號、姓名、性別、生日，四項全符合才能查詢，開放報名期間可直接修改資料。</div>
       <div class="input-group"><label>編號</label><input id="statusBib" type="text" class="input" placeholder="001"></div>
       <div class="input-group"><label>姓名</label><input id="statusName" type="text" class="input" placeholder="王小明"></div>
+      <div class="input-group"><label>性別</label><select id="statusGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>
+      <div class="input-group"><label>生日（yyyy/mm/dd）</label><input id="statusBirthday" type="text" class="input" placeholder="1990/01/01"></div>
       <button class="btn btn-primary btn-full" onclick="doStatusQuery()">🔍 查詢報名結果</button>
     </div>
     <div id="statusResult"></div>
@@ -86,9 +88,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   <!-- ════════ 查詢成績 ════════ -->
   <div id="page-lookup" class="page">
     <div class="card">
+      <div class="csv-hint">生日為必填；ID 或身分證字號填寫其中一個即可，兩個都填時符合任一即可查詢。</div>
+      <div class="input-group"><label>生日（yyyy/mm/dd）*</label><input id="lookupBirthday" type="text" class="input" placeholder="1990/01/01"></div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px">
-        <div class="input-group" style="margin:0"><label>ID</label><input id="lookupId" type="text" class="input" placeholder="R000001"></div>
-        <div class="input-group" style="margin:0"><label>身分證字號</label><input id="lookupIdNum" type="text" class="input" placeholder="A123456789"></div>
+        <div class="input-group" style="margin:0"><label>ID（二擇一）</label><input id="lookupId" type="text" class="input" placeholder="R000001"></div>
+        <div class="input-group" style="margin:0"><label>身分證字號（二擇一）</label><input id="lookupIdNum" type="text" class="input" placeholder="A123456789"></div>
       </div>
       <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
         <div class="input-group" id="lookupEventRow" style="margin:0;flex:1;min-width:160px"><label>選擇賽事</label><select id="lookupEventSelect" class="input"><option value="">請選擇賽事...</option></select></div>
@@ -470,22 +474,26 @@ window.setFieldError=setFieldError;
 window.doStatusQuery=async function(){
   const bib=document.getElementById('statusBib').value.trim();
   const name=document.getElementById('statusName').value.trim();
+  const gender=document.getElementById('statusGender').value;
+  const birthday=document.getElementById('statusBirthday').value.trim();
   const result=document.getElementById('statusResult');
-  if(!bib||!name){showToast('請輸入編號和姓名','error');return;}
+  if(!bib||!name||!gender||!birthday){showToast('請填寫全部四個欄位','error');return;}
   result.innerHTML='<div class="card"><div class="loading-cell">查詢中...</div></div>';
 
   const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
   const evSnap=await getDocs(query(collection(db,'events'),orderBy('date','desc')));
-  let html='';
-  let found=false;
+  let html=''; let found=false;
   for(const evDoc of evSnap.docs){
     const ev=evDoc.data();
     const entrySnap=await getDocs(query(collection(db,'events',evDoc.id,'runners'),where('bibNumber','==',bib)));
     for(const eDoc of entrySnap.docs){
       const e=eDoc.data();
       const r=rMap[e.uniqueId]||{};
-      const entryName=e.name||r.name||'';
+      const entryName=r.name||'';
+      // 四項全部驗證
       if(entryName!==name)continue;
+      if((r.gender||'')!==gender)continue;
+      if((r.birthday||'')!==birthday)continue;
       found=true;
       const cardId='statusCard_'+evDoc.id+'_'+eDoc.id;
       html+='<div class="card" id="'+cardId+'">';
@@ -498,14 +506,15 @@ window.doStatusQuery=async function(){
       html+='</div>';
       html+='<div id="statusQR_'+evDoc.id+'_'+eDoc.id+'" class="qr-box"></div>';
       if(ev.registrationOpen){
-        html+='<button class="btn btn-ghost btn-full" style="margin-top:12px" onclick="showEditVerify(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+cardId+'\')">✏️ 修改報名資料</button>';
+        // 直接展開修改表單，不需二階段驗證
         html+='<div id="'+cardId+'_edit" style="margin-top:12px"></div>';
+        html+='<button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="showEditForm(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+e.uniqueId+'\',\''+cardId+'\')">✏️ 修改報名資料</button>';
       }
       html+='</div>';
     }
   }
   if(!found){
-    result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查無資料，請確認編號與姓名是否正確</div></div>';
+    result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查無資料，請確認四項資料是否正確</div></div>';
     return;
   }
   result.innerHTML=html;
@@ -515,57 +524,33 @@ window.doStatusQuery=async function(){
     for(const eDoc of entrySnap.docs){
       const e=eDoc.data();
       const r=rMap[e.uniqueId]||{};
-      const entryName=e.name||r.name||'';
-      if(entryName!==name)continue;
+      if((r.name||'')!==name||(r.gender||'')!==gender||(r.birthday||'')!==birthday)continue;
       const el=document.getElementById('statusQR_'+evDoc.id+'_'+eDoc.id);
       if(!el)continue;
-      const qrText=[e.uniqueId,e.bibNumber||''].join('|');
-      makeQRCode(el, qrText, 180);
+      makeQRCode(el, [e.uniqueId,e.bibNumber||''].join('|'), 180);
     }
   }
 }
 
-// ── 修改報名資料：驗證 ──
-window.showEditVerify=function(eventId,entryDocId,cardId){
+// ── 修改報名資料：直接展開（查詢時已驗證身份）──
+window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   const box=document.getElementById(cardId+'_edit');
   if(box.dataset.open==='1'){box.innerHTML='';box.dataset.open='';return;}
   box.dataset.open='1';
-  let html='<div class="card" style="background:var(--surface2)">';
-  html+='<div class="csv-hint">為確保是本人操作，請輸入報名時填寫的性別與生日，正確才能修改：</div>';
-  html+='<div class="input-group"><label>性別</label><select id="'+cardId+'_vGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>';
-  html+='<div class="input-group"><label>生日（yyyy/mm/dd）</label><input id="'+cardId+'_vBirthday" type="text" class="input" placeholder="yyyy/mm/dd"></div>';
-  html+='<button class="btn btn-primary btn-full" onclick="verifyAndEdit(\''+eventId+'\',\''+entryDocId+'\',\''+cardId+'\')">驗證並進入修改</button>';
-  html+='</div>';
-  box.innerHTML=html;
-}
-
-// ── 修改報名資料：驗證通過後顯示編輯表單 ──
-window.verifyAndEdit=async function(eventId,entryDocId,cardId){
-  const vGender=document.getElementById(cardId+'_vGender').value;
-  const vBirthday=document.getElementById(cardId+'_vBirthday').value.trim();
-
   const eDoc=await getDoc(doc(db,'events',eventId,'runners',entryDocId));
   const e=eDoc.data();
-  const rSnap=await getDocs(query(collection(db,'runners'),where('uniqueId','==',e.uniqueId)));
+  const rSnap=await getDocs(query(collection(db,'runners'),where('uniqueId','==',uniqueId)));
   const rDocRef=rSnap.empty?null:rSnap.docs[0];
   const r=rDocRef?rDocRef.data():{};
-
-  if(vGender!==(r.gender||'')||vBirthday!==(r.birthday||'')){
-    showToast('驗證資料有誤，請確認性別與生日是否正確','error');
-    return;
-  }
-
-  // 載入賽事自訂欄位與組別清單
   const evDoc=await getDoc(doc(db,'events',eventId));
   const customFields=evDoc.data()?.customFields||[];
   const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
   const groups=gSnap.docs.map(d=>d.data().name);
   const customData=e.customData||{};
 
-  const box=document.getElementById(cardId+'_edit');
   let html='<div class="card" style="background:var(--surface2)">';
   html+='<div class="csv-hint">可修改以下資料，ID 與編號無法變更。</div>';
-  html+='<div class="input-group"><label>姓名</label><input id="'+cardId+'_eName" type="text" class="input" value="'+(e.name||r.name||'')+'"></div>';
+  html+='<div class="input-group"><label>姓名</label><input id="'+cardId+'_eName" type="text" class="input" value="'+(r.name||'')+'"></div>';
   html+='<div class="input-group"><label>性別</label><select id="'+cardId+'_eGender" class="input"><option value="男"'+(r.gender==='男'?' selected':'')+'>男</option><option value="女"'+(r.gender==='女'?' selected':'')+'>女</option></select></div>';
   html+='<div class="input-group"><label>生日（yyyy/mm/dd）</label><input id="'+cardId+'_eBirthday" type="text" class="input" value="'+(r.birthday||'')+'"></div>';
   html+='<div class="input-group"><label>手機號碼</label><input id="'+cardId+'_ePhone" type="tel" class="input" value="'+(r.phone||'')+'"></div>';
@@ -576,22 +561,20 @@ window.verifyAndEdit=async function(eventId,entryDocId,cardId){
   groups.forEach(g=>{html+='<option value="'+g+'"'+(g===e.group?' selected':'')+'>'+g+'</option>';});
   html+='</select></div>';
   customFields.forEach(f=>{
-    const id=cardId+'_ecf_'+f.id;
+    const fid=cardId+'_ecf_'+f.id;
     if(f.type==='select'){
-      html+='<div class="input-group"><label>'+f.label+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>';
+      html+='<div class="input-group"><label>'+f.label+'</label><select id="'+fid+'" class="input"><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{html+='<option value="'+o+'"'+(customData[f.id]===o?' selected':'')+'>'+o+'</option>';});
       html+='</select></div>';
-    } else if(f.type==='checkbox'){
-      html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(customData[f.id]?'checked':'')+'> '+f.label+'</label></div>';
-    } else {
-      html+='<div class="input-group"><label>'+f.label+'</label><input id="'+id+'" type="text" class="input" value="'+(customData[f.id]!==undefined?customData[f.id]:'')+'"></div>';
+    }else if(f.type==='checkbox'){
+      html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+fid+'" '+(customData[f.id]?'checked':'')+'> '+f.label+'</label></div>';
+    }else{
+      html+='<div class="input-group"><label>'+f.label+'</label><input id="'+fid+'" type="text" class="input" value="'+(customData[f.id]!==undefined?customData[f.id]:'')+'"></div>';
     }
   });
   html+='<button class="btn btn-primary btn-full" onclick="saveEditEntry(\''+eventId+'\',\''+entryDocId+'\',\''+(rDocRef?rDocRef.id:'')+'\',\''+cardId+'\')">儲存修改</button>';
   html+='</div>';
   box.innerHTML=html;
-
-  // 把自訂欄位定義存起來供儲存時使用
   box.dataset.customFields=JSON.stringify(customFields);
 }
 
@@ -605,29 +588,22 @@ window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
   const note=document.getElementById(cardId+'_eNote').value.trim();
   const group=document.getElementById(cardId+'_eGroup').value;
   if(!name){showToast('姓名為必填','error');return;}
-
   if(birthday&&!validateBirthday(birthday)){showToast('生日格式錯誤','error');return;}
   if(phone&&!validatePhone(phone)){showToast('手機號碼格式錯誤','error');return;}
   if(email&&!validateEmail(email)){showToast('Email格式錯誤','error');return;}
   if(idNumber&&!validateId(idNumber)){showToast('身分證格式錯誤','error');return;}
-
   const customFields=JSON.parse(document.getElementById(cardId+'_edit').dataset.customFields||'[]');
   const customData={};
   for(const f of customFields){
-    const el=document.getElementById(cardId+'_ecf_'+f.id);
-    if(!el)continue;
+    const el=document.getElementById(cardId+'_ecf_'+f.id); if(!el)continue;
     if(f.type==='checkbox')customData[f.id]=el.checked;
-    else{
-      if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}
-      customData[f.id]=el.value.trim();
-    }
+    else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
   }
-
   try{
     if(runnerDocId){
       await updateDoc(doc(db,'runners',runnerDocId),{name,gender,birthday,phone,email,idNumber,note,updatedAt:serverTimestamp()});
     }
-    await updateDoc(doc(db,'events',eventId,'runners',entryDocId),{name,group,customData,updatedAt:serverTimestamp()});
+    await updateDoc(doc(db,'events',eventId,'runners',entryDocId),{group,customData,updatedAt:serverTimestamp()});
     showToast('已儲存修改');
     document.getElementById(cardId+'_edit').innerHTML='<div class="csv-hint">✅ 修改已儲存</div>';
   }catch(err){
@@ -662,18 +638,26 @@ window.doLookup=async function(){
   const eventId=document.getElementById('lookupEventSelect').value;
   const uid=document.getElementById('lookupId').value.trim();
   const idNum=document.getElementById('lookupIdNum').value.trim();
+  const birthday=document.getElementById('lookupBirthday').value.trim();
   const result=document.getElementById('lookupResult');
+  if(!birthday){showToast('請填寫生日','error');return;}
+  if(!validateBirthday(birthday)){showToast('生日格式錯誤（yyyy/mm/dd）','error');return;}
+  if(!uid&&!idNum){showToast('請輸入 ID 或身分證字號（擇一）','error');return;}
   if(!isAll&&!eventId){showToast('請先選擇賽事','error');return;}
-  if(!uid&&!idNum){showToast('請輸入 ID 或身分證字號','error');return;}
   result.innerHTML='<div class="card"><div class="loading-cell">查詢中...</div></div>';
 
   const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
 
   function matchEntry(e){
     const r=rMap[e.uniqueId]||{};
-    if(uid&&idNum) return (e.uniqueId||'').toLowerCase()===uid.toLowerCase()&&(r.idNumber||'').toLowerCase()===idNum.toLowerCase();
-    if(uid) return (e.uniqueId||'').toLowerCase()===uid.toLowerCase();
-    if(idNum) return (r.idNumber||'').toLowerCase()===idNum.toLowerCase();
+    // 生日必須符合
+    if((r.birthday||'')!==birthday) return false;
+    // ID 或身分證擇一，兩個都填時任一符合即可
+    const uidMatch=uid&&(e.uniqueId||'').toLowerCase()===uid.toLowerCase();
+    const idNumMatch=idNum&&(r.idNumber||'').toLowerCase()===idNum.toLowerCase();
+    if(uid&&idNum) return uidMatch||idNumMatch;
+    if(uid) return uidMatch;
+    if(idNum) return idNumMatch;
     return false;
   }
 
@@ -681,7 +665,7 @@ window.doLookup=async function(){
     const entrySnap=await getDocs(collection(db,'events',eventId,'runners'));
     const entries=entrySnap.docs.map(d=>({id:d.id,...d.data()}));
     const matched=entries.filter(matchEntry);
-    if(!matched.length){result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查無資料，請確認 ID 或身分證字號</div></div>';return;}
+    if(!matched.length){result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查無資料，請確認填寫的資料是否正確</div></div>';return;}
     if(matched.length>1){result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--accent)">找到多筆符合資料，請同時輸入 ID 和身分證字號</div></div>';return;}
     result.innerHTML=await buildLookupCard(matched[0], eventId, rMap, null);
   } else {
@@ -699,7 +683,7 @@ window.doLookup=async function(){
       }
       html+=await buildLookupCard(matched[0], evDoc.id, rMap, ev);
     }
-    if(!html){result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查無資料，請確認 ID 或身分證字號</div></div>';return;}
+    if(!html){result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查無資料，請確認填寫的資料是否正確</div></div>';return;}
     result.innerHTML=html;
   }
 }
