@@ -154,10 +154,11 @@ async function selectSignupEvent(eventId,keepWrapper){
   curSignupEvent=signupEvents.find(e=>e.id===eventId);
   curSignupCustomFields=curSignupEvent.staffCustomFields||[];
   let formHtml='';
+  // 圖片永遠顯示在最上方
+  if(curSignupEvent.staffBannerUrl){
+    formHtml+='<div style="margin-bottom:12px"><img src="'+curSignupEvent.staffBannerUrl+'" style="max-width:100%;border-radius:12px;display:block" onerror="this.style.display=\'none\'"></div>';
+  }
   if(!keepWrapper){
-    if(curSignupEvent.staffBannerUrl){
-      formHtml+='<div style="margin-bottom:12px"><img src="'+curSignupEvent.staffBannerUrl+'" style="max-width:100%;border-radius:12px;display:block" onerror="this.style.display=\'none\'"></div>';
-    }
     formHtml+='<div class="card" style="text-align:center;margin-bottom:12px"><strong>'+curSignupEvent.name+'</strong>'+(curSignupEvent.date?'<div style="font-size:.78rem;color:var(--muted);margin-top:4px">'+curSignupEvent.date+'</div>':'')+'</div>';
   }
   formHtml+='<div class="card">';

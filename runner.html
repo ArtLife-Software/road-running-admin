@@ -243,10 +243,11 @@ async function selectSignupEvent(eventId, keepWrapper){
   const groups=gSnap.docs.map(d=>d.data().name);
 
   let formHtml='';
+  // 圖片永遠顯示在最上方
+  if(curSignupEvent.bannerUrl){
+    formHtml+='<div style="margin-bottom:12px"><img src="'+curSignupEvent.bannerUrl+'" style="max-width:100%;border-radius:12px;display:block" onerror="this.style.display=\'none\'"></div>';
+  }
   if(!keepWrapper){
-    if(curSignupEvent.bannerUrl){
-      formHtml+='<div style="margin-bottom:12px"><img src="'+curSignupEvent.bannerUrl+'" style="max-width:100%;border-radius:12px;display:block" onerror="this.style.display=\'none\'"></div>';
-    }
     formHtml+='<div class="card" style="text-align:center;margin-bottom:12px"><strong>'+curSignupEvent.name+'</strong>'+(curSignupEvent.date?'<div style="font-size:.78rem;color:var(--muted);margin-top:4px">'+curSignupEvent.date+'</div>':'')+'</div>';
   }
   formHtml+='<div class="card">';
