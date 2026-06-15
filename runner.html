@@ -370,9 +370,9 @@ window.submitSignup=async function(){
             dbCell='<span style="font-size:.75rem;padding:2px 6px;background:rgba(249,115,22,.12);border-radius:4px;border:1px solid rgba(249,115,22,.3)">有差異</span>';
           }
           return '<tr style="'+rowStyle+'">'
-            +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted);white-space:nowrap">'+f.label+'</td>'
-            +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all">'+dbCell+'</td>'
-            +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all">'+(curVal||'')+'</td>'
+            +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted);white-space:nowrap;border:none">'+f.label+'</td>'
+            +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+dbCell+'</td>'
+            +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+(curVal||'')+'</td>'
             +'</tr>';
         }).join('');
         const diffEmptyFields=fields.filter(f=>(f.old||'').trim()&&!(f.new||'').trim()).map(f=>f.label);
@@ -385,12 +385,14 @@ window.submitSignup=async function(){
         dialog.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:480px;width:100%;box-sizing:border-box;overflow:hidden">'
           +'<div style="font-size:1rem;font-weight:700;margin-bottom:4px">找到相似的資料</div>'
           +'<div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">綠色為相符欄位；橘色欄位有差異，請確認是否為同一人。</div>'
-          +'<div style="overflow-x:auto;margin-bottom:14px"><table style="width:100%;border-collapse:collapse;table-layout:fixed">'
+          +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:14px">'
           +'<colgroup><col style="width:52px"><col><col></colgroup>'
-          +'<thead><tr><th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left"></th>'
-          +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left">資料庫</th>'
-          +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left">您填寫的</th></tr></thead>'
-          +'<tbody>'+rows+'</tbody></table></div>'
+          +'<thead><tr>'
+          +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left;border:none"></th>'
+          +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left;border:none">資料庫</th>'
+          +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left;border:none">您填寫的</th>'
+          +'</tr></thead>'
+          +'<tbody>'+rows+'</tbody></table>'
           +hintHtml
           +'<div style="font-size:.75rem;color:var(--accent);margin-bottom:12px">⚠️ 若選「同一人」，則以新資料取代舊資料！</div>'
           +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
@@ -436,8 +438,9 @@ async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,
       // 檢查是否已報名此賽事
       const entrySnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
       if(!entrySnap.empty){
-        // 已報名：只更新選手資料，不新增報名記錄
+        // 已報名：更新選手資料及 customData
         await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
+        await updateDoc(doc(db,'events',eventId,'runners',entrySnap.docs[0].id),{customData,updatedAt:serverTimestamp()});
         showToast('選手資料已更新，您已報名過此賽事');
         if(btn){btn.textContent='送出報名';btn.disabled=false;}
         return;

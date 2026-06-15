@@ -982,8 +982,9 @@ window.saveEntry=async function(){
   if(!id){
     const existingEntry=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
     if(!existingEntry.empty){
-      // 已報名：若有更新選手資料則提示，不新增報名記錄
-      showToast('此選手已報名過此賽事，資料已更新','error');
+      // 已報名：更新 customData 後提示
+      await updateDoc(doc(db,'events',eventId,'runners',existingEntry.docs[0].id),{customData,updatedAt:serverTimestamp()});
+      showToast('此選手已報名過此賽事，自訂欄位已更新');
       closeModal('entryModal'); loadEntries();
       return;
     }
@@ -1870,9 +1871,9 @@ function showSimilarPersonDialog(match, runnerData){
       const diff=oldVal!==curVal;
       const rowStyle=diff?'color:var(--accent)':'color:var(--green)';
       return '<tr style="'+rowStyle+'">'
-        +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted);white-space:nowrap">'+f.label+'</td>'
-        +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all">'+(oldVal||'')+'</td>'
-        +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all">'+(curVal||'')+'</td>'
+        +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted);white-space:nowrap;border:none">'+f.label+'</td>'
+        +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+(oldVal||'')+'</td>'
+        +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+(curVal||'')+'</td>'
         +'</tr>';
     }).join('');
     const dialog=document.createElement('div');
@@ -1880,13 +1881,14 @@ function showSimilarPersonDialog(match, runnerData){
     dialog.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:480px;width:100%;box-sizing:border-box;overflow:hidden">'
       +'<div style="font-size:1rem;font-weight:700;margin-bottom:4px">找到相似的資料</div>'
       +'<div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">綠色為相符欄位；橘色欄位有差異，請確認是否為同一人。</div>'
-      +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:0">'
+      +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:16px">'
       +'<colgroup><col style="width:52px"><col><col></colgroup>'
       +'<thead><tr>'
       +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left;border:none"></th>'
       +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left;border:none">資料庫</th>'
-      +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left;border:none">填寫的</th></tr></thead>'
-      +'<tbody>'+rows.replace(/<td style="/g,'<td style="border:none;')+'</tbody></table>'
+      +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left;border:none">填寫的</th>'
+      +'</tr></thead>'
+      +'<tbody>'+rows+'</tbody></table>'
       +'<div style="font-size:.75rem;color:var(--accent);margin-bottom:12px">⚠️ 若選「同一人」，則以新資料取代舊資料！</div>'
       +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
       +'<button id="dlgSame" class="btn btn-primary btn-sm">✅ 同一人</button>'
