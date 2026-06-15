@@ -51,7 +51,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 
   <div class="tabs">
     <div class="tab active" data-page="signup" onclick="showPage('signup')">📝 報名</div>
-    <div class="tab" data-page="status" onclick="showPage('status')">🔍 查詢／修改</div>
+    <div class="tab" data-page="status" onclick="showPage('status')">🔍 查詢報名／修改</div>
   </div>
   <div style="text-align:right;margin-bottom:12px">
     <a href="admin.html?mode=stats" target="_blank" style="font-size:.78rem;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;gap:4px" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">📊 即時統計 →</a>
@@ -77,7 +77,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, doc, getDoc, getDocs, addDoc, updateDoc, query, orderBy, where, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, addDoc, updateDoc, query, orderBy, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBWn7703qi0X6rL2c4WBhieTZ2-_JSrvco",
@@ -212,28 +212,13 @@ window.submitSignup=async function(){
   const btn=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
   btn.textContent='送出中...'; btn.disabled=true;
   try{
-    const runnerSnap=await getDocs(collection(db,'runners'));
-    const existingRunners=runnerSnap.docs.map(d=>({docId:d.id,...d.data()}));
-    const match=existingRunners.find(r=>isSamePerson(r,runnerData));
-    let uniqueId;
-    const batch=writeBatch(db);
-    if(match){
-      uniqueId=match.uniqueId;
-      // 檢查是否已報名此賽事
-      const staffSnap=await getDocs(query(collection(db,'events',eventId,'staff'),where('uniqueId','==',uniqueId)));
-      if(!staffSnap.empty){showToast('您已報名過此賽事','error');btn.textContent='送出報名';btn.disabled=false;return;}
-      const updates={};
-      ['name','gender','birthday','phone','email','idNumber','note'].forEach(f=>{if(runnerData[f]&&runnerData[f]!==match[f])updates[f]=runnerData[f];});
-      if(Object.keys(updates).length){updates.updatedAt=serverTimestamp();batch.update(doc(db,'runners',match.docId),updates);}
-    }else{
-      let maxId=0;
-      existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
-      uniqueId='R'+String(maxId+1).padStart(6,'0');
-      batch.set(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
-    }
-    const staffRef=doc(collection(db,'events',eventId,'staff'));
-    batch.set(staffRef,{uniqueId,name,customData,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
-    await batch.commit();
+    // 檢查同賽事身分證是否已存在
+    const existing=await getDocs(query(collection(db,'events',eventId,'staff'),where('idNumber','==',idNumber)));
+    if(!existing.empty){showToast('您已報名過此賽事','error');btn.textContent='送出報名';btn.disabled=false;return;}
+    await addDoc(collection(db,'events',eventId,'staff'),{
+      name,gender,birthday,phone,email,idNumber,note,customData,
+      createdAt:serverTimestamp(),updatedAt:serverTimestamp()
+    });
     const content=document.getElementById('signupContent');
     content.innerHTML='<div class="card" style="text-align:center">'
       +'<div style="font-size:2.5rem;margin-bottom:8px">✅</div>'
@@ -254,52 +239,50 @@ window.doStatusQuery=async function(){
   if(!idNum){showToast('請輸入身分證字號','error');return;}
   if(!validateId(idNum)){showToast('身分證字號格式錯誤','error');return;}
   result.innerHTML='<div class="card"><div class="loading-cell">查詢中...</div></div>';
-  // 找runner
-  const rSnap=await getDocs(query(collection(db,'runners'),where('idNumber','==',idNum)));
-  if(rSnap.empty){result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查無資料</div></div>';return;}
-  const rDocRef=rSnap.docs[0]; const r=rDocRef.data();
-  // 查所有賽事的staff報名
+  // 查詢所有賽事的工作人員報名記錄
   const evSnap=await getDocs(query(collection(db,'events'),orderBy('date','desc')));
   let html=''; let found=false;
   for(const evDoc of evSnap.docs){
     const ev=evDoc.data();
-    const staffSnap=await getDocs(query(collection(db,'events',evDoc.id,'staff'),where('uniqueId','==',r.uniqueId)));
+    const staffSnap=await getDocs(query(collection(db,'events',evDoc.id,'staff'),where('idNumber','==',idNum)));
     if(staffSnap.empty)continue;
     found=true;
-    const e=staffSnap.docs[0]; const ed=e.data();
-    const cardId='sCard_'+evDoc.id+'_'+e.id;
-    html+='<div class="card" id="'+cardId+'">';
-    html+='<div style="font-size:.78rem;color:var(--muted);margin-bottom:8px">'+ev.name+(ev.date?'　'+ev.date:'')+'</div>';
-    html+='<div style="font-size:1rem;font-weight:700;margin-bottom:4px">'+r.name+'</div>';
-    html+='<div style="font-size:.82rem;color:var(--muted)">'+r.gender+'　'+r.birthday+(r.phone?'　'+r.phone:'')+'</div>';
-    if(ev.registrationOpen){
-      html+='<button class="btn btn-ghost btn-sm" style="margin-top:12px" onclick="showEditForm(\''+evDoc.id+'\',\''+e.id+'\',\''+rDocRef.id+'\',\''+cardId+'\')">✏️ 修改資料</button>';
-      html+='<div id="'+cardId+'_edit"></div>';
+    for(const eDocRef of staffSnap.docs){
+      const e=eDocRef.data();
+      const cardId='sCard_'+evDoc.id+'_'+eDocRef.id;
+      html+='<div class="card" id="'+cardId+'">';
+      html+='<div style="font-size:.78rem;color:var(--muted);margin-bottom:8px">'+ev.name+(ev.date?'　'+ev.date:'')+'</div>';
+      html+='<div style="font-size:1rem;font-weight:700;margin-bottom:4px">'+e.name+'</div>';
+      html+='<div style="font-size:.82rem;color:var(--muted)">'+e.gender+'　'+e.birthday+(e.phone?'　'+e.phone:'')+'</div>';
+      if(ev.registrationOpen){
+        html+='<button class="btn btn-ghost btn-sm" style="margin-top:12px" onclick="showEditForm(\''+evDoc.id+'\',\''+eDocRef.id+'\',\''+cardId+'\')">✏️ 修改資料</button>';
+        html+='<div id="'+cardId+'_edit"></div>';
+      }
+      html+='</div>';
     }
-    html+='</div>';
   }
   if(!found){result.innerHTML='<div class="card"><div class="loading-cell">查無報名記錄</div></div>';return;}
   result.innerHTML=html;
 }
 
-window.showEditForm=async function(eventId,staffDocId,runnerDocId,cardId){
+window.showEditForm=async function(eventId,staffDocId,cardId){
   const box=document.getElementById(cardId+'_edit');
   if(box.dataset.open==='1'){box.innerHTML='';box.dataset.open='';return;}
   box.dataset.open='1';
-  const rSnap=await getDoc(doc(db,'runners',runnerDocId));
-  const r=rSnap.data()||{};
   const sSnap=await getDoc(doc(db,'events',eventId,'staff',staffDocId));
   const e=sSnap.data()||{};
   const evDoc=await getDoc(doc(db,'events',eventId));
   const customFields=evDoc.data()?.staffCustomFields||[];
   const cd=e.customData||{};
   let html='<div class="card" style="background:var(--surface2);margin-top:12px">';
-  html+='<div class="input-group"><label>姓名 *</label><input id="'+cardId+'_name" type="text" class="input" value="'+r.name+'"></div>';
-  html+='<div class="input-group"><label>性別 *</label><select id="'+cardId+'_gender" class="input"><option value="男"'+(r.gender==='男'?' selected':'')+'>男</option><option value="女"'+(r.gender==='女'?' selected':'')+'>女</option></select></div>';
-  html+='<div class="input-group"><label>生日 *</label><input id="'+cardId+'_birthday" type="text" class="input" value="'+(r.birthday||'')+'"></div>';
-  html+='<div class="input-group"><label>手機</label><input id="'+cardId+'_phone" type="tel" class="input" value="'+(r.phone||'')+'"></div>';
-  html+='<div class="input-group"><label>Email</label><input id="'+cardId+'_email" type="email" class="input" value="'+(r.email||'')+'"></div>';
-  html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_note" type="text" class="input" value="'+(r.note||'')+'"></div>';
+  html+='<div class="csv-hint">如需修改身分證字號，請直接填入正確號碼。</div>';
+  html+='<div class="input-group"><label>姓名 *</label><input id="'+cardId+'_name" type="text" class="input" value="'+(e.name||'')+'"></div>';
+  html+='<div class="input-group"><label>性別 *</label><select id="'+cardId+'_gender" class="input"><option value="男"'+(e.gender==='男'?' selected':'')+'>男</option><option value="女"'+(e.gender==='女'?' selected':'')+'>女</option></select></div>';
+  html+='<div class="input-group"><label>生日 *</label><input id="'+cardId+'_birthday" type="text" class="input" value="'+(e.birthday||'')+'"></div>';
+  html+='<div class="input-group"><label>身分證字號 *</label><input id="'+cardId+'_idNumber" type="text" class="input" value="'+(e.idNumber||'')+'"></div>';
+  html+='<div class="input-group"><label>手機</label><input id="'+cardId+'_phone" type="tel" class="input" value="'+(e.phone||'')+'"></div>';
+  html+='<div class="input-group"><label>Email</label><input id="'+cardId+'_email" type="email" class="input" value="'+(e.email||'')+'"></div>';
+  html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_note" type="text" class="input" value="'+(e.note||'')+'"></div>';
   customFields.forEach(f=>{
     const fid=cardId+'_cf_'+f.id;
     if(f.type==='select'){
@@ -312,22 +295,24 @@ window.showEditForm=async function(eventId,staffDocId,runnerDocId,cardId){
       html+='<div class="input-group"><label>'+f.label+'</label><input id="'+fid+'" type="text" class="input" value="'+(cd[f.id]||'')+'"></div>';
     }
   });
-  html+='<button class="btn btn-primary btn-full" onclick="saveEdit(\''+eventId+'\',\''+staffDocId+'\',\''+runnerDocId+'\',\''+cardId+'\')">儲存修改</button>';
+  html+='<button class="btn btn-primary btn-full" onclick="saveEdit(\''+eventId+'\',\''+staffDocId+'\',\''+cardId+'\')">儲存修改</button>';
   html+='</div>';
   box.innerHTML=html;
   box.dataset.customFields=JSON.stringify(customFields);
 }
 
-window.saveEdit=async function(eventId,staffDocId,runnerDocId,cardId){
+window.saveEdit=async function(eventId,staffDocId,cardId){
   const name=document.getElementById(cardId+'_name').value.trim();
   const gender=document.getElementById(cardId+'_gender').value;
   const birthday=document.getElementById(cardId+'_birthday').value.trim();
+  const idNumber=document.getElementById(cardId+'_idNumber').value.trim();
   const phone=document.getElementById(cardId+'_phone').value.trim();
   const email=document.getElementById(cardId+'_email').value.trim();
   const note=document.getElementById(cardId+'_note').value.trim();
   if(!name){showToast('姓名為必填','error');return;}
   if(!gender){showToast('性別為必選','error');return;}
   if(!birthday||!validateBirthday(birthday)){showToast('生日格式錯誤','error');return;}
+  if(!idNumber||!validateId(idNumber)){showToast('身分證字號格式錯誤','error');return;}
   if(phone&&!validatePhone(phone)){showToast('手機號碼格式錯誤','error');return;}
   if(email&&!validateEmail(email)){showToast('Email格式錯誤','error');return;}
   const customFields=JSON.parse(document.getElementById(cardId+'_edit').dataset.customFields||'[]');
@@ -338,10 +323,9 @@ window.saveEdit=async function(eventId,staffDocId,runnerDocId,cardId){
     else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
   }
   try{
-    await updateDoc(doc(db,'runners',runnerDocId),{name,gender,birthday,phone,email,note,updatedAt:serverTimestamp()});
-    await updateDoc(doc(db,'events',eventId,'staff',staffDocId),{name,customData,updatedAt:serverTimestamp()});
+    await updateDoc(doc(db,'events',eventId,'staff',staffDocId),{name,gender,birthday,idNumber,phone,email,note,customData,updatedAt:serverTimestamp()});
     showToast('已儲存修改');
-    document.getElementById(cardId+'_edit').innerHTML='<div class="csv-hint" style="margin-top:12px">✅ 修改已儲存</div>';
+    document.getElementById(cardId+'_edit').innerHTML='<div class="csv-hint" style="margin-top:12px">✅ 修改已儲存，如有修改身分證，下次請用新號碼查詢。</div>';
   }catch(err){showToast('儲存失敗：'+err.message,'error');}
 }
 

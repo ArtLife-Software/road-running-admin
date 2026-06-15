@@ -367,6 +367,9 @@ let curCFType='runner'; // 'runner' or 'staff'
 window.manageCustomFields=async function(eid,ename,type){
   curCFEvId=eid; curCFType=type||'runner';
   document.getElementById('cfEventName').textContent=ename+(type==='staff'?' — 工作人員表單':' — 選手表單');
+  document.getElementById('cfHint').textContent=type==='staff'
+    ?'標準欄位（姓名、性別、生日、身分證、手機、Email、備註）一律顯示。以下為此賽事額外新增的自訂欄位，會出現在工作人員報名表單、後台工作人員分頁與匯出 CSV 中。'
+    :'標準欄位（編號、組別、ID、姓名、性別、生日、手機、Email、身分證、備註）一律顯示。以下為此賽事額外新增的自訂欄位，會出現在選手報名表單、報名管理表格與匯出 CSV 中。';
   await loadCustomFields();
   document.getElementById('customFieldsModal').style.display='flex';
 }
@@ -1591,8 +1594,7 @@ window.loadStaff=async function(){
     +curStaffCustomFields.map(f=>'<th>'+f.label+'</th>').join('')
     +'<th>操作</th>';
   const snap=await getDocs(collection(db,'events',eventId,'staff'));
-  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
-  allStaff=snap.docs.map(d=>({id:d.id,...d.data(),runnerData:rMap[d.data().uniqueId]||{}}));
+  allStaff=snap.docs.map(d=>({id:d.id,...d.data()}));
   renderStaff(allStaff);
 }
 function renderStaff(list){
@@ -1601,7 +1603,6 @@ function renderStaff(list){
   if(!list.length){tbody.innerHTML='<tr><td colspan="'+totalCols+'" class="loading-cell">尚無工作人員資料</td></tr>';return;}
   const eventId=document.getElementById('staffEventSelect').value;
   tbody.innerHTML=list.map(e=>{
-    const r=e.runnerData||{};
     const cd=e.customData||{};
     let customCells='';
     curStaffCustomFields.forEach(f=>{
@@ -1609,13 +1610,13 @@ function renderStaff(list){
       customCells+='<td>'+(v!==undefined&&v!==''?v:'-')+'</td>';
     });
     return '<tr>'
-      +'<td>'+(e.name||r.name||'-')+'</td>'
-      +'<td>'+(r.gender||'-')+'</td>'
-      +'<td>'+(r.birthday||'-')+'</td>'
-      +'<td>'+(r.phone||'-')+'</td>'
-      +'<td style="font-size:.78rem">'+(r.email||'-')+'</td>'
-      +'<td><span class="mono" style="font-size:.75rem">'+(r.idNumber||'-')+'</span></td>'
-      +'<td>'+(r.note||'-')+'</td>'
+      +'<td>'+(e.name||'-')+'</td>'
+      +'<td>'+(e.gender||'-')+'</td>'
+      +'<td>'+(e.birthday||'-')+'</td>'
+      +'<td>'+(e.phone||'-')+'</td>'
+      +'<td style="font-size:.78rem">'+(e.email||'-')+'</td>'
+      +'<td><span class="mono" style="font-size:.75rem">'+(e.idNumber||'-')+'</span></td>'
+      +'<td>'+(e.note||'-')+'</td>'
       +customCells
       +'<td style="white-space:nowrap">'
       +'<button class="btn btn-sm btn-ghost" onclick="editStaff(\''+e.id+'\')">編輯</button> '
@@ -1631,10 +1632,9 @@ window.doStaffSearch=function(){
   const kw=field==='gender'?document.getElementById('staffSearchKwGender').value:document.getElementById('staffSearchKw').value.trim().toLowerCase();
   if(!kw&&field!=='gender'){renderStaff(allStaff);return;}
   renderStaff(allStaff.filter(e=>{
-    const r=e.runnerData||{};
-    const val=f=>(e[f]||r[f]||'').toString().toLowerCase();
+    const val=f=>(e[f]||'').toString().toLowerCase();
     if(field==='all') return ['name','phone','email','idNumber','note'].some(f=>val(f).includes(kw));
-    if(field==='gender') return (r.gender||'')===kw;
+    if(field==='gender') return (e.gender||'')===kw;
     return val(field).includes(kw);
   }));
 }
@@ -1652,20 +1652,18 @@ window.showAddStaff=function(){
   document.getElementById('staffModal').style.display='flex';
 }
 window.editStaff=async function(docId){
-  const eventId=document.getElementById('staffEventSelect').value;
   const eDoc=allStaff.find(s=>s.id===docId); if(!eDoc)return;
-  const r=eDoc.runnerData||{};
   document.getElementById('staffDocId').value=docId;
   document.getElementById('staffUniqueId').value=eDoc.uniqueId||'';
-  document.getElementById('staffRunnerSearch').value=eDoc.name||r.name||'';
+  document.getElementById('staffRunnerSearch').value=eDoc.name||'';
   document.getElementById('staffRunnerResults').style.display='none';
-  document.getElementById('sName').value=eDoc.name||r.name||'';
-  document.getElementById('sGender').value=r.gender||'';
-  document.getElementById('sBirthday').value=r.birthday||'';
-  document.getElementById('sPhone').value=r.phone||'';
-  document.getElementById('sEmail').value=r.email||'';
-  document.getElementById('sIdNumber').value=r.idNumber||'';
-  document.getElementById('sNote').value=r.note||'';
+  document.getElementById('sName').value=eDoc.name||'';
+  document.getElementById('sGender').value=eDoc.gender||'';
+  document.getElementById('sBirthday').value=eDoc.birthday||'';
+  document.getElementById('sPhone').value=eDoc.phone||'';
+  document.getElementById('sEmail').value=eDoc.email||'';
+  document.getElementById('sIdNumber').value=eDoc.idNumber||'';
+  document.getElementById('sNote').value=eDoc.note||'';
   ['sBirthday','sPhone','sEmail','sIdNumber'].forEach(id=>setFieldError(id,false));
   renderStaffCustomFields(eDoc.customData||{});
   document.getElementById('staffModal').style.display='flex';
@@ -1696,24 +1694,22 @@ window.searchStaffRunner=async function(){
   const t=document.getElementById('staffRunnerSearch').value.trim().toLowerCase();
   const results=document.getElementById('staffRunnerResults');
   if(!t){results.style.display='none';return;}
-  const snap=await getDocs(collection(db,'runners'));
-  const matched=snap.docs.map(d=>d.data()).filter(r=>
-    ['name','phone','email','idNumber'].some(f=>(r[f]||'').toLowerCase().includes(t))
+  const matched=allStaff.filter(e=>
+    ['name','phone','email','idNumber'].some(f=>(e[f]||'').toLowerCase().includes(t))
   ).slice(0,8);
   if(!matched.length){results.style.display='none';return;}
   results.style.display='block';
-  results.innerHTML=matched.map(r=>
-    '<div onclick="selectStaffRunner(\''+r.uniqueId+'\',\''+r.name.replace(/'/g,'')+'\',\''+
-    (r.gender||'')+'\',\''+(r.birthday||'')+'\',\''+(r.phone||'')+'\',\''+(r.email||'')+'\',\''+(r.idNumber||'')+'\',\''+(r.note||'').replace(/'/g,'')+'\') " '
+  results.innerHTML=matched.map(e=>
+    '<div onclick="selectStaffRunner(\''+e.name.replace(/'/g,'')+'\',\''+
+    (e.gender||'')+'\',\''+(e.birthday||'')+'\',\''+(e.phone||'')+'\',\''+(e.email||'')+'\',\''+(e.idNumber||'')+'\',\''+(e.note||'').replace(/'/g,'')+'\') " '
     +'style="padding:10px 14px;cursor:pointer;font-size:.85rem;border-bottom:1px solid var(--border)" '
     +'onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'"> '
-    +'<span class="mono" style="font-size:.78rem">'+r.uniqueId+'</span> '+r.name
-    +(r.idNumber?'<span style="color:var(--muted);font-size:.78rem;margin-left:8px">'+r.idNumber+'</span>':'')
+    +e.name
+    +(e.idNumber?'<span style="color:var(--muted);font-size:.78rem;margin-left:8px">'+e.idNumber+'</span>':'')
     +'</div>'
   ).join('');
 }
-window.selectStaffRunner=function(uid,name,gender,birthday,phone,email,idNumber,note){
-  document.getElementById('staffUniqueId').value=uid;
+window.selectStaffRunner=function(name,gender,birthday,phone,email,idNumber,note){
   document.getElementById('staffRunnerSearch').value=name;
   document.getElementById('staffRunnerResults').style.display='none';
   document.getElementById('sName').value=name;
@@ -1750,21 +1746,18 @@ window.saveStaff=async function(){
   }
   const runnerData={name,gender,birthday,phone,email,idNumber,note};
   try{
-    if(!uniqueId){
-      const runnerSnap=await getDocs(collection(db,'runners'));
-      const existingRunners=runnerSnap.docs.map(d=>({docId:d.id,...d.data()}));
-      const match=existingRunners.find(r=>isSamePerson(r,runnerData));
-      if(match){uniqueId=match.uniqueId;await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});}
-      else{
-        let maxId=0;
-        existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
-        uniqueId='R'+String(maxId+1).padStart(6,'0');
-        await addDoc(collection(db,'runners'),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
-      }
+    const data={name,gender,birthday,phone,email,idNumber,note,customData,updatedAt:serverTimestamp()};
+    if(docId){
+      await updateDoc(doc(db,'events',eventId,'staff',docId),data);
+      showToast('已更新');
+    }else{
+      // 檢查同賽事身分證是否已存在
+      const existing=await getDocs(query(collection(db,'events',eventId,'staff'),where('idNumber','==',idNumber)));
+      if(!existing.empty){showToast('此身分證已報名過此賽事','error');return;}
+      data.createdAt=serverTimestamp();
+      await addDoc(collection(db,'events',eventId,'staff'),data);
+      showToast('已新增');
     }
-    const data={uniqueId,name,customData,updatedAt:serverTimestamp()};
-    if(docId){await updateDoc(doc(db,'events',eventId,'staff',docId),data);showToast('已更新');}
-    else{data.createdAt=serverTimestamp();await addDoc(collection(db,'events',eventId,'staff'),data);showToast('已新增');}
     closeModal('staffModal'); loadStaff();
   }catch(e){showToast('儲存失敗：'+e.message,'error');}
 }
@@ -1773,14 +1766,13 @@ window.exportStaff=async function(){
   if(!eventId){showToast('請先選擇賽事','error');return;}
   const snap=await getDocs(collection(db,'events',eventId,'staff'));
   if(snap.empty){showToast('無工作人員資料','error');return;}
-  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
   const evDoc=await getDoc(doc(db,'events',eventId));
   const evName=evDoc.data()?.name||'賽事'; const evDate=evDoc.data()?.date||'';
   const customFields=evDoc.data()?.staffCustomFields||[];
   let csv='姓名,性別,生日,手機,Email,身分證,備註'+customFields.map(f=>','+f.label).join('')+'\n';
   snap.docs.forEach(d=>{
-    const e=d.data(); const r=rMap[e.uniqueId]||{}; const cd=e.customData||{};
-    csv+='"'+(e.name||r.name||'')+'","'+(r.gender||'')+'","'+(r.birthday||'')+'","'+(r.phone||'')+'","'+(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'"';
+    const e=d.data(); const cd=e.customData||{};
+    csv+='"'+(e.name||'')+'","'+(e.gender||'')+'","'+(e.birthday||'')+'","'+(e.phone||'')+'","'+(e.email||'')+'","'+(e.idNumber||'')+'","'+(e.note||'')+'"';
     customFields.forEach(f=>{let v=cd[f.id];if(f.type==='checkbox')v=v?'是':'否';csv+=',"'+(v!==undefined?v:'')+'"';});
     csv+='\n';
   });
@@ -2207,7 +2199,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
 <div id="customFieldsModal" class="modal-overlay">
   <div class="modal" style="width:560px">
     <div class="modal-title">報名表單設定 — <span id="cfEventName"></span></div>
-    <div class="csv-hint">標準欄位（編號、組別、姓名、性別、生日、手機、Email、身分證、備註）一律顯示。以下為此賽事額外新增的自訂欄位，會出現在報名表單、報名管理表格與匯出 CSV 中。</div>
+    <div id="cfHint" class="csv-hint"></div>
     <div id="cfList" style="margin-bottom:12px"></div>
     <button class="btn btn-primary btn-sm" onclick="showAddCustomField()">＋ 新增欄位</button>
     <div id="cfForm" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">

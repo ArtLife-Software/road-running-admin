@@ -58,7 +58,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 
   <div class="tabs">
     <div class="tab active" data-page="signup" onclick="showPage('signup')">📝 報名</div>
-    <div class="tab" data-page="status" onclick="showPage('status')">🎫 報名結果</div>
+    <div class="tab" data-page="status" onclick="showPage('status')">🔍 查詢報名／修改</div>
     <div class="tab" data-page="lookup" onclick="showPage('lookup')">🏆 查詢成績</div>
   </div>
   <div style="text-align:right;margin-bottom:12px">
@@ -75,7 +75,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   <!-- ════════ 查詢報名結果 ════════ -->
   <div id="page-status" class="page">
     <div class="card">
-      <div class="csv-hint">輸入報名時取得的編號（號碼布）與姓名，查詢報名狀態與 QR Code。</div>
+      <div class="csv-hint">輸入報名時取得的編號（號碼布）與姓名，查詢報名狀態與 QR Code，開放報名期間可修改資料。</div>
       <div class="input-group"><label>編號</label><input id="statusBib" type="text" class="input" placeholder="001"></div>
       <div class="input-group"><label>姓名</label><input id="statusName" type="text" class="input" placeholder="王小明"></div>
       <button class="btn btn-primary btn-full" onclick="doStatusQuery()">🔍 查詢報名結果</button>
@@ -505,6 +505,7 @@ window.verifyAndEdit=async function(eventId,entryDocId,cardId){
   const box=document.getElementById(cardId+'_edit');
   let html='<div class="card" style="background:var(--surface2)">';
   html+='<div class="csv-hint">可修改以下資料，ID 與編號無法變更。</div>';
+  html+='<div class="input-group"><label>姓名</label><input id="'+cardId+'_eName" type="text" class="input" value="'+(e.name||r.name||'')+'"></div>';
   html+='<div class="input-group"><label>性別</label><select id="'+cardId+'_eGender" class="input"><option value="男"'+(r.gender==='男'?' selected':'')+'>男</option><option value="女"'+(r.gender==='女'?' selected':'')+'>女</option></select></div>';
   html+='<div class="input-group"><label>生日（yyyy/mm/dd）</label><input id="'+cardId+'_eBirthday" type="text" class="input" value="'+(r.birthday||'')+'"></div>';
   html+='<div class="input-group"><label>手機號碼</label><input id="'+cardId+'_ePhone" type="tel" class="input" value="'+(r.phone||'')+'"></div>';
@@ -535,6 +536,7 @@ window.verifyAndEdit=async function(eventId,entryDocId,cardId){
 }
 
 window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
+  const name=document.getElementById(cardId+'_eName').value.trim();
   const gender=document.getElementById(cardId+'_eGender').value;
   const birthday=document.getElementById(cardId+'_eBirthday').value.trim();
   const phone=document.getElementById(cardId+'_ePhone').value.trim();
@@ -542,6 +544,7 @@ window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
   const idNumber=document.getElementById(cardId+'_eIdNumber').value.trim();
   const note=document.getElementById(cardId+'_eNote').value.trim();
   const group=document.getElementById(cardId+'_eGroup').value;
+  if(!name){showToast('姓名為必填','error');return;}
 
   if(birthday&&!validateBirthday(birthday)){showToast('生日格式錯誤','error');return;}
   if(phone&&!validatePhone(phone)){showToast('手機號碼格式錯誤','error');return;}
@@ -562,9 +565,9 @@ window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
 
   try{
     if(runnerDocId){
-      await updateDoc(doc(db,'runners',runnerDocId),{gender,birthday,phone,email,idNumber,note,updatedAt:serverTimestamp()});
+      await updateDoc(doc(db,'runners',runnerDocId),{name,gender,birthday,phone,email,idNumber,note,updatedAt:serverTimestamp()});
     }
-    await updateDoc(doc(db,'events',eventId,'runners',entryDocId),{group,customData,updatedAt:serverTimestamp()});
+    await updateDoc(doc(db,'events',eventId,'runners',entryDocId),{name,group,customData,updatedAt:serverTimestamp()});
     showToast('已儲存修改');
     document.getElementById(cardId+'_edit').innerHTML='<div class="csv-hint">✅ 修改已儲存</div>';
   }catch(err){
