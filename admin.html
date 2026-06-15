@@ -279,7 +279,9 @@ window.showAddEvent = function() {
   document.getElementById('eventForm').reset();
   document.getElementById('eventDocId').value='';
   document.getElementById('evBannerUrl').value='';
+  document.getElementById('evStaffBannerUrl').value='';
   document.getElementById('evBannerPreview').style.display='none';
+  document.getElementById('evStaffBannerPreview').style.display='none';
   document.getElementById('eventModal').style.display='flex';
 }
 window.editEvent = async function(id) {
@@ -294,6 +296,11 @@ window.editEvent = async function(id) {
   const preview=document.getElementById('evBannerPreview');
   if(url){document.getElementById('evBannerImg').src=url;preview.style.display='block';}
   else preview.style.display='none';
+  const sUrl=ev.staffBannerUrl||'';
+  document.getElementById('evStaffBannerUrl').value=sUrl;
+  const sPreview=document.getElementById('evStaffBannerPreview');
+  if(sUrl){document.getElementById('evStaffBannerImg').src=sUrl;sPreview.style.display='block';}
+  else sPreview.style.display='none';
   document.getElementById('eventModal').style.display='flex';
 }
 // 圖片URL輸入後即時預覽
@@ -304,11 +311,18 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(url){document.getElementById('evBannerImg').src=url;preview.style.display='block';}
     else preview.style.display='none';
   });
+  document.getElementById('evStaffBannerUrl').addEventListener('input',function(){
+    const url=this.value.trim();
+    const preview=document.getElementById('evStaffBannerPreview');
+    if(url){document.getElementById('evStaffBannerImg').src=url;preview.style.display='block';}
+    else preview.style.display='none';
+  });
 });
 window.saveEvent = async function() {
   const id = document.getElementById('eventDocId').value;
   const bannerUrl=document.getElementById('evBannerUrl').value.trim();
-  const data = {name:document.getElementById('evName').value.trim(), date:document.getElementById('evDate').value, bannerUrl, updatedAt:serverTimestamp()};
+  const staffBannerUrl=document.getElementById('evStaffBannerUrl').value.trim();
+  const data = {name:document.getElementById('evName').value.trim(), date:document.getElementById('evDate').value, bannerUrl, staffBannerUrl, updatedAt:serverTimestamp()};
   if (!data.name) { showToast('賽事名稱為必填','error'); return; }
   if (id) { await updateDoc(doc(db,'events',id),data); showToast('已更新'); }
   else { data.createdAt=serverTimestamp(); data.groupNames=[]; await addDoc(collection(db,'events'),data); showToast('已新增'); }
@@ -2187,8 +2201,10 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <input type="hidden" id="eventDocId">
       <div class="input-group"><label>賽事名稱 *</label><input id="evName" type="text" class="input" placeholder="2026 台北馬拉松"></div>
       <div class="input-group"><label>比賽日期</label><input id="evDate" type="date" class="input"></div>
-      <div class="input-group"><label>宣傳圖片 URL（選填）</label><input id="evBannerUrl" type="url" class="input" placeholder="https://..."></div>
+      <div class="input-group"><label>宣傳圖片 URL — 選手（選填）</label><input id="evBannerUrl" type="url" class="input" placeholder="https://..."></div>
       <div id="evBannerPreview" style="display:none;margin-top:8px"><img id="evBannerImg" style="max-width:100%;border-radius:8px;display:block"></div>
+      <div class="input-group" style="margin-top:12px"><label>宣傳圖片 URL — 工作人員（選填）</label><input id="evStaffBannerUrl" type="url" class="input" placeholder="https://..."></div>
+      <div id="evStaffBannerPreview" style="display:none;margin-top:8px"><img id="evStaffBannerImg" style="max-width:100%;border-radius:8px;display:block"></div>
     </form>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('eventModal')">取消</button><button class="btn btn-primary" onclick="saveEvent()">儲存</button></div>
   </div>
