@@ -335,6 +335,74 @@ window.submitSignup=async function(){
     const existingRunners=runnerSnap.docs.map(d=>({docId:d.id,...d.data()}));
     const match=existingRunners.find(r=>isSamePerson(r,runnerData));
 
+    // 有比對到，但資料有差異時，跳出確認對話
+    if(match){
+      const fields=[
+        {label:'姓名',old:match.name,new:name},
+        {label:'性別',old:match.gender,new:gender},
+        {label:'生日',old:match.birthday,new:birthday},
+        {label:'手機',old:match.phone,new:phone},
+        {label:'Email',old:match.email,new:email},
+        {label:'身分證',old:match.idNumber,new:idNumber},
+      ];
+      const hasDiff=fields.some(f=>f.old&&f.new&&f.old!==f.new);
+      if(hasDiff){
+        btn.textContent='送出報名'; btn.disabled=false;
+        // 顯示確認對話
+        let rows=fields.map(f=>{
+          const diff=f.old&&f.new&&f.old!==f.new;
+          return '<tr style="'+(diff?'color:var(--accent)':'')+'">'
+            +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted)">'+f.label+'</td>'
+            +'<td style="padding:4px 8px;font-size:.85rem">'+(f.old||'-')+'</td>'
+            +'<td style="padding:4px 8px;font-size:.85rem">'+(f.new||'-')+'</td>'
+            +'</tr>';
+        }).join('');
+        const dialog=document.createElement('div');
+        dialog.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px';
+        dialog.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:480px;width:100%">'
+          +'<div style="font-size:1rem;font-weight:700;margin-bottom:12px">找到相似的資料</div>'
+          +'<div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">橘色為不同欄位，請確認是否為同一人：</div>'
+          +'<table style="width:100%;border-collapse:collapse;margin-bottom:16px">'
+          +'<thead><tr><th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left"></th>'
+          +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left">資料庫</th>'
+          +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left">您填寫的</th></tr></thead>'
+          +'<tbody>'+rows+'</tbody></table>'
+          +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+          +'<button id="dlgSame" class="btn btn-primary btn-sm">✅ 同一人</button>'
+          +'<button id="dlgNew" class="btn btn-ghost btn-sm">👤 非同一人</button>'
+          +'<button id="dlgRefill" class="btn btn-ghost btn-sm">✏️ 重填</button>'
+          +'</div></div>';
+        document.body.appendChild(dialog);
+        await new Promise(resolve=>{
+          dialog.querySelector('#dlgSame').onclick=()=>{dialog.dataset.result='same';dialog.remove();resolve();};
+          dialog.querySelector('#dlgNew').onclick=()=>{dialog.dataset.result='new';dialog.remove();resolve();};
+          dialog.querySelector('#dlgRefill').onclick=()=>{dialog.dataset.result='refill';dialog.remove();resolve();};
+        });
+        const result=dialog.dataset.result||'refill';
+        if(!document.body.contains(dialog)&&result==='refill') return;
+        if(result==='refill') return;
+        if(result==='new'){
+          // 非同一人：忽略match，建立新記錄
+          await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,null);
+          return;
+        }
+        // 同一人：用新資料更新
+        await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match);
+        return;
+      }
+    }
+    await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match||null);
+  }catch(e){
+    showToast('報名失敗：'+e.message,'error');
+    const b=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
+    if(b){b.textContent='送出報名';b.disabled=false;}
+  }
+}
+
+async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match){
+  const btn=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
+  if(btn){btn.textContent='送出中...';btn.disabled=true;}
+  try{
     let uniqueId;
     const batch=writeBatch(db);
     if(match){
@@ -342,42 +410,31 @@ window.submitSignup=async function(){
       // 檢查是否已報名此賽事
       const entrySnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
       if(!entrySnap.empty){
-        showToast('您已報名過此賽事，請至「報名結果」查詢','error');
-        btn.textContent='送出報名'; btn.disabled=false;
+        showToast('您已報名過此賽事，請至「查詢報名」查詢','error');
+        if(btn){btn.textContent='送出報名';btn.disabled=false;}
         return;
       }
-      // 更新選手資料（填寫的欄位優先）
-      const updates={};
-      if(name&&name!==match.name)updates.name=name;
-      if(gender&&gender!==match.gender)updates.gender=gender;
-      if(birthday&&birthday!==match.birthday)updates.birthday=birthday;
-      if(phone&&phone!==match.phone)updates.phone=phone;
-      if(email&&email!==match.email)updates.email=email;
-      if(idNumber&&idNumber!==match.idNumber)updates.idNumber=idNumber;
-      if(note&&note!==match.note)updates.note=note;
-      if(Object.keys(updates).length){updates.updatedAt=serverTimestamp();batch.update(doc(db,'runners',match.docId),updates);}
+      // 用新資料更新選手
+      batch.update(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
     } else {
       let maxId=0;
       existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
       uniqueId='R'+String(maxId+1).padStart(6,'0');
-      const ref=doc(collection(db,'runners'));
-      batch.set(ref,{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+      batch.set(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
     }
-
     // 分配編號
     const entryAllSnap=await getDocs(collection(db,'events',eventId,'runners'));
     const usedBibs=new Set(entryAllSnap.docs.map(d=>d.data().bibNumber));
     let n=1; while(usedBibs.has(String(n).padStart(3,'0')))n++;
     const bibNumber=String(n).padStart(3,'0');
-
-    const entryRef=doc(collection(db,'events',eventId,'runners'));
-    batch.set(entryRef,{uniqueId,name,bibNumber,group,customData,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
-
+    batch.set(doc(collection(db,'events',eventId,'runners')),{uniqueId,name,bibNumber,group,customData,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
     await batch.commit();
-
     showSignupSuccess({uniqueId,name,gender,group,bibNumber,eventName:curSignupEvent.name,eventDate:curSignupEvent.date});
   }catch(e){
     showToast('報名失敗：'+e.message,'error');
+    if(btn){btn.textContent='送出報名';btn.disabled=false;}
+  }
+}
     btn.textContent='送出報名'; btn.disabled=false;
   }
 }

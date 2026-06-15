@@ -937,15 +937,46 @@ window.saveEntry=async function(){
   const dup=snap.docs.find(d=>d.data().bibNumber===bibNumber&&d.id!==id);
   if(dup){setFieldError('eBib',true);showToast('編號已被使用','error');return;}
   setFieldError('eBib',false);
-  // 若未選擇現有選手，自動建立新選手
+  // 若未選擇現有選手，比對資料庫
   if(!uniqueId){
+    const runnerData={name,gender,birthday,phone,email,idNumber:idNum,note};
     const runnerSnap=await getDocs(collection(db,'runners'));
     const existingRunners=runnerSnap.docs.map(d=>({docId:d.id,...d.data()}));
-    let maxId=0;
-    existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
-    maxId++;
-    uniqueId='R'+String(maxId).padStart(6,'0');
-    await setDoc(doc(collection(db,'runners')),{uniqueId,name,gender,birthday,phone,email,idNumber:idNum,note,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+    const match=existingRunners.find(r=>isSamePerson(r,runnerData));
+    if(match){
+      const fields=[
+        {label:'姓名',old:match.name,new:name},
+        {label:'性別',old:match.gender,new:gender},
+        {label:'生日',old:match.birthday,new:birthday},
+        {label:'手機',old:match.phone,new:phone},
+        {label:'Email',old:match.email,new:email},
+        {label:'身分證',old:match.idNumber,new:idNum},
+      ];
+      const hasDiff=fields.some(f=>f.old&&f.new&&f.old!==f.new);
+      if(hasDiff){
+        const result=await showSimilarPersonDialog(match,runnerData);
+        if(result==='refill') return;
+        if(result==='same'){
+          uniqueId=match.uniqueId;
+          await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
+        } else {
+          // 非同一人：建立新選手
+          let maxId=0;
+          existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
+          uniqueId='R'+String(maxId+1).padStart(6,'0');
+          await setDoc(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+        }
+      } else {
+        // 完全相同，直接沿用
+        uniqueId=match.uniqueId;
+      }
+    } else {
+      // 無比對結果，建立新選手
+      let maxId=0;
+      existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
+      uniqueId='R'+String(maxId+1).padStart(6,'0');
+      await setDoc(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+    }
   }
   const data={uniqueId,name,bibNumber,group,customData,updatedAt:serverTimestamp()};
   if(id){await updateDoc(doc(db,'events',eventId,'runners',id),data);showToast('已更新');}
@@ -1810,6 +1841,47 @@ window.exportStaff=async function(){
   });
   downloadCSV(csv,evFileName(evName,evDate)+'_工作人員_'+fmtFileDateTime()+'.csv');
   showToast('已匯出');
+}
+
+// ── 相似選手確認對話框（共用）──
+function showSimilarPersonDialog(match, runnerData){
+  return new Promise(resolve=>{
+    const fields=[
+      {label:'姓名',old:match.name,new:runnerData.name},
+      {label:'性別',old:match.gender,new:runnerData.gender},
+      {label:'生日',old:match.birthday,new:runnerData.birthday},
+      {label:'手機',old:match.phone,new:runnerData.phone},
+      {label:'Email',old:match.email,new:runnerData.email},
+      {label:'身分證',old:match.idNumber,new:runnerData.idNumber},
+    ];
+    let rows=fields.map(f=>{
+      const diff=f.old&&f.new&&f.old!==f.new;
+      return '<tr style="'+(diff?'color:var(--accent)':'')+'">'
+        +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted)">'+f.label+'</td>'
+        +'<td style="padding:4px 8px;font-size:.85rem">'+(f.old||'-')+'</td>'
+        +'<td style="padding:4px 8px;font-size:.85rem">'+(f.new||'-')+'</td>'
+        +'</tr>';
+    }).join('');
+    const dialog=document.createElement('div');
+    dialog.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px';
+    dialog.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:480px;width:100%">'
+      +'<div style="font-size:1rem;font-weight:700;margin-bottom:12px">找到相似的資料</div>'
+      +'<div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">橘色為不同欄位，請確認是否為同一人：</div>'
+      +'<table style="width:100%;border-collapse:collapse;margin-bottom:16px">'
+      +'<thead><tr><th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left"></th>'
+      +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left">資料庫</th>'
+      +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left">填寫的</th></tr></thead>'
+      +'<tbody>'+rows+'</tbody></table>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+      +'<button id="dlgSame" class="btn btn-primary btn-sm">✅ 同一人</button>'
+      +'<button id="dlgNew" class="btn btn-ghost btn-sm">👤 非同一人</button>'
+      +'<button id="dlgRefill" class="btn btn-ghost btn-sm">✏️ 重填</button>'
+      +'</div></div>';
+    document.body.appendChild(dialog);
+    dialog.querySelector('#dlgSame').onclick=()=>{dialog.remove();resolve('same');};
+    dialog.querySelector('#dlgNew').onclick=()=>{dialog.remove();resolve('new');};
+    dialog.querySelector('#dlgRefill').onclick=()=>{dialog.remove();resolve('refill');};
+  });
 }
 
 // ── Modal & Toast ──
