@@ -75,12 +75,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   <!-- ════════ 查詢報名結果 ════════ -->
   <div id="page-status" class="page">
     <div class="card">
-      <div class="csv-hint">輸入編號、姓名、性別、生日，四項全符合才能查詢，開放報名期間可直接修改資料。</div>
+      <div class="csv-hint">輸入編號、姓名、性別、生日查詢報名記錄，開放報名期間可修改資料。</div>
       <div class="input-group"><label>編號</label><input id="statusBib" type="text" class="input" placeholder="001"></div>
       <div class="input-group"><label>姓名</label><input id="statusName" type="text" class="input" placeholder="王小明"></div>
       <div class="input-group"><label>性別</label><select id="statusGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>
       <div class="input-group"><label>生日（yyyy/mm/dd）</label><input id="statusBirthday" type="text" class="input" placeholder="1990/01/01"></div>
-      <button class="btn btn-primary btn-full" onclick="doStatusQuery()">🔍 查詢報名結果</button>
+      <button class="btn btn-primary btn-full" onclick="doStatusQuery()">🔍 查詢報名</button>
     </div>
     <div id="statusResult"></div>
   </div>
