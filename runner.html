@@ -353,47 +353,44 @@ window.submitSignup=async function(){
       if(hasDiff){
         btn.textContent='送出報名'; btn.disabled=false;
         const dialog=document.createElement('div');
-        dialog.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px';
+        dialog.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box';
         let rows=fields.map(f=>{
           const oldVal=(f.old||'').trim();
           const curVal=(f.new||'').trim();
           const diff=oldVal!==curVal;
           let dbCell, rowStyle='';
           if(!diff){
-            // 相同（含雙方皆空）：顯示本人自己填的值即可，資料庫欄顯示一致
             rowStyle='color:var(--green)';
             dbCell=oldVal||'';
           } else if(!oldVal){
-            // 舊值空白：直接顯示空白，不加任何標示
             rowStyle='';
             dbCell='';
           } else {
-            // 舊值有值但不同：隱藏舊值，只標示「有差異」
             rowStyle='color:var(--accent)';
             dbCell='<span style="font-size:.75rem;padding:2px 6px;background:rgba(249,115,22,.12);border-radius:4px;border:1px solid rgba(249,115,22,.3)">有差異</span>';
           }
           return '<tr style="'+rowStyle+'">'
-            +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted)">'+f.label+'</td>'
-            +'<td style="padding:4px 8px;font-size:.85rem">'+dbCell+'</td>'
-            +'<td style="padding:4px 8px;font-size:.85rem">'+(curVal||'')+'</td>'
+            +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted);white-space:nowrap">'+f.label+'</td>'
+            +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all">'+dbCell+'</td>'
+            +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all">'+(curVal||'')+'</td>'
             +'</tr>';
         }).join('');
-        // 補填提示：舊有值、本次未填 → 補填可幫助比對
-        const diffEmptyFields=fields.filter(f=>(f.old||'').trim()&&!(f.new||'').trim()&&(f.old||'').trim()!==(f.new||'').trim()).map(f=>f.label);
+        const diffEmptyFields=fields.filter(f=>(f.old||'').trim()&&!(f.new||'').trim()).map(f=>f.label);
         const hintHtml=diffEmptyFields.length
           ?'<div style="font-size:.75rem;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.25);border-radius:8px;padding:8px 12px;margin-bottom:12px;line-height:1.6">'
             +'💡 建議補填 <strong>'+diffEmptyFields.join('、')+'</strong>，有助於進一步確認是否為同一人。'
             +'<br><span style="color:var(--muted)">可點「重填」回到表單補充資料。</span>'
             +'</div>'
           :'';
-        dialog.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:480px;width:100%">'
+        dialog.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:480px;width:100%;box-sizing:border-box;overflow:hidden">'
           +'<div style="font-size:1rem;font-weight:700;margin-bottom:4px">找到相似的資料</div>'
           +'<div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">綠色為相符欄位；橘色欄位有差異，請確認是否為同一人。</div>'
-          +'<table style="width:100%;border-collapse:collapse;margin-bottom:14px">'
+          +'<div style="overflow-x:auto;margin-bottom:14px"><table style="width:100%;border-collapse:collapse;table-layout:fixed">'
+          +'<colgroup><col style="width:52px"><col><col></colgroup>'
           +'<thead><tr><th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left"></th>'
           +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left">資料庫</th>'
           +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left">您填寫的</th></tr></thead>'
-          +'<tbody>'+rows+'</tbody></table>'
+          +'<tbody>'+rows+'</tbody></table></div>'
           +hintHtml
           +'<div style="font-size:.75rem;color:var(--accent);margin-bottom:12px">⚠️ 若選「同一人」，則以新資料取代舊資料！</div>'
           +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
