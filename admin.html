@@ -276,7 +276,10 @@ window.activateEvent = async function(id) { await setDoc(doc(db,'config','active
 window.deactivateEvent = async function() { await setDoc(doc(db,'config','active'),{eventId:null}); showToast('已關閉掃描'); loadEvents(); }
 window.showAddEvent = function() {
   document.getElementById('eventModalTitle').textContent='新增賽事';
-  document.getElementById('eventForm').reset(); document.getElementById('eventDocId').value='';
+  document.getElementById('eventForm').reset();
+  document.getElementById('eventDocId').value='';
+  document.getElementById('evBannerUrl').value='';
+  document.getElementById('evBannerPreview').style.display='none';
   document.getElementById('eventModal').style.display='flex';
 }
 window.editEvent = async function(id) {
@@ -286,11 +289,26 @@ window.editEvent = async function(id) {
   document.getElementById('eventDocId').value=id;
   document.getElementById('evName').value=ev.name||'';
   document.getElementById('evDate').value=ev.date||'';
+  const url=ev.bannerUrl||'';
+  document.getElementById('evBannerUrl').value=url;
+  const preview=document.getElementById('evBannerPreview');
+  if(url){document.getElementById('evBannerImg').src=url;preview.style.display='block';}
+  else preview.style.display='none';
   document.getElementById('eventModal').style.display='flex';
 }
+// 圖片URL輸入後即時預覽
+document.addEventListener('DOMContentLoaded',()=>{
+  document.getElementById('evBannerUrl').addEventListener('input',function(){
+    const url=this.value.trim();
+    const preview=document.getElementById('evBannerPreview');
+    if(url){document.getElementById('evBannerImg').src=url;preview.style.display='block';}
+    else preview.style.display='none';
+  });
+});
 window.saveEvent = async function() {
   const id = document.getElementById('eventDocId').value;
-  const data = {name:document.getElementById('evName').value.trim(), date:document.getElementById('evDate').value, updatedAt:serverTimestamp()};
+  const bannerUrl=document.getElementById('evBannerUrl').value.trim();
+  const data = {name:document.getElementById('evName').value.trim(), date:document.getElementById('evDate').value, bannerUrl, updatedAt:serverTimestamp()};
   if (!data.name) { showToast('賽事名稱為必填','error'); return; }
   if (id) { await updateDoc(doc(db,'events',id),data); showToast('已更新'); }
   else { data.createdAt=serverTimestamp(); data.groupNames=[]; await addDoc(collection(db,'events'),data); showToast('已新增'); }
@@ -2169,6 +2187,8 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <input type="hidden" id="eventDocId">
       <div class="input-group"><label>賽事名稱 *</label><input id="evName" type="text" class="input" placeholder="2026 台北馬拉松"></div>
       <div class="input-group"><label>比賽日期</label><input id="evDate" type="date" class="input"></div>
+      <div class="input-group"><label>宣傳圖片 URL（選填）</label><input id="evBannerUrl" type="url" class="input" placeholder="https://..."></div>
+      <div id="evBannerPreview" style="display:none;margin-top:8px"><img id="evBannerImg" style="max-width:100%;border-radius:8px;display:block"></div>
     </form>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('eventModal')">取消</button><button class="btn btn-primary" onclick="saveEvent()">儲存</button></div>
   </div>
