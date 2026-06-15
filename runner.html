@@ -405,12 +405,13 @@ async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,
     const batch=writeBatch(db);
     if(match){
       uniqueId=match.uniqueId;
+      if(!match.docId){showToast('選手資料異常，請聯絡管理員','error');if(btn){btn.textContent='送出報名';btn.disabled=false;}return;}
       // 檢查是否已報名此賽事
       const entrySnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
       if(!entrySnap.empty){
         // 已報名：只更新選手資料，不新增報名記錄
         await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
-        showToast('選手資料已更新，您已報名過此賽事','success');
+        showToast('選手資料已更新，您已報名過此賽事');
         if(btn){btn.textContent='送出報名';btn.disabled=false;}
         return;
       }
@@ -427,7 +428,7 @@ async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,
     const usedBibs=new Set(entryAllSnap.docs.map(d=>d.data().bibNumber));
     let n=1; while(usedBibs.has(String(n).padStart(3,'0')))n++;
     const bibNumber=String(n).padStart(3,'0');
-    batch.set(doc(collection(db,'events',eventId,'runners')),{uniqueId,name,bibNumber,group,customData,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+    batch.set(doc(collection(db,'events',eventId,'runners')),{uniqueId,bibNumber,group,customData,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
     await batch.commit();
     showSignupSuccess({uniqueId,name,gender,group,bibNumber,eventName:curSignupEvent.name,eventDate:curSignupEvent.date});
   }catch(e){

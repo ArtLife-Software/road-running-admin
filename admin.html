@@ -685,7 +685,7 @@ window.handleEntryCSV=async function(e){
     usedBibs.add(finalBib);
 
     const entryRef=doc(collection(db,'events',eventId,'runners'));
-    batch.set(entryRef,{uniqueId,name,bibNumber:finalBib,group,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+    batch.set(entryRef,{uniqueId,bibNumber:finalBib,group,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
     existingEntries.push({docId:entryRef.id,uniqueId,bibNumber:finalBib,group});
     addedEntries++;
   }
@@ -981,10 +981,14 @@ window.saveEntry=async function(){
   // 已報名檢查（新增時才需要，編輯時跳過）
   if(!id){
     const existingEntry=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
-    const dup=existingEntry.docs.find(d=>d.id!==id);
-    if(dup){showToast('此選手已報名過此賽事','error');return;}
+    if(!existingEntry.empty){
+      // 已報名：若有更新選手資料則提示，不新增報名記錄
+      showToast('此選手已報名過此賽事，資料已更新','error');
+      closeModal('entryModal'); loadEntries();
+      return;
+    }
   }
-  const data={uniqueId,name,bibNumber,group,customData,updatedAt:serverTimestamp()};
+  const data={uniqueId,bibNumber,group,customData,updatedAt:serverTimestamp()};
   if(id){await updateDoc(doc(db,'events',eventId,'runners',id),data);showToast('已更新');}
   else{data.createdAt=serverTimestamp();await addDoc(collection(db,'events',eventId,'runners'),data);showToast('已新增');}
   closeModal('entryModal'); loadEntries();
@@ -1624,7 +1628,7 @@ window.runVirtualStart=async function(){
         const stations=groupStations[e.group]||[];
         const ref=doc(collection(db,'events',eventId,'records'));
         batch.set(ref,{
-          uniqueId:e.uniqueId, name:e.name||'', bibNumber:e.bibNumber||'', group:e.group||'',
+          uniqueId:e.uniqueId, bibNumber:e.bibNumber||'', group:e.group||'',
           station:stations[0], scanTime, deviceName:'虛擬起跑'
         });
       });
