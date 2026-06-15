@@ -143,6 +143,7 @@ window.showSection = function(id) {
   if (id==='runners')   loadRunners();
   if (id==='events')    loadEvents();
   if (id==='entries')   loadEntriesSection();
+  if (id==='staff')     loadStaffSection();
   if (id==='records')   loadRecordsSection();
   if (id==='search')    initSearchSection();
   if (id==='stats')     loadStatsSection();
@@ -260,7 +261,8 @@ async function loadEvents() {
       +(!ev.registrationOpen?'<button class="btn btn-sm btn-green" onclick="toggleRegistration(\''+d.id+'\',true)">開放報名</button> ':'<button class="btn btn-sm btn-danger" onclick="toggleRegistration(\''+d.id+'\',false)">關閉報名</button> ')
       +'<button class="btn btn-sm btn-ghost" onclick="editEvent(\''+d.id+'\')">編輯</button> '
       +'<button class="btn btn-sm btn-ghost" onclick="manageGroups(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\')">組別</button> '
-      +'<button class="btn btn-sm btn-ghost" onclick="manageCustomFields(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\')">報名表單</button>'
+      +'<button class="btn btn-sm btn-ghost" onclick="manageCustomFields(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\',\'runner\')">選手表單</button> '
+      +'<button class="btn btn-sm btn-ghost" onclick="manageCustomFields(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\',\'staff\')">工作人員表單</button>'
       +'</td></tr>';
   }));
   tbody.innerHTML = rows.join('');
@@ -361,15 +363,17 @@ window.cancelGroupForm=function(){document.getElementById('groupForm').style.dis
 // 報名表單設定（自訂欄位）
 // ════════════════════════════
 let curCFEvId='';
-window.manageCustomFields=async function(eid,ename){
-  curCFEvId=eid;
-  document.getElementById('cfEventName').textContent=ename;
+let curCFType='runner'; // 'runner' or 'staff'
+window.manageCustomFields=async function(eid,ename,type){
+  curCFEvId=eid; curCFType=type||'runner';
+  document.getElementById('cfEventName').textContent=ename+(type==='staff'?' — 工作人員表單':' — 選手表單');
   await loadCustomFields();
   document.getElementById('customFieldsModal').style.display='flex';
 }
 async function loadCustomFields(){
   const evDoc=await getDoc(doc(db,'events',curCFEvId));
-  const fields=evDoc.data()?.customFields||[];
+  const fieldKey=curCFType==='staff'?'staffCustomFields':'customFields';
+  const fields=evDoc.data()?.[fieldKey]||[];
   const list=document.getElementById('cfList');
   if(!fields.length){list.innerHTML='<div style="color:var(--muted);font-size:.85rem;padding:12px 0">尚無自訂欄位</div>';return;}
   list.innerHTML=fields.map((f,i)=>{
@@ -387,11 +391,12 @@ async function loadCustomFields(){
   }).join('');
 }
 window.moveCustomField=async function(i,dir){
+  const fieldKey=curCFType==='staff'?'staffCustomFields':'customFields';
   const evDoc=await getDoc(doc(db,'events',curCFEvId));
-  const fields=evDoc.data()?.customFields||[];
+  const fields=evDoc.data()?.[fieldKey]||[];
   const j=i+dir; if(j<0||j>=fields.length)return;
   [fields[i],fields[j]]=[fields[j],fields[i]];
-  await updateDoc(doc(db,'events',curCFEvId),{customFields:fields,updatedAt:serverTimestamp()});
+  await updateDoc(doc(db,'events',curCFEvId),{[fieldKey]:fields,updatedAt:serverTimestamp()});
   loadCustomFields();
 }
 window.showAddCustomField=function(){
@@ -405,8 +410,9 @@ window.showAddCustomField=function(){
   document.getElementById('cfForm').style.display='block';
 }
 window.editCustomField=async function(i){
+  const fieldKey=curCFType==='staff'?'staffCustomFields':'customFields';
   const evDoc=await getDoc(doc(db,'events',curCFEvId));
-  const fields=evDoc.data()?.customFields||[];
+  const fields=evDoc.data()?.[fieldKey]||[];
   const f=fields[i];
   document.getElementById('cfFormTitle').textContent='編輯欄位';
   document.getElementById('cfFieldIndex').value=i;
@@ -433,26 +439,28 @@ window.saveCustomField=async function(){
     if(!options.length){showToast('下拉選單請至少輸入一個選項','error');return;}
     field.options=options;
   }
+  const fieldKey=curCFType==='staff'?'staffCustomFields':'customFields';
   const evDoc=await getDoc(doc(db,'events',curCFEvId));
-  const fields=evDoc.data()?.customFields||[];
+  const fields=evDoc.data()?.[fieldKey]||[];
   if(idx!==''){
-    field.id=fields[idx].id; // 保留原id，避免已填資料的key對不上
+    field.id=fields[idx].id;
     fields[idx]=field;
   } else {
     fields.push(field);
   }
-  await updateDoc(doc(db,'events',curCFEvId),{customFields:fields,updatedAt:serverTimestamp()});
+  await updateDoc(doc(db,'events',curCFEvId),{[fieldKey]:fields,updatedAt:serverTimestamp()});
   document.getElementById('cfForm').style.display='none';
   showToast('已儲存');
   loadCustomFields();
 }
 window.deleteCustomField=async function(i){
+  const fieldKey=curCFType==='staff'?'staffCustomFields':'customFields';
   const evDoc=await getDoc(doc(db,'events',curCFEvId));
-  const fields=evDoc.data()?.customFields||[];
+  const fields=evDoc.data()?.[fieldKey]||[];
   const label=fields[i]?.label||'';
   if(!confirm('確定刪除欄位「'+label+'」？已填寫的報名資料中此欄位的值將保留但不再顯示。'))return;
   fields.splice(i,1);
-  await updateDoc(doc(db,'events',curCFEvId),{customFields:fields,updatedAt:serverTimestamp()});
+  await updateDoc(doc(db,'events',curCFEvId),{[fieldKey]:fields,updatedAt:serverTimestamp()});
   showToast('已刪除');
   loadCustomFields();
 }
@@ -1560,6 +1568,226 @@ window.runVirtualStart=async function(){
   }
 }
 
+// ════════════════════════════
+// 工作人員
+// ════════════════════════════
+let allStaff=[];
+let curStaffCustomFields=[];
+
+async function loadStaffSection(){
+  await loadLockedEventSelect('staffEventSelect', async activeId=>{ if(activeId) loadStaff(); });
+}
+window.loadStaff=async function(){
+  const eventId=document.getElementById('staffEventSelect').value;
+  const tbody=document.getElementById('staffTableBody');
+  if(!eventId){tbody.innerHTML='<tr><td colspan="8" class="loading-cell">請先選擇賽事</td></tr>';return;}
+  tbody.innerHTML='<tr><td colspan="8" class="loading-cell">載入中...</td></tr>';
+  const evDoc=await getDoc(doc(db,'events',eventId));
+  curStaffCustomFields=evDoc.data()?.staffCustomFields||[];
+  // 更新表頭
+  const thead=document.getElementById('staffTableHead');
+  const baseHeads=['姓名','性別','生日','手機','Email','身分證','備註'];
+  thead.innerHTML=baseHeads.map(h=>'<th>'+h+'</th>').join('')
+    +curStaffCustomFields.map(f=>'<th>'+f.label+'</th>').join('')
+    +'<th>操作</th>';
+  const snap=await getDocs(collection(db,'events',eventId,'staff'));
+  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
+  allStaff=snap.docs.map(d=>({id:d.id,...d.data(),runnerData:rMap[d.data().uniqueId]||{}}));
+  renderStaff(allStaff);
+}
+function renderStaff(list){
+  const tbody=document.getElementById('staffTableBody');
+  const totalCols=8+curStaffCustomFields.length;
+  if(!list.length){tbody.innerHTML='<tr><td colspan="'+totalCols+'" class="loading-cell">尚無工作人員資料</td></tr>';return;}
+  const eventId=document.getElementById('staffEventSelect').value;
+  tbody.innerHTML=list.map(e=>{
+    const r=e.runnerData||{};
+    const cd=e.customData||{};
+    let customCells='';
+    curStaffCustomFields.forEach(f=>{
+      let v=cd[f.id]; if(f.type==='checkbox')v=v?'是':'否';
+      customCells+='<td>'+(v!==undefined&&v!==''?v:'-')+'</td>';
+    });
+    return '<tr>'
+      +'<td>'+(e.name||r.name||'-')+'</td>'
+      +'<td>'+(r.gender||'-')+'</td>'
+      +'<td>'+(r.birthday||'-')+'</td>'
+      +'<td>'+(r.phone||'-')+'</td>'
+      +'<td style="font-size:.78rem">'+(r.email||'-')+'</td>'
+      +'<td><span class="mono" style="font-size:.75rem">'+(r.idNumber||'-')+'</span></td>'
+      +'<td>'+(r.note||'-')+'</td>'
+      +customCells
+      +'<td style="white-space:nowrap">'
+      +'<button class="btn btn-sm btn-ghost" onclick="editStaff(\''+e.id+'\')">編輯</button> '
+      +'<button class="btn btn-sm btn-danger" onclick="deleteStaff(\''+e.id+'\',\''+(e.name||'').replace(/'/g,'')+'\')">刪除</button>'
+      +'</td></tr>';
+  }).join('');
+}
+window.onStaffSearchFieldChange=function(){
+  switchKwControl(document.getElementById('staffSearchField').value,'staffSearchKw','','staffSearchKwGender',null);
+}
+window.doStaffSearch=function(){
+  const field=document.getElementById('staffSearchField').value;
+  const kw=field==='gender'?document.getElementById('staffSearchKwGender').value:document.getElementById('staffSearchKw').value.trim().toLowerCase();
+  if(!kw&&field!=='gender'){renderStaff(allStaff);return;}
+  renderStaff(allStaff.filter(e=>{
+    const r=e.runnerData||{};
+    const val=f=>(e[f]||r[f]||'').toString().toLowerCase();
+    if(field==='all') return ['name','phone','email','idNumber','note'].some(f=>val(f).includes(kw));
+    if(field==='gender') return (r.gender||'')===kw;
+    return val(field).includes(kw);
+  }));
+}
+window.showAddStaff=function(){
+  const eventId=document.getElementById('staffEventSelect').value;
+  if(!eventId){showToast('請先選擇賽事','error');return;}
+  document.getElementById('staffDocId').value='';
+  document.getElementById('staffUniqueId').value='';
+  document.getElementById('staffRunnerSearch').value='';
+  document.getElementById('staffRunnerResults').style.display='none';
+  ['sName','sBirthday','sPhone','sEmail','sIdNumber','sNote'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  document.getElementById('sGender').value='';
+  ['sBirthday','sPhone','sEmail','sIdNumber'].forEach(id=>setFieldError(id,false));
+  renderStaffCustomFields({});
+  document.getElementById('staffModal').style.display='flex';
+}
+window.editStaff=async function(docId){
+  const eventId=document.getElementById('staffEventSelect').value;
+  const eDoc=allStaff.find(s=>s.id===docId); if(!eDoc)return;
+  const r=eDoc.runnerData||{};
+  document.getElementById('staffDocId').value=docId;
+  document.getElementById('staffUniqueId').value=eDoc.uniqueId||'';
+  document.getElementById('staffRunnerSearch').value=eDoc.name||r.name||'';
+  document.getElementById('staffRunnerResults').style.display='none';
+  document.getElementById('sName').value=eDoc.name||r.name||'';
+  document.getElementById('sGender').value=r.gender||'';
+  document.getElementById('sBirthday').value=r.birthday||'';
+  document.getElementById('sPhone').value=r.phone||'';
+  document.getElementById('sEmail').value=r.email||'';
+  document.getElementById('sIdNumber').value=r.idNumber||'';
+  document.getElementById('sNote').value=r.note||'';
+  ['sBirthday','sPhone','sEmail','sIdNumber'].forEach(id=>setFieldError(id,false));
+  renderStaffCustomFields(eDoc.customData||{});
+  document.getElementById('staffModal').style.display='flex';
+}
+window.deleteStaff=async function(docId,name){
+  if(!confirm('確定刪除工作人員「'+name+'」？'))return;
+  const eventId=document.getElementById('staffEventSelect').value;
+  await deleteDoc(doc(db,'events',eventId,'staff',docId));
+  showToast('已刪除'); loadStaff();
+}
+function renderStaffCustomFields(values){
+  const container=document.getElementById('staffCustomFieldsContainer');
+  values=values||{};
+  container.innerHTML=curStaffCustomFields.map(f=>{
+    const id='scfInput_'+f.id;
+    const reqMark=f.required?' *':'';
+    if(f.type==='select'){
+      const opts=(f.options||[]).map(o=>'<option value="'+o+'"'+(values[f.id]===o?' selected':'')+'>'+o+'</option>').join('');
+      return '<div class="input-group"><label>'+f.label+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select></div>';
+    } else if(f.type==='checkbox'){
+      return '<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+f.label+'</label></div>';
+    } else {
+      return '<div class="input-group"><label>'+f.label+reqMark+'</label><input id="'+id+'" type="text" class="input" value="'+(values[f.id]!==undefined?values[f.id]:'')+'"></div>';
+    }
+  }).join('');
+}
+window.searchStaffRunner=async function(){
+  const t=document.getElementById('staffRunnerSearch').value.trim().toLowerCase();
+  const results=document.getElementById('staffRunnerResults');
+  if(!t){results.style.display='none';return;}
+  const snap=await getDocs(collection(db,'runners'));
+  const matched=snap.docs.map(d=>d.data()).filter(r=>
+    ['name','phone','email','idNumber'].some(f=>(r[f]||'').toLowerCase().includes(t))
+  ).slice(0,8);
+  if(!matched.length){results.style.display='none';return;}
+  results.style.display='block';
+  results.innerHTML=matched.map(r=>
+    '<div onclick="selectStaffRunner(\''+r.uniqueId+'\',\''+r.name.replace(/'/g,'')+'\',\''+
+    (r.gender||'')+'\',\''+(r.birthday||'')+'\',\''+(r.phone||'')+'\',\''+(r.email||'')+'\',\''+(r.idNumber||'')+'\',\''+(r.note||'').replace(/'/g,'')+'\') " '
+    +'style="padding:10px 14px;cursor:pointer;font-size:.85rem;border-bottom:1px solid var(--border)" '
+    +'onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'"> '
+    +'<span class="mono" style="font-size:.78rem">'+r.uniqueId+'</span> '+r.name
+    +(r.idNumber?'<span style="color:var(--muted);font-size:.78rem;margin-left:8px">'+r.idNumber+'</span>':'')
+    +'</div>'
+  ).join('');
+}
+window.selectStaffRunner=function(uid,name,gender,birthday,phone,email,idNumber,note){
+  document.getElementById('staffUniqueId').value=uid;
+  document.getElementById('staffRunnerSearch').value=name;
+  document.getElementById('staffRunnerResults').style.display='none';
+  document.getElementById('sName').value=name;
+  document.getElementById('sGender').value=gender;
+  document.getElementById('sBirthday').value=birthday;
+  document.getElementById('sPhone').value=phone;
+  document.getElementById('sEmail').value=email;
+  document.getElementById('sIdNumber').value=idNumber;
+  document.getElementById('sNote').value=note;
+}
+window.saveStaff=async function(){
+  const eventId=document.getElementById('staffEventSelect').value;
+  const docId=document.getElementById('staffDocId').value;
+  let uniqueId=document.getElementById('staffUniqueId').value;
+  const name=document.getElementById('sName').value.trim();
+  const gender=document.getElementById('sGender').value;
+  const birthday=document.getElementById('sBirthday').value.trim();
+  const phone=document.getElementById('sPhone').value.trim();
+  const email=document.getElementById('sEmail').value.trim();
+  const idNumber=document.getElementById('sIdNumber').value.trim();
+  const note=document.getElementById('sNote').value.trim();
+  if(!name){showToast('姓名為必填','error');return;}
+  if(!gender){showToast('性別為必選','error');return;}
+  if(!birthday||!validateBirthday(birthday)){setFieldError('sBirthday',true);showToast('生日為必填','error');return;}
+  if(!idNumber||!validateId(idNumber)){setFieldError('sIdNumber',true);showToast('身分證字號為必填','error');return;}
+  if(phone&&!validatePhone(phone)){setFieldError('sPhone',true);showToast('手機號碼格式錯誤','error');return;}
+  if(email&&!validateEmail(email)){setFieldError('sEmail',true);showToast('Email格式錯誤','error');return;}
+  // 自訂欄位
+  const customData={};
+  for(const f of curStaffCustomFields){
+    const el=document.getElementById('scfInput_'+f.id); if(!el)continue;
+    if(f.type==='checkbox')customData[f.id]=el.checked;
+    else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
+  }
+  const runnerData={name,gender,birthday,phone,email,idNumber,note};
+  try{
+    if(!uniqueId){
+      const runnerSnap=await getDocs(collection(db,'runners'));
+      const existingRunners=runnerSnap.docs.map(d=>({docId:d.id,...d.data()}));
+      const match=existingRunners.find(r=>isSamePerson(r,runnerData));
+      if(match){uniqueId=match.uniqueId;await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});}
+      else{
+        let maxId=0;
+        existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
+        uniqueId='R'+String(maxId+1).padStart(6,'0');
+        await addDoc(collection(db,'runners'),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+      }
+    }
+    const data={uniqueId,name,customData,updatedAt:serverTimestamp()};
+    if(docId){await updateDoc(doc(db,'events',eventId,'staff',docId),data);showToast('已更新');}
+    else{data.createdAt=serverTimestamp();await addDoc(collection(db,'events',eventId,'staff'),data);showToast('已新增');}
+    closeModal('staffModal'); loadStaff();
+  }catch(e){showToast('儲存失敗：'+e.message,'error');}
+}
+window.exportStaff=async function(){
+  const eventId=document.getElementById('staffEventSelect').value;
+  if(!eventId){showToast('請先選擇賽事','error');return;}
+  const snap=await getDocs(collection(db,'events',eventId,'staff'));
+  if(snap.empty){showToast('無工作人員資料','error');return;}
+  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
+  const evDoc=await getDoc(doc(db,'events',eventId));
+  const evName=evDoc.data()?.name||'賽事'; const evDate=evDoc.data()?.date||'';
+  const customFields=evDoc.data()?.staffCustomFields||[];
+  let csv='姓名,性別,生日,手機,Email,身分證,備註'+customFields.map(f=>','+f.label).join('')+'\n';
+  snap.docs.forEach(d=>{
+    const e=d.data(); const r=rMap[e.uniqueId]||{}; const cd=e.customData||{};
+    csv+='"'+(e.name||r.name||'')+'","'+(r.gender||'')+'","'+(r.birthday||'')+'","'+(r.phone||'')+'","'+(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'"';
+    customFields.forEach(f=>{let v=cd[f.id];if(f.type==='checkbox')v=v?'是':'否';csv+=',"'+(v!==undefined?v:'')+'"';});
+    csv+='\n';
+  });
+  downloadCSV(csv,evFileName(evName,evDate)+'_工作人員_'+fmtFileDateTime()+'.csv');
+  showToast('已匯出');
+}
+
 // ── Modal & Toast ──
 window.closeModal=function(id){document.getElementById(id).style.display='none';}
 function showToast(msg,type='success'){
@@ -1710,6 +1938,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <div class="nav-item active" data-nav="runners" onclick="showSection('runners')"><span class="nav-icon">👥</span><span>選手資料</span></div>
       <div class="nav-item" data-nav="events" onclick="showSection('events')"><span class="nav-icon">🏁</span><span>賽事管理</span></div>
       <div class="nav-item" data-nav="entries" onclick="showSection('entries')"><span class="nav-icon">📝</span><span>報名管理</span></div>
+      <div class="nav-item" data-nav="staff" onclick="showSection('staff')"><span class="nav-icon">🦺</span><span>工作人員</span></div>
       <div class="nav-item" data-nav="records" onclick="showSection('records')"><span class="nav-icon">📋</span><span>打卡記錄</span></div>
       <div class="nav-item" data-nav="search" onclick="showSection('search')"><span class="nav-icon">🔍</span><span>查詢成績</span></div>
       <div class="nav-item" data-nav="stats" onclick="showSection('stats')"><span class="nav-icon">📈</span><span>統計分析</span></div>
@@ -1733,6 +1962,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div class="bottom-nav-item active" data-nav="runners" onclick="showSection('runners')"><span class="nav-icon">👥</span><span>選手</span></div>
     <div class="bottom-nav-item" data-nav="events" onclick="showSection('events')"><span class="nav-icon">🏁</span><span>賽事</span></div>
     <div class="bottom-nav-item" data-nav="entries" onclick="showSection('entries')"><span class="nav-icon">📝</span><span>報名</span></div>
+    <div class="bottom-nav-item" data-nav="staff" onclick="showSection('staff')"><span class="nav-icon">🦺</span><span>工作</span></div>
     <div class="bottom-nav-item" data-nav="records" onclick="showSection('records')"><span class="nav-icon">📋</span><span>記錄</span></div>
     <div class="bottom-nav-item" data-nav="search" onclick="showSection('search')"><span class="nav-icon">🔍</span><span>查詢</span></div>
     <div class="bottom-nav-item" data-nav="stats" onclick="showSection('stats')"><span class="nav-icon">📈</span><span>統計</span></div>
@@ -1814,6 +2044,36 @@ tr.row-active td{background:rgba(249,115,22,.05);}
         <button class="btn btn-ghost" onclick="doEntrySearch()">搜尋</button>
       </div>
       <div class="table-wrap"><table><thead><tr id="entriesTableHead"><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="entriesTableBody"><tr><td colspan="11" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
+    </div>
+
+    <!-- 工作人員 -->
+    <div id="sec-staff" class="section">
+      <div class="section-header">
+        <div class="section-title">工作人員</div>
+        <div class="section-actions">
+          <button class="btn btn-ghost" onclick="exportStaff()">📤 匯出 CSV</button>
+          <button class="btn btn-primary" onclick="showAddStaff()">＋ 新增</button>
+        </div>
+      </div>
+      <div class="event-select-row"><label>選擇賽事：</label><select id="staffEventSelect" class="input" onchange="loadStaff()"><option value="">請選擇賽事...</option></select></div>
+      <div class="search-bar">
+        <select id="staffSearchField" class="input" style="width:auto" onchange="onStaffSearchFieldChange()">
+          <option value="all">全部欄位</option>
+          <option value="name">姓名</option>
+          <option value="gender">性別</option>
+          <option value="phone">手機</option>
+          <option value="email">Email</option>
+          <option value="idNumber">身分證</option>
+          <option value="note">備註</option>
+        </select>
+        <input id="staffSearchKw" type="text" class="input" placeholder="輸入查詢字詞...">
+        <select id="staffSearchKwGender" class="input" style="display:none;flex:1;min-width:150px">
+          <option value="男">男</option>
+          <option value="女">女</option>
+        </select>
+        <button class="btn btn-ghost" onclick="doStaffSearch()">搜尋</button>
+      </div>
+      <div class="table-wrap"><table><thead><tr id="staffTableHead"><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="staffTableBody"><tr><td colspan="8" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
     </div>
 
     <!-- 打卡記錄 -->
@@ -2021,6 +2281,35 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div class="input-group"><label>預設密碼 *（至少6碼）</label><input id="newAccPassword" type="text" class="input" placeholder="預設密碼"></div>
     <div class="input-group"><label>備註</label><input id="newAccNote" type="text" class="input" placeholder="例：場地負責人"></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('accountModal')">取消</button><button class="btn btn-primary" onclick="saveAccount()">建立帳戶</button></div>
+  </div>
+</div>
+
+<!-- 工作人員 Modal -->
+<div id="staffModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-title">工作人員資料</div>
+    <label>搜尋現有人員</label>
+    <div style="position:relative;margin-bottom:14px">
+      <input id="staffRunnerSearch" type="text" class="input" placeholder="輸入任意欄位資訊" oninput="searchStaffRunner()">
+      <div id="staffRunnerResults" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;z-index:100;max-height:220px;overflow-y:auto"></div>
+    </div>
+    <input type="hidden" id="staffDocId">
+    <input type="hidden" id="staffUniqueId">
+    <div class="input-group"><label>姓名 *</label><input id="sName" type="text" class="input"></div>
+    <div class="input-group"><label>性別 *</label><select id="sGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>
+    <div class="input-group"><label>生日（yyyy/mm/dd）*</label>
+      <div class="input-row">
+        <input id="sBirthday" type="text" class="input" placeholder="yyyy/mm/dd" oninput="setFieldError('sBirthday',!validateBirthday(this.value))">
+        <div style="position:relative"><button type="button" class="btn btn-ghost btn-sm">📅</button>
+        <input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('sBirthday').value=y+'/'+m+'/'+d;setFieldError('sBirthday',false);this.value=''}"></div>
+      </div>
+    </div>
+    <div class="input-group"><label>身分證字號 *</label><input id="sIdNumber" type="text" class="input" placeholder="A123456789" oninput="setFieldError('sIdNumber',this.value&&!validateId(this.value))"></div>
+    <div class="input-group"><label>手機號碼</label><input id="sPhone" type="tel" class="input" placeholder="0912345678" oninput="setFieldError('sPhone',this.value&&!validatePhone(this.value))"></div>
+    <div class="input-group"><label>E-Mail</label><input id="sEmail" type="email" class="input" oninput="setFieldError('sEmail',this.value&&!validateEmail(this.value))"></div>
+    <div class="input-group"><label>備註</label><input id="sNote" type="text" class="input"></div>
+    <div id="staffCustomFieldsContainer"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('staffModal')">取消</button><button class="btn btn-primary" onclick="saveStaff()">儲存</button></div>
   </div>
 </div>
 
