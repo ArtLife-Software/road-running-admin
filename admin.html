@@ -56,6 +56,20 @@ function evFileName(evName, evDate) {
   return evName+(evDate?'('+evDate+')':'');
 }
 
+// ── 全形→半形自動轉換 ──
+function toHalf(str) {
+  if (!str) return str;
+  return str.replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+            .replace(/　/g, ' ');
+}
+// 套用到 input 元素，轉換後觸發 oninput
+function applyHalf(el) {
+  const v = toHalf(el.value);
+  if (v !== el.value) { el.value = v; el.dispatchEvent(new Event('input')); }
+}
+window.toHalf = toHalf;
+window.applyHalf = applyHalf;
+
 // ── 格式驗證 ──
 function validateBirthday(v) {
   if (!v) return true;
@@ -159,13 +173,14 @@ async function loadRunners() {
   tbody.innerHTML = '<tr><td colspan="8" class="loading-cell">載入中...</td></tr>';
   const snap = await getDocs(collection(db,'runners'));
   allRunners = snap.docs.map(d=>({id:d.id,...d.data()}));
-  renderRunners(allRunners);
+  renderRunners(getSorted('runnersTableBody',allRunners));
 }
 function renderRunners(list) {
   const tbody = document.getElementById('runnersTableBody');
-  if (!list.length) { tbody.innerHTML='<tr><td colspan="9" class="loading-cell">無資料</td></tr>'; return; }
+  if (!list.length) { tbody.innerHTML='<tr><td colspan="10" class="loading-cell">無資料</td></tr>'; return; }
   tbody.innerHTML = list.map(r =>
-    '<tr><td><span class="mono">'+r.uniqueId+'</span></td>'
+    '<tr><td><input type="checkbox" class="row-cb" data-id="'+r.id+'" onchange="onRowCbChange(\'runnersBatchDeleteBtn\',\'runnersTableBody\',\'runnersSelectAll\')"></td>'
+    +'<td><span class="mono">'+r.uniqueId+'</span></td>'
     +'<td>'+r.name+'</td><td>'+(r.gender||'-')+'</td><td>'+(r.birthday||'-')+'</td>'
     +'<td>'+(r.phone||'-')+'</td><td>'+(r.email||'-')+'</td>'
     +'<td><span class="mono" style="font-size:.75rem">'+(r.idNumber||'-')+'</span></td>'
@@ -181,17 +196,19 @@ window.doRunnerSearch = function() {
   const kw = field==='gender'
     ? document.getElementById('runnerSearchKwGender').value
     : document.getElementById('runnerSearchKw').value.trim().toLowerCase();
-  if (!kw && field!=='gender') { renderRunners(allRunners); return; }
-  renderRunners(allRunners.filter(r => {
+  if (!kw && field!=='gender') { renderRunners(getSorted('runnersTableBody',allRunners)); return; }
+  const filtered = allRunners.filter(r => {
     if (field==='all') return ['uniqueId','name','gender','birthday','phone','email','idNumber','note'].some(f=>(r[f]||'').toLowerCase().includes(kw));
     if (field==='gender') return (r.gender||'')===kw;
     return (r[field]||'').toLowerCase().includes(kw);
-  }));
+  });
+  renderRunners(getSorted('runnersTableBody',filtered));
 }
 window.exportRunners = async function() {
   if (!allRunners.length) { showToast('無選手資料','error'); return; }
+  const sorted = getSorted('runnersTableBody', allRunners);
   let csv = 'uniqueId,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註,建立時間,更新時間\n';
-  allRunners.forEach(r => {
+  sorted.forEach(r => {
     csv += '"'+(r.uniqueId||'')+'","'+(r.name||'')+'","'+(r.gender||'')+'","'+(r.birthday||'')+'","'
       +(r.phone||'')+'","'+(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'","'
       +fmtDT(r.createdAt)+'","'+fmtDT(r.updatedAt)+'"\n';
@@ -251,25 +268,36 @@ async function loadEvents() {
     const ev=d.data(); const isActive=d.id===activeId;
     const gSnap=await getDocs(collection(db,'events',d.id,'groups'));
     const gNames=gSnap.docs.map(g=>g.data().name).join('、')||'-';
+    // 狀態徽章
+    let statusHtml=(isActive?'<span class="badge badge-green">進行中</span>':'<span class="badge">未啟用</span>')+' ';
+    statusHtml+=(ev.registrationOpen?'<span class="badge badge-green">選手報名 ON</span>':'')+'';
+    statusHtml+=(ev.staffRegistrationOpen?' <span class="badge badge-green">工作人員報名 ON</span>':'');
+    // 操作按鈕
+    let btns='';
+    btns+=(!isActive?'<button class="btn btn-sm btn-green" onclick="activateEvent(\''+d.id+'\')">開放掃描</button> ':'<button class="btn btn-sm btn-danger" onclick="deactivateEvent()">關閉掃描</button> ');
+    // 選手報名開關
+    btns+=(!ev.registrationOpen?'<button class="btn btn-sm btn-green" onclick="toggleRegistration(\''+d.id+'\',true)">開放選手報名</button> ':'<button class="btn btn-sm btn-danger" onclick="toggleRegistration(\''+d.id+'\',false)">關閉選手報名</button> ');
+    // 工作人員報名開關
+    btns+=(!ev.staffRegistrationOpen?'<button class="btn btn-sm btn-green" onclick="toggleStaffRegistration(\''+d.id+'\',true)">開放工作人員報名</button> ':'<button class="btn btn-sm btn-danger" onclick="toggleStaffRegistration(\''+d.id+'\',false)">關閉工作人員報名</button> ');
+    btns+='<button class="btn btn-sm btn-ghost" onclick="editEvent(\''+d.id+'\')">編輯</button> ';
+    btns+='<button class="btn btn-sm btn-ghost" onclick="manageGroups(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\')">組別</button> ';
+    btns+='<button class="btn btn-sm btn-ghost" onclick="manageCustomFields(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\',\'runner\')">選手表單</button> ';
+    btns+='<button class="btn btn-sm btn-ghost" onclick="manageCustomFields(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\',\'staff\')">工作人員表單</button>';
     return '<tr'+(isActive?' class="row-active"':'')+'>'
       +'<td><strong>'+ev.name+'</strong></td><td>'+(ev.date||'-')+'</td><td>'+gNames+'</td>'
-      +'<td>'+(isActive?'<span class="badge badge-green">進行中</span>':'<span class="badge">未啟用</span>')
-      +(ev.registrationOpen?' <span class="badge badge-green">開放報名</span>':'')
-      +'</td>'
-      +'<td style="white-space:nowrap">'
-      +(!isActive?'<button class="btn btn-sm btn-green" onclick="activateEvent(\''+d.id+'\')">開放掃描</button> ':'<button class="btn btn-sm btn-danger" onclick="deactivateEvent()">關閉掃描</button> ')
-      +(!ev.registrationOpen?'<button class="btn btn-sm btn-green" onclick="toggleRegistration(\''+d.id+'\',true)">開放報名</button> ':'<button class="btn btn-sm btn-danger" onclick="toggleRegistration(\''+d.id+'\',false)">關閉報名</button> ')
-      +'<button class="btn btn-sm btn-ghost" onclick="editEvent(\''+d.id+'\')">編輯</button> '
-      +'<button class="btn btn-sm btn-ghost" onclick="manageGroups(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\')">組別</button> '
-      +'<button class="btn btn-sm btn-ghost" onclick="manageCustomFields(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\',\'runner\')">選手表單</button> '
-      +'<button class="btn btn-sm btn-ghost" onclick="manageCustomFields(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\',\'staff\')">工作人員表單</button>'
-      +'</td></tr>';
+      +'<td>'+statusHtml+'</td>'
+      +'<td style="white-space:nowrap">'+btns+'</td></tr>';
   }));
   tbody.innerHTML = rows.join('');
 }
 window.toggleRegistration = async function(id,open){
   await updateDoc(doc(db,'events',id),{registrationOpen:open,updatedAt:serverTimestamp()});
-  showToast(open?'已開放報名':'已關閉報名');
+  showToast(open?'已開放選手報名':'已關閉選手報名');
+  loadEvents();
+}
+window.toggleStaffRegistration = async function(id,open){
+  await updateDoc(doc(db,'events',id),{staffRegistrationOpen:open,updatedAt:serverTimestamp()});
+  showToast(open?'已開放工作人員報名':'已關閉工作人員報名');
   loadEvents();
 }
 window.activateEvent = async function(id) { await setDoc(doc(db,'config','active'),{eventId:id}); showToast('已開放掃描'); loadEvents(); }
@@ -282,6 +310,11 @@ window.showAddEvent = function() {
   document.getElementById('evStaffBannerUrl').value='';
   document.getElementById('evBannerPreview').style.display='none';
   document.getElementById('evStaffBannerPreview').style.display='none';
+  document.getElementById('evRegStart').value='';
+  document.getElementById('evRegEnd').value='';
+  document.getElementById('evRegCapacity').value='';
+  document.getElementById('evStaffRegStart').value='';
+  document.getElementById('evStaffRegEnd').value='';
   document.getElementById('eventModal').style.display='flex';
 }
 window.editEvent = async function(id) {
@@ -301,6 +334,12 @@ window.editEvent = async function(id) {
   const sPreview=document.getElementById('evStaffBannerPreview');
   if(sUrl){document.getElementById('evStaffBannerImg').src=sUrl;sPreview.style.display='block';}
   else sPreview.style.display='none';
+  // 報名時間欄位
+  document.getElementById('evRegStart').value=tsToLocal(ev.registrationStartAt);
+  document.getElementById('evRegEnd').value=tsToLocal(ev.registrationEndAt);
+  document.getElementById('evRegCapacity').value=ev.registrationCapacity||'';
+  document.getElementById('evStaffRegStart').value=tsToLocal(ev.staffRegistrationStartAt);
+  document.getElementById('evStaffRegEnd').value=tsToLocal(ev.staffRegistrationEndAt);
   document.getElementById('eventModal').style.display='flex';
 }
 // 圖片URL輸入後即時預覽
@@ -318,11 +357,35 @@ document.addEventListener('DOMContentLoaded',()=>{
     else preview.style.display='none';
   });
 });
+// 輔助：datetime-local 字串 → Firestore Timestamp，空字串回傳 null
+function dtLocalToTs(v) {
+  if (!v) return null;
+  return Timestamp.fromDate(new Date(v));
+}
+// 輔助：Firestore Timestamp → datetime-local 字串
+function tsToLocal(ts) {
+  if (!ts) return '';
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  const pad = n => String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+}
 window.saveEvent = async function() {
   const id = document.getElementById('eventDocId').value;
   const bannerUrl=document.getElementById('evBannerUrl').value.trim();
   const staffBannerUrl=document.getElementById('evStaffBannerUrl').value.trim();
-  const data = {name:document.getElementById('evName').value.trim(), date:document.getElementById('evDate').value, bannerUrl, staffBannerUrl, updatedAt:serverTimestamp()};
+  const regCapRaw=document.getElementById('evRegCapacity').value.trim();
+  const regCapacity=regCapRaw===''||parseInt(regCapRaw)===0?0:parseInt(regCapRaw)||0;
+  const data = {
+    name:document.getElementById('evName').value.trim(),
+    date:document.getElementById('evDate').value,
+    bannerUrl, staffBannerUrl,
+    registrationStartAt: dtLocalToTs(document.getElementById('evRegStart').value),
+    registrationEndAt:   dtLocalToTs(document.getElementById('evRegEnd').value),
+    registrationCapacity: regCapacity,
+    staffRegistrationStartAt: dtLocalToTs(document.getElementById('evStaffRegStart').value),
+    staffRegistrationEndAt:   dtLocalToTs(document.getElementById('evStaffRegEnd').value),
+    updatedAt:serverTimestamp()
+  };
   if (!data.name) { showToast('賽事名稱為必填','error'); return; }
   if (id) { await updateDoc(doc(db,'events',id),data); showToast('已更新'); }
   else { data.createdAt=serverTimestamp(); data.groupNames=[]; await addDoc(collection(db,'events'),data); showToast('已新增'); }
@@ -536,7 +599,12 @@ window.loadEntries=async function(){
   // 更新表頭
   const thead=document.getElementById('entriesTableHead');
   const baseHeads=['編號','組別','ID','姓名','性別','生日','手機','Email','身分證','備註','報到'];
-  thead.innerHTML=baseHeads.map(h=>'<th>'+h+'</th>').join('')
+  const baseSortKeys=['bibNumber','group','uniqueId','name','runnerData.gender','runnerData.birthday','','','runnerData.idNumber','runnerData.note','checkin.checkedInAt'];
+  thead.innerHTML='<th style="width:36px"><input type="checkbox" id="entriesSelectAll" onchange="toggleSelectAll(\'entriesTableBody\',\'entriesSelectAll\',\'entriesBatchDeleteBtn\')"></th>'
+    +baseHeads.map((h,i)=>baseSortKeys[i]
+      ?'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'entriesTableBody\',\''+baseSortKeys[i]+'\',()=>renderEntries(getSorted(\'entriesTableBody\',allEntries)))">'+h+'<span class="sort-icon"> ⇅</span></th>'
+      :'<th>'+h+'</th>'
+    ).join('')
     +curEntryCustomFields.map(f=>'<th>'+f.label+'</th>').join('')
     +'<th>操作</th>';
   const snap=await getDocs(collection(db,'events',eventId,'runners'));
@@ -546,11 +614,11 @@ window.loadEntries=async function(){
   const checkinMap={};
   checkinSnap.docs.forEach(d=>{checkinMap[d.id]=d.data();});
   allEntries=snap.docs.map(d=>({id:d.id,...d.data(),runnerData:rMap[d.data().uniqueId]||{},checkin:checkinMap[d.data().uniqueId]||null}));
-  renderEntries(allEntries);
+  renderEntries(getSorted('entriesTableBody',allEntries));
 }
 function renderEntries(list){
   const tbody=document.getElementById('entriesTableBody');
-  const totalCols=12+curEntryCustomFields.length;
+  const totalCols=13+curEntryCustomFields.length;
   if(!list.length){tbody.innerHTML='<tr><td colspan="'+totalCols+'" class="loading-cell">尚無報名資料</td></tr>';return;}
   const eventId=document.getElementById('entryEventSelect').value;
   tbody.innerHTML=list.map(e=>{
@@ -568,6 +636,7 @@ function renderEntries(list){
         +'<button class="btn btn-sm btn-danger" style="margin-top:4px" onclick="cancelCheckin(\''+eventId+'\',\''+e.uniqueId+'\')">取消報到</button></td>'
       :'<td><button class="btn btn-sm btn-ghost" onclick="manualCheckin(\''+eventId+'\',\''+e.uniqueId+'\')">標記報到</button></td>';
     return '<tr>'
+      +'<td><input type="checkbox" class="row-cb" data-id="'+e.id+'" onchange="onRowCbChange(\'entriesBatchDeleteBtn\',\'entriesTableBody\',\'entriesSelectAll\')"></td>'
       +'<td><strong>'+(e.bibNumber||'-')+'</strong></td>'
       +'<td><span class="badge">'+(e.group||'-')+'</span></td>'
       +'<td><span class="mono">'+(e.uniqueId||'')+'</span></td>'
@@ -592,15 +661,16 @@ window.doEntrySearch=function(){
   if(field==='group') kw=document.getElementById('entrySearchKwGroup')?.value||'';
   else if(field==='gender') kw=document.getElementById('entrySearchKwGender').value;
   else kw=document.getElementById('entrySearchKw').value.trim().toLowerCase();
-  if(!kw&&field!=='gender'){renderEntries(allEntries);return;}
-  renderEntries(allEntries.filter(e=>{
+  if(!kw&&field!=='gender'){renderEntries(getSorted('entriesTableBody',allEntries));return;}
+  const filtered=allEntries.filter(e=>{
     const r=e.runnerData||{};
     const val=f=>(e[f]||r[f]||'').toString().toLowerCase();
     if(field==='all') return ['uniqueId','name','bibNumber','group','gender','birthday','phone','email','idNumber','note'].some(f=>val(f).includes(kw));
     if(field==='group') return (e.group||'')===kw;
     if(field==='gender') return (e.gender||r.gender||'')===kw;
     return val(field).includes(kw);
-  }));
+  });
+  renderEntries(getSorted('entriesTableBody',filtered));
 }
 
 // 取得下一個未使用編號
@@ -702,17 +772,15 @@ window.handleEntryCSV=async function(e){
 window.exportEntries=async function(){
   const eventId=document.getElementById('entryEventSelect').value;
   if(!eventId){showToast('請先選擇賽事','error');return;}
-  const snap=await getDocs(collection(db,'events',eventId,'runners'));
-  if(snap.empty){showToast('無報名資料','error');return;}
-  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
+  if(!allEntries.length){showToast('無報名資料','error');return;}
   const evDoc=await getDoc(doc(db,'events',eventId));
   const evName=evDoc.data()?.name||'賽事';
   const evDate=evDoc.data()?.date||'';
   const customFields=evDoc.data()?.customFields||[];
+  const sorted=getSorted('entriesTableBody',allEntries);
   let csv='編號,組別,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註'+customFields.map(f=>','+f.label).join('')+'\n';
-  snap.docs.forEach(d=>{
-    const e=d.data(); const r=rMap[e.uniqueId]||{};
-    const cd=e.customData||{};
+  sorted.forEach(e=>{
+    const r=e.runnerData||{}; const cd=e.customData||{};
     csv+='"'+(e.bibNumber||'')+'","'+(e.group||'')+'","'+(e.name||r.name||'')+'","'
       +(r.gender||'')+'","'+(r.birthday||'')+'","'+(r.phone||'')+'","'
       +(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'"';
@@ -1033,6 +1101,27 @@ async function loadLockedEventSelect(selectId, cb) {
 window.onRecordEventChange=async function(){
   curRecordEventId=document.getElementById('recordEventSelect').value; loadRecords();
 }
+let _lastRecordsData = []; // 儲存最新打卡記錄供排序重渲染用
+function reRenderRecords() {
+  renderRecordRows(getSorted('recordsTableBody', _lastRecordsData));
+}
+function renderRecordRows(rows) {
+  const tbody = document.getElementById('recordsTableBody');
+  tbody.innerHTML = rows.map(({d, name}) => {
+    const r = d.data ? d.data() : d;
+    const id = d.id || d._id;
+    return '<tr><td><input type="checkbox" class="row-cb" data-id="'+id+'" onchange="onRowCbChange(\'recordsBatchDeleteBtn\',\'recordsTableBody\',\'recordsSelectAll\')"></td>'
+      +'<td><strong>'+(r.bibNumber||'-')+'</strong></td>'
+      +'<td><span class="badge">'+(r.group||'-')+'</span></td>'
+      +'<td><span class="mono">'+(r.uniqueId||'')+'</span></td>'
+      +'<td>'+name+'</td>'
+      +'<td>'+r.station+'</td>'
+      +'<td>'+fmt(r.scanTime)+'</td>'
+      +'<td><span style="font-size:.78rem;color:var(--muted)">'+(r.deviceName||'-')+'</span></td>'
+      +'<td><button class="btn btn-sm btn-danger" onclick="deleteRecord(\''+id+'\',\''+(r.uniqueId||'')+'\',\''+(r.station||'')+'\')">刪除</button></td>'
+      +'</tr>';
+  }).join('');
+}
 async function loadRecords(){
   if(!curRecordEventId)return;
   const evDoc=await getDoc(doc(db,'events',curRecordEventId));
@@ -1042,24 +1131,20 @@ async function loadRecords(){
     query(collection(db,'events',curRecordEventId,'records'),orderBy('scanTime','desc')),
     async snap=>{
       const tbody=document.getElementById('recordsTableBody');
-      if(snap.empty){tbody.innerHTML='<tr><td colspan="8" class="loading-cell">尚無打卡記錄</td></tr>';return;}
-      // 補查報名資料取得姓名
+      if(snap.empty){tbody.innerHTML='<tr><td colspan="9" class="loading-cell">尚無打卡記錄</td></tr>';_lastRecordsData=[];return;}
+      const rMap={};
+      (await getDocs(collection(db,'runners'))).docs.forEach(d=>{
+        const r=d.data(); if(r.uniqueId)rMap[r.uniqueId]=r.name||'';
+      });
       const entrySnap=await getDocs(collection(db,'events',curRecordEventId,'runners'));
-      const nameMap={};
-      entrySnap.docs.forEach(d=>{const e=d.data();nameMap[e.uniqueId]=e.name||'';});
-      tbody.innerHTML=snap.docs.map(d=>{
+      const entryNameMap={};
+      entrySnap.docs.forEach(d=>{const e=d.data();if(e.name)entryNameMap[e.uniqueId]=e.name;});
+      _lastRecordsData=snap.docs.map(d=>{
         const r=d.data();
-        const name=r.name||nameMap[r.uniqueId]||'-';
-        return '<tr><td><strong>'+(r.bibNumber||'-')+'</strong></td>'
-          +'<td><span class="badge">'+(r.group||'-')+'</span></td>'
-          +'<td><span class="mono">'+(r.uniqueId||'')+'</span></td>'
-          +'<td>'+name+'</td>'
-          +'<td>'+r.station+'</td>'
-          +'<td>'+fmt(r.scanTime)+'</td>'
-          +'<td><span style="font-size:.78rem;color:var(--muted)">'+(r.deviceName||'-')+'</span></td>'
-          +'<td><button class="btn btn-sm btn-danger" onclick="deleteRecord(\''+d.id+'\',\''+(r.uniqueId||'')+'\',\''+(r.station||'')+'\')">刪除</button></td>'
-          +'</tr>';
-      }).join('');
+        const name=r.name||entryNameMap[r.uniqueId]||rMap[r.uniqueId]||'-';
+        return {...r, _id:d.id, name, d};
+      });
+      renderRecordRows(getSorted('recordsTableBody',_lastRecordsData));
     }
   );
 }
@@ -1070,15 +1155,14 @@ window.deleteRecord=async function(docId,uniqueId,station){
 }
 window.exportRecordsCSV=async function(){
   if(!curRecordEventId){showToast('請先選擇賽事','error');return;}
-  const snap=await getDocs(query(collection(db,'events',curRecordEventId,'records'),orderBy('scanTime','asc')));
-  if(snap.empty){showToast('無資料','error');return;}
+  if(!_lastRecordsData.length){showToast('無資料','error');return;}
   const evDoc=await getDoc(doc(db,'events',curRecordEventId));
   const evName=evDoc.data()?.name||'賽事';
   const evDate=evDoc.data()?.date||'';
+  const sorted=getSorted('recordsTableBody',_lastRecordsData);
   let csv='ID,姓名,編號,組別,站點,掃描時間\n';
-  snap.docs.forEach(d=>{
-    const r=d.data();
-    csv+='"'+(r.uniqueId||'')+'","'+(r.name||'')+'","'+(r.bibNumber||'')+'","'+(r.group||'')+'","'+r.station+'","'+fmtDT(r.scanTime)+'"\n';
+  sorted.forEach(r=>{
+    csv+='"'+(r.uniqueId||'')+'","'+(r.name||'')+'","'+(r.bibNumber||'')+'","'+(r.group||'')+'","'+(r.station||'')+'","'+fmtDT(r.scanTime)+'"\n';
   });
   downloadCSV(csv,evFileName(evName,evDate)+'_打卡記錄_'+fmtFileDateTime()+'.csv');
   showToast('CSV已下載');
@@ -1657,23 +1741,25 @@ async function loadStaffSection(){
 window.loadStaff=async function(){
   const eventId=document.getElementById('staffEventSelect').value;
   const tbody=document.getElementById('staffTableBody');
-  if(!eventId){tbody.innerHTML='<tr><td colspan="8" class="loading-cell">請先選擇賽事</td></tr>';return;}
-  tbody.innerHTML='<tr><td colspan="8" class="loading-cell">載入中...</td></tr>';
+  if(!eventId){tbody.innerHTML='<tr><td colspan="9" class="loading-cell">請先選擇賽事</td></tr>';return;}
+  tbody.innerHTML='<tr><td colspan="9" class="loading-cell">載入中...</td></tr>';
   const evDoc=await getDoc(doc(db,'events',eventId));
   curStaffCustomFields=evDoc.data()?.staffCustomFields||[];
   // 更新表頭
   const thead=document.getElementById('staffTableHead');
   const baseHeads=['姓名','性別','生日','手機','Email','身分證','備註'];
-  thead.innerHTML=baseHeads.map(h=>'<th>'+h+'</th>').join('')
+  const baseSortKeys=['name','gender','birthday','','','idNumber','note'];
+  thead.innerHTML='<th style="width:36px"><input type="checkbox" id="staffSelectAll" onchange="toggleSelectAll(\'staffTableBody\',\'staffSelectAll\',\'staffBatchDeleteBtn\')"></th>'
+    +baseHeads.map((h,i)=>'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'staffTableBody\',\''+baseSortKeys[i]+'\',()=>renderStaff(getSorted(\'staffTableBody\',allStaff)))">'+h+'<span class="sort-icon"> ⇅</span></th>').join('')
     +curStaffCustomFields.map(f=>'<th>'+f.label+'</th>').join('')
     +'<th>操作</th>';
   const snap=await getDocs(collection(db,'events',eventId,'staff'));
   allStaff=snap.docs.map(d=>({id:d.id,...d.data()}));
-  renderStaff(allStaff);
+  renderStaff(getSorted('staffTableBody',allStaff));
 }
 function renderStaff(list){
   const tbody=document.getElementById('staffTableBody');
-  const totalCols=8+curStaffCustomFields.length;
+  const totalCols=9+curStaffCustomFields.length;
   if(!list.length){tbody.innerHTML='<tr><td colspan="'+totalCols+'" class="loading-cell">尚無工作人員資料</td></tr>';return;}
   const eventId=document.getElementById('staffEventSelect').value;
   tbody.innerHTML=list.map(e=>{
@@ -1684,6 +1770,7 @@ function renderStaff(list){
       customCells+='<td>'+(v!==undefined&&v!==''?v:'-')+'</td>';
     });
     return '<tr>'
+      +'<td><input type="checkbox" class="row-cb" data-id="'+e.id+'" onchange="onRowCbChange(\'staffBatchDeleteBtn\',\'staffTableBody\',\'staffSelectAll\')"></td>'
       +'<td>'+(e.name||'-')+'</td>'
       +'<td>'+(e.gender||'-')+'</td>'
       +'<td>'+(e.birthday||'-')+'</td>'
@@ -1704,13 +1791,14 @@ window.onStaffSearchFieldChange=function(){
 window.doStaffSearch=function(){
   const field=document.getElementById('staffSearchField').value;
   const kw=field==='gender'?document.getElementById('staffSearchKwGender').value:document.getElementById('staffSearchKw').value.trim().toLowerCase();
-  if(!kw&&field!=='gender'){renderStaff(allStaff);return;}
-  renderStaff(allStaff.filter(e=>{
+  if(!kw&&field!=='gender'){renderStaff(getSorted('staffTableBody',allStaff));return;}
+  const filtered=allStaff.filter(e=>{
     const val=f=>(e[f]||'').toString().toLowerCase();
     if(field==='all') return ['name','phone','email','idNumber','note'].some(f=>val(f).includes(kw));
     if(field==='gender') return (e.gender||'')===kw;
     return val(field).includes(kw);
-  }));
+  });
+  renderStaff(getSorted('staffTableBody',filtered));
 }
 window.showAddStaff=function(){
   const eventId=document.getElementById('staffEventSelect').value;
@@ -1838,14 +1926,14 @@ window.saveStaff=async function(){
 window.exportStaff=async function(){
   const eventId=document.getElementById('staffEventSelect').value;
   if(!eventId){showToast('請先選擇賽事','error');return;}
-  const snap=await getDocs(collection(db,'events',eventId,'staff'));
-  if(snap.empty){showToast('無工作人員資料','error');return;}
+  if(!allStaff.length){showToast('無工作人員資料','error');return;}
   const evDoc=await getDoc(doc(db,'events',eventId));
   const evName=evDoc.data()?.name||'賽事'; const evDate=evDoc.data()?.date||'';
   const customFields=evDoc.data()?.staffCustomFields||[];
+  const sorted=getSorted('staffTableBody',allStaff);
   let csv='姓名,性別,生日,手機,Email,身分證,備註'+customFields.map(f=>','+f.label).join('')+'\n';
-  snap.docs.forEach(d=>{
-    const e=d.data(); const cd=e.customData||{};
+  sorted.forEach(e=>{
+    const cd=e.customData||{};
     csv+='"'+(e.name||'')+'","'+(e.gender||'')+'","'+(e.birthday||'')+'","'+(e.phone||'')+'","'+(e.email||'')+'","'+(e.idNumber||'')+'","'+(e.note||'')+'"';
     customFields.forEach(f=>{let v=cd[f.id];if(f.type==='checkbox')v=v?'是':'否';csv+=',"'+(v!==undefined?v:'')+'"';});
     csv+='\n';
@@ -1900,6 +1988,126 @@ function showSimilarPersonDialog(match, runnerData){
     dialog.querySelector('#dlgNew').onclick=()=>{dialog.remove();resolve('new');};
     dialog.querySelector('#dlgRefill').onclick=()=>{dialog.remove();resolve('refill');};
   });
+}
+
+// ════════════════════════════
+// 排序
+// ════════════════════════════
+// sortState[tableId] = { key, dir }   dir: 1=升冪 -1=降冪
+const sortState = {};
+
+function sortData(data, key, dir) {
+  return [...data].sort((a, b) => {
+    let va = key.split('.').reduce((o,k)=>o?.[k], a) ?? '';
+    let vb = key.split('.').reduce((o,k)=>o?.[k], b) ?? '';
+    // Firestore Timestamp
+    if (va?.toDate) va = va.toDate().getTime();
+    if (vb?.toDate) vb = vb.toDate().getTime();
+    // 數字字串（編號 001, 002...）
+    const na = parseFloat(va), nb = parseFloat(vb);
+    if (!isNaN(na) && !isNaN(nb)) return (na - nb) * dir;
+    return String(va).localeCompare(String(vb), 'zh-TW') * dir;
+  });
+}
+
+// 點擊表頭時呼叫
+window.sortTable = function(tableId, key, renderFn) {
+  const s = sortState[tableId] || { key: null, dir: 1 };
+  const dir = s.key === key ? -s.dir : 1;
+  sortState[tableId] = { key, dir };
+  updateSortHeaders(tableId, key, dir);
+  renderFn();
+}
+
+function updateSortHeaders(tableId, key, dir) {
+  const table = document.getElementById(tableId)?.closest('table');
+  if (!table) return;
+  table.querySelectorAll('th[data-sort]').forEach(th => {
+    th.querySelector('.sort-icon').textContent =
+      th.dataset.sort === key ? (dir === 1 ? ' ▲' : ' ▼') : ' ⇅';
+  });
+}
+
+// 取得目前排序後的資料
+function getSorted(tableId, data) {
+  const s = sortState[tableId];
+  if (!s || !s.key) return data;
+  return sortData(data, s.key, s.dir);
+}
+
+// ════════════════════════════
+// 批次刪除
+// ════════════════════════════
+// 全選/取消全選
+window.toggleSelectAll=function(tbodyId, selectAllId, btnId){
+  const checked=document.getElementById(selectAllId).checked;
+  document.querySelectorAll('#'+tbodyId+' .row-cb').forEach(cb=>cb.checked=checked);
+  document.getElementById(btnId).style.display=checked?'inline-flex':'none';
+}
+// 單列 checkbox 變更
+window.onRowCbChange=function(btnId, tbodyId, selectAllId){
+  const cbs=document.querySelectorAll('#'+tbodyId+' .row-cb');
+  const checked=[...cbs].filter(cb=>cb.checked);
+  document.getElementById(btnId).style.display=checked.length?'inline-flex':'none';
+  document.getElementById(selectAllId).checked=checked.length===cbs.length&&cbs.length>0;
+}
+function getCheckedIds(tbodyId){
+  return [...document.querySelectorAll('#'+tbodyId+' .row-cb:checked')].map(cb=>cb.dataset.id);
+}
+function resetBatchUI(tbodyId, selectAllId, btnId){
+  const sa=document.getElementById(selectAllId); if(sa)sa.checked=false;
+  const btn=document.getElementById(btnId); if(btn)btn.style.display='none';
+}
+
+// 選手資料批次刪除
+window.batchDeleteRunners=async function(){
+  const ids=getCheckedIds('runnersTableBody');
+  if(!ids.length)return;
+  if(!confirm('確定刪除選取的 '+ids.length+' 筆選手資料？'))return;
+  const batch=writeBatch(db);
+  ids.forEach(id=>batch.delete(doc(db,'runners',id)));
+  await batch.commit();
+  showToast('已刪除 '+ids.length+' 筆選手資料');
+  resetBatchUI('runnersTableBody','runnersSelectAll','runnersBatchDeleteBtn');
+  loadRunners();
+}
+// 報名管理批次刪除
+window.batchDeleteEntries=async function(){
+  const ids=getCheckedIds('entriesTableBody');
+  const eventId=document.getElementById('entryEventSelect').value;
+  if(!ids.length||!eventId)return;
+  if(!confirm('確定刪除選取的 '+ids.length+' 筆報名資料？'))return;
+  const batch=writeBatch(db);
+  ids.forEach(id=>batch.delete(doc(db,'events',eventId,'runners',id)));
+  await batch.commit();
+  showToast('已刪除 '+ids.length+' 筆報名資料');
+  resetBatchUI('entriesTableBody','entriesSelectAll','entriesBatchDeleteBtn');
+  loadEntries();
+}
+// 工作人員批次刪除
+window.batchDeleteStaff=async function(){
+  const ids=getCheckedIds('staffTableBody');
+  const eventId=document.getElementById('staffEventSelect').value;
+  if(!ids.length||!eventId)return;
+  if(!confirm('確定刪除選取的 '+ids.length+' 筆工作人員資料？'))return;
+  const batch=writeBatch(db);
+  ids.forEach(id=>batch.delete(doc(db,'events',eventId,'staff',id)));
+  await batch.commit();
+  showToast('已刪除 '+ids.length+' 筆工作人員資料');
+  resetBatchUI('staffTableBody','staffSelectAll','staffBatchDeleteBtn');
+  loadStaff();
+}
+// 打卡記錄批次刪除
+window.batchDeleteRecords=async function(){
+  const ids=getCheckedIds('recordsTableBody');
+  if(!ids.length||!curRecordEventId)return;
+  if(!confirm('確定刪除選取的 '+ids.length+' 筆打卡記錄？'))return;
+  const batch=writeBatch(db);
+  ids.forEach(id=>batch.delete(doc(db,'events',curRecordEventId,'records',id)));
+  await batch.commit();
+  showToast('已刪除 '+ids.length+' 筆打卡記錄');
+  resetBatchUI('recordsTableBody','recordsSelectAll','recordsBatchDeleteBtn');
+  // onSnapshot 會自動更新，不需手動 reload
 }
 
 // ── Modal & Toast ──
@@ -1985,6 +2193,9 @@ tr.row-active td{background:rgba(249,115,22,.05);}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px;}
 .station-row{display:flex;gap:8px;margin-bottom:8px;}
 .station-row .input{flex:1;}
+th[data-sort]{cursor:pointer;user-select:none;white-space:nowrap;}
+th[data-sort]:hover{color:var(--accent);}
+.sort-icon{font-size:.7rem;color:var(--muted);}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;}
 .station-stats{display:flex;flex-direction:column;gap:10px;}
 .station-stat-row{display:grid;grid-template-columns:160px 1fr 55px;align-items:center;gap:10px;}
@@ -2089,7 +2300,10 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div id="sec-runners" class="section active">
       <div class="section-header">
         <div class="section-title">選手資料</div>
-        <button class="btn btn-ghost" onclick="exportRunners()">📤 匯出 CSV</button>
+        <div class="section-actions">
+          <button class="btn btn-danger" id="runnersBatchDeleteBtn" style="display:none" onclick="batchDeleteRunners()">🗑️ 批次刪除</button>
+          <button class="btn btn-ghost" onclick="exportRunners()">📤 匯出 CSV</button>
+        </div>
       </div>
       <div class="csv-hint">選手資料由報名匯入時自動累積建立，如需修正可手動編輯。</div>
       <div class="search-bar">
@@ -2111,7 +2325,17 @@ tr.row-active td{background:rgba(249,115,22,.05);}
         </select>
         <button class="btn btn-ghost" onclick="doRunnerSearch()">搜尋</button>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="runnersTableBody"><tr><td colspan="9" class="loading-cell">載入中...</td></tr></tbody></table></div>
+      <div class="table-wrap"><table id="runnersTable"><thead><tr>
+        <th style="width:36px"><input type="checkbox" id="runnersSelectAll" onchange="toggleSelectAll('runnersTableBody','runnersSelectAll','runnersBatchDeleteBtn')"></th>
+        <th data-sort="uniqueId" onclick="sortTable('runnersTableBody','uniqueId',()=>renderRunners(getSorted('runnersTableBody',allRunners)))">ID<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="name" onclick="sortTable('runnersTableBody','name',()=>renderRunners(getSorted('runnersTableBody',allRunners)))">姓名<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="gender" onclick="sortTable('runnersTableBody','gender',()=>renderRunners(getSorted('runnersTableBody',allRunners)))">性別<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="birthday" onclick="sortTable('runnersTableBody','birthday',()=>renderRunners(getSorted('runnersTableBody',allRunners)))">生日<span class="sort-icon"> ⇅</span></th>
+        <th>手機</th><th>Email</th>
+        <th data-sort="idNumber" onclick="sortTable('runnersTableBody','idNumber',()=>renderRunners(getSorted('runnersTableBody',allRunners)))">身分證<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="note" onclick="sortTable('runnersTableBody','note',()=>renderRunners(getSorted('runnersTableBody',allRunners)))">備註<span class="sort-icon"> ⇅</span></th>
+        <th>操作</th>
+      </tr></thead><tbody id="runnersTableBody"><tr><td colspan="10" class="loading-cell">載入中...</td></tr></tbody></table></div>
     </div>
 
     <!-- 賽事管理 -->
@@ -2128,6 +2352,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <div class="section-header">
         <div class="section-title">報名管理</div>
         <div class="section-actions">
+          <button class="btn btn-danger" id="entriesBatchDeleteBtn" style="display:none" onclick="batchDeleteEntries()">🗑️ 批次刪除</button>
           <input type="file" id="entryCsvFile" accept=".csv" style="display:none" onchange="handleEntryCSV(event)">
           <button class="btn btn-ghost" onclick="document.getElementById('entryCsvFile').click()">📥 匯入 CSV</button>
           <button class="btn btn-ghost" onclick="exportEntries()">📤 匯出 CSV</button>
@@ -2158,7 +2383,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
         </select>
         <button class="btn btn-ghost" onclick="doEntrySearch()">搜尋</button>
       </div>
-      <div class="table-wrap"><table><thead><tr id="entriesTableHead"><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="entriesTableBody"><tr><td colspan="11" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr id="entriesTableHead"><th style="width:36px"><input type="checkbox" id="entriesSelectAll" onchange="toggleSelectAll('entriesTableBody','entriesSelectAll','entriesBatchDeleteBtn')"></th><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="entriesTableBody"><tr><td colspan="12" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
     </div>
 
     <!-- 工作人員 -->
@@ -2166,6 +2391,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <div class="section-header">
         <div class="section-title">工作人員</div>
         <div class="section-actions">
+          <button class="btn btn-danger" id="staffBatchDeleteBtn" style="display:none" onclick="batchDeleteStaff()">🗑️ 批次刪除</button>
           <button class="btn btn-ghost" onclick="exportStaff()">📤 匯出 CSV</button>
           <button class="btn btn-primary" onclick="showAddStaff()">＋ 新增</button>
         </div>
@@ -2188,7 +2414,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
         </select>
         <button class="btn btn-ghost" onclick="doStaffSearch()">搜尋</button>
       </div>
-      <div class="table-wrap"><table><thead><tr id="staffTableHead"><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="staffTableBody"><tr><td colspan="8" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr id="staffTableHead"><th style="width:36px"><input type="checkbox" id="staffSelectAll" onchange="toggleSelectAll('staffTableBody','staffSelectAll','staffBatchDeleteBtn')"></th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="staffTableBody"><tr><td colspan="9" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
     </div>
 
     <!-- 打卡記錄 -->
@@ -2196,13 +2422,23 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <div class="section-header">
         <div><div class="section-title">打卡記錄</div><div style="font-size:.82rem;color:var(--muted);margin-top:4px" id="recordsEventName"></div></div>
         <div class="section-actions">
+          <button class="btn btn-danger" id="recordsBatchDeleteBtn" style="display:none" onclick="batchDeleteRecords()">🗑️ 批次刪除</button>
           <button class="btn btn-ghost" onclick="showVirtualStart()">🚩 虛擬起跑</button>
           <button class="btn btn-ghost" onclick="printRecords()">🖨️ 列印</button>
           <button class="btn btn-ghost" onclick="exportRecordsCSV()">📤 匯出 CSV</button>
         </div>
       </div>
       <div class="event-select-row"><label>選擇賽事：</label><select id="recordEventSelect" class="input" onchange="onRecordEventChange()"><option value="">請選擇賽事...</option></select></div>
-      <div class="table-wrap"><table><thead><tr><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>站點</th><th>掃描時間</th><th>掃描器</th><th>操作</th></tr></thead><tbody id="recordsTableBody"><tr><td colspan="8" class="loading-cell">載入中...</td></tr></tbody></table></div>
+      <div class="table-wrap"><table id="recordsTable"><thead><tr>
+        <th style="width:36px"><input type="checkbox" id="recordsSelectAll" onchange="toggleSelectAll('recordsTableBody','recordsSelectAll','recordsBatchDeleteBtn')"></th>
+        <th data-sort="bibNumber" onclick="sortTable('recordsTableBody','bibNumber',reRenderRecords)">編號<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="group" onclick="sortTable('recordsTableBody','group',reRenderRecords)">組別<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="uniqueId" onclick="sortTable('recordsTableBody','uniqueId',reRenderRecords)">ID<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="name" onclick="sortTable('recordsTableBody','name',reRenderRecords)">姓名<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="station" onclick="sortTable('recordsTableBody','station',reRenderRecords)">站點<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="scanTime" onclick="sortTable('recordsTableBody','scanTime',reRenderRecords)">掃描時間<span class="sort-icon"> ⇅</span></th>
+        <th>掃描器</th><th>操作</th>
+      </tr></thead><tbody id="recordsTableBody"><tr><td colspan="9" class="loading-cell">載入中...</td></tr></tbody></table></div>
     </div>
 
     <!-- 查詢成績 -->
@@ -2269,16 +2505,16 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div class="input-group"><label>性別</label><select id="rGender" class="input"><option value="">不填</option><option value="男">男</option><option value="女">女</option></select></div>
     <div class="input-group"><label>生日（yyyy/mm/dd）</label>
       <div class="input-row">
-        <input id="rBirthday" type="text" class="input" placeholder="yyyy/mm/dd" oninput="setFieldError('rBirthday',!validateBirthday(this.value))">
+        <input id="rBirthday" type="text" class="input" placeholder="yyyy/mm/dd" oninput="applyHalf(this);setFieldError('rBirthday',!validateBirthday(this.value))">
         <div style="position:relative">
           <button type="button" class="btn btn-ghost btn-sm">📅</button>
           <input type="date" id="rDatePicker" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('rBirthday').value=y+'/'+m+'/'+d;setFieldError('rBirthday',false);this.value=''}">
         </div>
       </div>
     </div>
-    <div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="rPhone" type="tel" class="input" oninput="setFieldError('rPhone',!validatePhone(this.value))"></div>
+    <div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="rPhone" type="tel" class="input" oninput="applyHalf(this);setFieldError('rPhone',!validatePhone(this.value))"></div>
     <div class="input-group"><label>E-Mail</label><input id="rEmail" type="email" class="input" oninput="setFieldError('rEmail',!validateEmail(this.value))"></div>
-    <div class="input-group"><label>身分證字號（1英文+9數字）</label><input id="rIdNumber" type="text" class="input" oninput="setFieldError('rIdNumber',!validateId(this.value))"></div>
+    <div class="input-group"><label>身分證字號（1英文+9數字）</label><input id="rIdNumber" type="text" class="input" oninput="applyHalf(this);setFieldError('rIdNumber',!validateId(this.value))"></div>
     <div class="input-group"><label>備註</label><input id="rNote" type="text" class="input"></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('runnerModal')">取消</button><button class="btn btn-primary" onclick="saveRunner()">儲存</button></div>
   </div>
@@ -2286,7 +2522,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
 
 <!-- 賽事 Modal -->
 <div id="eventModal" class="modal-overlay">
-  <div class="modal">
+  <div class="modal" style="max-width:600px">
     <div class="modal-title" id="eventModalTitle">新增賽事</div>
     <form id="eventForm">
       <input type="hidden" id="eventDocId">
@@ -2296,6 +2532,25 @@ tr.row-active td{background:rgba(249,115,22,.05);}
       <div id="evBannerPreview" style="display:none;margin-top:8px"><img id="evBannerImg" style="max-width:100%;border-radius:8px;display:block"></div>
       <div class="input-group" style="margin-top:12px"><label>宣傳圖片 URL — 工作人員（選填）</label><input id="evStaffBannerUrl" type="url" class="input" placeholder="https://..."></div>
       <div id="evStaffBannerPreview" style="display:none;margin-top:8px"><img id="evStaffBannerImg" style="max-width:100%;border-radius:8px;display:block"></div>
+      <!-- 選手報名時間設定 -->
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+        <div style="font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:12px;letter-spacing:.05em">🏃 選手報名時間設定</div>
+        <div class="csv-hint" style="margin-bottom:12px">以下任一條件符合即開放報名：手動開關 ON、在日期時間範圍內、未超過人數上限。若均未符合則關閉報名。</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="input-group" style="margin:0"><label>報名開始日期時間</label><input id="evRegStart" type="datetime-local" class="input"></div>
+          <div class="input-group" style="margin:0"><label>報名結束日期時間</label><input id="evRegEnd" type="datetime-local" class="input"></div>
+        </div>
+        <div class="input-group" style="margin-top:12px"><label>可報名總人數（0 或留空＝無限制）</label><input id="evRegCapacity" type="number" min="0" class="input" placeholder="0"></div>
+      </div>
+      <!-- 工作人員報名時間設定 -->
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+        <div style="font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:12px;letter-spacing:.05em">🦺 工作人員報名時間設定</div>
+        <div class="csv-hint" style="margin-bottom:12px">以下任一條件符合即開放報名：手動開關 ON、在日期時間範圍內。若均未符合則關閉報名。</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="input-group" style="margin:0"><label>報名開始日期時間</label><input id="evStaffRegStart" type="datetime-local" class="input"></div>
+          <div class="input-group" style="margin:0"><label>報名結束日期時間</label><input id="evStaffRegEnd" type="datetime-local" class="input"></div>
+        </div>
+      </div>
     </form>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('eventModal')">取消</button><button class="btn btn-primary" onclick="saveEvent()">儲存</button></div>
   </div>
@@ -2364,7 +2619,7 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     </div>
     <div class="input-group"><label>編號 *</label>
       <div class="input-row">
-        <input id="eBib" type="text" class="input" placeholder="001" onblur="validateEntryField('bib')">
+        <input id="eBib" type="text" class="input" placeholder="001" onblur="validateEntryField('bib')" oninput="applyHalf(this)">
         <button type="button" class="btn btn-ghost btn-sm" onclick="autoFillBib()">自動編號</button>
       </div>
     </div>
@@ -2373,16 +2628,16 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div class="input-group"><label>性別 *</label><select id="eGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>
     <div class="input-group"><label>生日（yyyy/mm/dd）</label>
       <div class="input-row">
-        <input id="eBirthday" type="text" class="input" placeholder="yyyy/mm/dd" onblur="validateEntryField('birthday')">
+        <input id="eBirthday" type="text" class="input" placeholder="yyyy/mm/dd" onblur="validateEntryField('birthday')" oninput="applyHalf(this)">
         <div style="position:relative">
           <button type="button" class="btn btn-ghost btn-sm">📅</button>
           <input type="date" id="datePicker" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('eBirthday').value=y+'/'+m+'/'+d;setFieldError('eBirthday',false);this.value=''}">
         </div>
       </div>
     </div>
-    <div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="ePhone" type="tel" class="input" placeholder="0912345678" onblur="validateEntryField('phone')"></div>
-    <div class="input-group"><label>E-Mail</label><input id="eEmail" type="email" class="input" placeholder="example@email.com" onblur="validateEntryField('email')"></div>
-    <div class="input-group"><label>身分證字號（1英文+9數字）</label><input id="eIdNumber" type="text" class="input" placeholder="A123456789" onblur="validateEntryField('idNumber')"></div>
+    <div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="ePhone" type="tel" class="input" placeholder="0912345678" onblur="validateEntryField('phone')" oninput="applyHalf(this)"></div>
+    <div class="input-group"><label>E-Mail</label><input id="eEmail" type="email" class="input" placeholder="example@email.com" onblur="validateEntryField('email')" oninput="applyHalf(this)"></div>
+    <div class="input-group"><label>身分證字號（1英文+9數字）</label><input id="eIdNumber" type="text" class="input" placeholder="A123456789" onblur="validateEntryField('idNumber')" oninput="applyHalf(this)"></div>
     <div class="input-group"><label>備註</label><input id="eNote" type="text" class="input"></div>
     <div id="entryCustomFieldsContainer"></div>
     <input type="hidden" id="entryDocId">
@@ -2418,14 +2673,14 @@ tr.row-active td{background:rgba(249,115,22,.05);}
     <div class="input-group"><label>性別 *</label><select id="sGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>
     <div class="input-group"><label>生日（yyyy/mm/dd）*</label>
       <div class="input-row">
-        <input id="sBirthday" type="text" class="input" placeholder="yyyy/mm/dd" oninput="setFieldError('sBirthday',!validateBirthday(this.value))">
+        <input id="sBirthday" type="text" class="input" placeholder="yyyy/mm/dd" oninput="applyHalf(this);setFieldError('sBirthday',!validateBirthday(this.value))">
         <div style="position:relative"><button type="button" class="btn btn-ghost btn-sm">📅</button>
         <input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('sBirthday').value=y+'/'+m+'/'+d;setFieldError('sBirthday',false);this.value=''}"></div>
       </div>
     </div>
-    <div class="input-group"><label>身分證字號 *</label><input id="sIdNumber" type="text" class="input" placeholder="A123456789" oninput="setFieldError('sIdNumber',this.value&&!validateId(this.value))"></div>
-    <div class="input-group"><label>手機號碼</label><input id="sPhone" type="tel" class="input" placeholder="0912345678" oninput="setFieldError('sPhone',this.value&&!validatePhone(this.value))"></div>
-    <div class="input-group"><label>E-Mail</label><input id="sEmail" type="email" class="input" oninput="setFieldError('sEmail',this.value&&!validateEmail(this.value))"></div>
+    <div class="input-group"><label>身分證字號 *</label><input id="sIdNumber" type="text" class="input" placeholder="A123456789" oninput="applyHalf(this);setFieldError('sIdNumber',this.value&&!validateId(this.value))"></div>
+    <div class="input-group"><label>手機號碼</label><input id="sPhone" type="tel" class="input" placeholder="0912345678" oninput="applyHalf(this);setFieldError('sPhone',this.value&&!validatePhone(this.value))"></div>
+    <div class="input-group"><label>E-Mail</label><input id="sEmail" type="email" class="input" oninput="applyHalf(this);setFieldError('sEmail',this.value&&!validateEmail(this.value))"></div>
     <div class="input-group"><label>備註</label><input id="sNote" type="text" class="input"></div>
     <div id="staffCustomFieldsContainer"></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('staffModal')">取消</button><button class="btn btn-primary" onclick="saveStaff()">儲存</button></div>
