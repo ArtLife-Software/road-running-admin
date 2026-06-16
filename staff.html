@@ -179,7 +179,8 @@ function buildStaffRegInfoHtml(ev) {
   const fmtDT = ts => {
     if (!ts) return '';
     const d = ts.toDate ? ts.toDate() : new Date(ts);
-    return d.toLocaleString('zh-TW', {hour12:false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
+    const pad = n => String(n).padStart(2,'0');
+    return d.getFullYear()+'/'+pad(d.getMonth()+1)+'/'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());
   };
   const lines = [];
   if (ev.staffRegistrationStartAt) lines.push('報名開始：' + fmtDT(ev.staffRegistrationStartAt));
@@ -227,8 +228,8 @@ async function selectSignupEvent(eventId,keepWrapper){
   formHtml+='<div class="input-group"><label>性別 *</label><select id="suGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>';
   formHtml+='<div class="input-group"><label>生日（yyyy/mm/dd）*</label>';
   formHtml+='<div class="input-row"><input id="suBirthday" type="text" class="input" placeholder="yyyy/mm/dd" onblur="setFieldError(\'suBirthday\',!validateBirthday(this.value.trim()))">';
-  formHtml+='<label class="btn btn-ghost btn-sm" style="position:relative;cursor:pointer">📅';
-  formHtml+='<input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'suBirthday\').value=y+\'/\'+m+\'/\'+d;setFieldError(\'suBirthday\',false);this.value=\'\'}"></div></div></div>';
+  formHtml+='<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\'suBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>';
+  formHtml+='<input type="date" id="suBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'suBirthday\').value=y+\'/\'+m+\'/\'+d;setFieldError(\'suBirthday\',false);this.value=\'\'}"></div></div>';
   formHtml+='<div class="input-group"><label>身分證字號（1英文+9數字）*</label><input id="suIdNumber" type="text" class="input" placeholder="A123456789" onblur="setFieldError(\'suIdNumber\',!validateId(this.value.trim()))"></div>';
   formHtml+='<div class="input-group"><label>手機號碼</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="if(this.value.trim())setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
   formHtml+='<div class="input-group"><label>E-Mail</label><input id="suEmail" type="email" class="input" placeholder="example@email.com" onblur="if(this.value.trim())setFieldError(\'suEmail\',!validateEmail(this.value.trim()))"></div>';
@@ -361,10 +362,10 @@ window.showEditForm=async function(eventId,staffDocId,cardId){
   html+='<div class="input-group"><label>生日 *</label>'
     +'<div class="input-row">'
     +'<input id="'+cardId+'_birthday" type="text" class="input" value="'+(e.birthday||'')+'" oninput="applyHalf(this)">'
-    +'<label class="btn btn-ghost btn-sm" style="position:relative;cursor:pointer">📅'
-    +'<input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" '
+    +'<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\''+cardId+'_birthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>'
+    +'<input type="date" id="'+cardId+'_birthdayPicker" style="display:none" '
     +'onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\''+cardId+'_birthday\').value=y+\'/\'+m+\'/\'+d;this.value=\'\'}">'
-    +'</div></div></div>';
+    +'</div></div>';
   html+='<div class="input-group"><label>身分證字號 *</label><input id="'+cardId+'_idNumber" type="text" class="input" value="'+(e.idNumber||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>手機</label><input id="'+cardId+'_phone" type="tel" class="input" value="'+(e.phone||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>Email</label><input id="'+cardId+'_email" type="email" class="input" value="'+(e.email||'')+'" oninput="applyHalf(this)"></div>';
