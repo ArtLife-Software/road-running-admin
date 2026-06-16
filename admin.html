@@ -317,18 +317,6 @@ window.toggleStaffRegistration = async function(id,open){
 }
 window.activateEvent = async function(id) { await setDoc(doc(db,'config','active'),{eventId:id}); showToast('已開放掃描'); loadEvents(); }
 window.deactivateEvent = async function() { await setDoc(doc(db,'config','active'),{eventId:null}); showToast('已關閉掃描'); loadEvents(); }
-// 驗證時間欄位格式（hh:mm，00-23:00-59），錯誤時標紅
-window.validateTimeField = function(el) {
-  const v = el.value.trim();
-  if (!v) { el.style.borderColor=''; return true; }
-  const m = /^([0-9]{1,2}):([0-9]{1,2})$/.exec(v);
-  if (!m) { el.style.borderColor='var(--red)'; return false; }
-  const h = parseInt(m[1],10), mi = parseInt(m[2],10);
-  if (h<0||h>23||mi<0||mi>59) { el.style.borderColor='var(--red)'; return false; }
-  el.value = String(h).padStart(2,'0')+':'+String(mi).padStart(2,'0');
-  el.style.borderColor='';
-  return true;
-}
 window.showAddEvent = function() {
   document.getElementById('eventModalTitle').textContent='新增賽事';
   document.getElementById('eventForm').reset();
@@ -337,8 +325,8 @@ window.showAddEvent = function() {
   document.getElementById('evStaffBannerUrl').value='';
   document.getElementById('evBannerPreview').style.display='none';
   document.getElementById('evStaffBannerPreview').style.display='none';
-  ['evRegStartDate','evRegEndDate','evStaffRegStartDate','evStaffRegEndDate'].forEach(id=>document.getElementById(id).value='');
-  ['evRegStartTime','evRegEndTime','evStaffRegStartTime','evStaffRegEndTime'].forEach(id=>{const el=document.getElementById(id);el.value='';el.style.borderColor='';});
+  ['evRegStartDate','evRegEndDate','evStaffRegStartDate','evStaffRegEndDate'].forEach(id=>{const el=document.getElementById(id);el.value='';el.style.borderColor='';});
+  ['evRegStartTime','evRegEndTime','evStaffRegStartTime','evStaffRegEndTime'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('evRegCapacity').value='';
   document.getElementById('eventModal').style.display='flex';
 }
@@ -367,16 +355,16 @@ window.editEvent = async function(id) {
   setDateTimeFields('evStaffRegEnd', ev.staffRegistrationEndAt);
   document.getElementById('eventModal').style.display='flex';
 }
-// 輔助：把 Timestamp 拆填入 日期文字框（yyyy/mm/dd）+ 時間文字框（hh:mm）
+// 輔助：把 Timestamp 拆填入 日期文字框（yyyy/mm/dd）+ 時間欄位（type=time）
 function setDateTimeFields(prefix, ts) {
   const dateEl=document.getElementById(prefix+'Date');
   const timeEl=document.getElementById(prefix+'Time');
-  if(!ts){dateEl.value='';timeEl.value='';timeEl.style.borderColor='';return;}
+  dateEl.style.borderColor='';
+  if(!ts){dateEl.value='';timeEl.value='';return;}
   const d=ts.toDate?ts.toDate():new Date(ts);
   const pad=n=>String(n).padStart(2,'0');
   dateEl.value=d.getFullYear()+'/'+pad(d.getMonth()+1)+'/'+pad(d.getDate());
   timeEl.value=pad(d.getHours())+':'+pad(d.getMinutes());
-  timeEl.style.borderColor='';
 }
 // 圖片URL輸入後即時預覽
 document.addEventListener('DOMContentLoaded',()=>{
@@ -393,21 +381,34 @@ document.addEventListener('DOMContentLoaded',()=>{
     else preview.style.display='none';
   });
 });
-// 輔助：日期文字（yyyy/mm/dd）+ 時間文字（hh:mm） → Firestore Timestamp，日期空白回傳 deleteField()
+// 輔助：日期文字（yyyy/mm/dd，已在 saveEvent 驗證過）+ 時間（type=time） → Firestore Timestamp，日期空白回傳 deleteField()
 function dtFieldsToTs(prefix) {
   const dateVal=document.getElementById(prefix+'Date').value.trim();
   if (!dateVal) return deleteField();
-  if (!validateBirthday(dateVal)) return deleteField(); // 格式錯誤視為未設定
   const [y,mo,da]=dateVal.split('/').map(Number);
-  const timeVal=document.getElementById(prefix+'Time').value.trim();
-  let h=0, mi=0;
-  if (timeVal) {
-    const m=/^([0-9]{1,2}):([0-9]{1,2})$/.exec(timeVal);
-    if (m) { h=Math.min(23,parseInt(m[1],10)); mi=Math.min(59,parseInt(m[2],10)); }
-  }
-  return Timestamp.fromDate(new Date(y, mo-1, da, h, mi, 0));
+  const timeVal=document.getElementById(prefix+'Time').value; // "HH:MM" 或 ""
+  const [h,mi]=timeVal?timeVal.split(':').map(Number):[0,0];
+  return Timestamp.fromDate(new Date(y, mo-1, da, h||0, mi||0, 0));
 }
 window.saveEvent = async function() {
+  // 儲存前驗證所有日期欄位格式（yyyy/mm/dd，留空視為未設定，格式錯誤則擋住）
+  const dateFields = [
+    {id:'evRegStartDate', label:'選手報名開始日期'},
+    {id:'evRegEndDate', label:'選手報名結束日期'},
+    {id:'evStaffRegStartDate', label:'工作人員報名開始日期'},
+    {id:'evStaffRegEndDate', label:'工作人員報名結束日期'},
+  ];
+  for (const f of dateFields) {
+    const el = document.getElementById(f.id);
+    const v = el.value.trim();
+    if (v && !validateBirthday(v)) {
+      el.style.borderColor = 'var(--red)';
+      showToast(f.label+'格式錯誤，請輸入 yyyy/mm/dd（例：2026/06/16）','error');
+      el.focus();
+      return;
+    }
+    el.style.borderColor = '';
+  }
   const id = document.getElementById('eventDocId').value;
   const bannerUrl=document.getElementById('evBannerUrl').value.trim();
   const staffBannerUrl=document.getElementById('evStaffBannerUrl').value.trim();
@@ -2592,7 +2593,7 @@ th[data-sort]:hover{color:var(--accent);}
               <input type="date" id="evRegStartDatePicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('evRegStartDate').value=y+'/'+m+'/'+d;this.value=''}">
             </div>
           </div>
-          <div class="input-group" style="margin:0"><label>開始時間（hh:mm）</label><input id="evRegStartTime" type="text" class="input" placeholder="00:00" maxlength="5" oninput="applyHalf(this)" onblur="validateTimeField(this)"></div>
+          <div class="input-group" style="margin:0"><label>開始時間（hh:mm）</label><input id="evRegStartTime" type="time" class="input"></div>
         </div>
         <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-top:12px">
           <div class="input-group" style="margin:0"><label>報名結束日期（yyyy/mm/dd）</label>
@@ -2602,7 +2603,7 @@ th[data-sort]:hover{color:var(--accent);}
               <input type="date" id="evRegEndDatePicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('evRegEndDate').value=y+'/'+m+'/'+d;this.value=''}">
             </div>
           </div>
-          <div class="input-group" style="margin:0"><label>結束時間（hh:mm）</label><input id="evRegEndTime" type="text" class="input" placeholder="23:59" maxlength="5" oninput="applyHalf(this)" onblur="validateTimeField(this)"></div>
+          <div class="input-group" style="margin:0"><label>結束時間（hh:mm）</label><input id="evRegEndTime" type="time" class="input"></div>
         </div>
         <div class="input-group" style="margin-top:12px"><label>報名總人數（0 或留空＝無限制）</label><input id="evRegCapacity" type="number" min="0" class="input" placeholder="0"></div>
       </div>
@@ -2618,7 +2619,7 @@ th[data-sort]:hover{color:var(--accent);}
               <input type="date" id="evStaffRegStartDatePicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('evStaffRegStartDate').value=y+'/'+m+'/'+d;this.value=''}">
             </div>
           </div>
-          <div class="input-group" style="margin:0"><label>開始時間（hh:mm）</label><input id="evStaffRegStartTime" type="text" class="input" placeholder="00:00" maxlength="5" oninput="applyHalf(this)" onblur="validateTimeField(this)"></div>
+          <div class="input-group" style="margin:0"><label>開始時間（hh:mm）</label><input id="evStaffRegStartTime" type="time" class="input"></div>
         </div>
         <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-top:12px">
           <div class="input-group" style="margin:0"><label>報名結束日期（yyyy/mm/dd）</label>
@@ -2628,7 +2629,7 @@ th[data-sort]:hover{color:var(--accent);}
               <input type="date" id="evStaffRegEndDatePicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('evStaffRegEndDate').value=y+'/'+m+'/'+d;this.value=''}">
             </div>
           </div>
-          <div class="input-group" style="margin:0"><label>結束時間（hh:mm）</label><input id="evStaffRegEndTime" type="text" class="input" placeholder="23:59" maxlength="5" oninput="applyHalf(this)" onblur="validateTimeField(this)"></div>
+          <div class="input-group" style="margin:0"><label>結束時間（hh:mm）</label><input id="evStaffRegEndTime" type="time" class="input"></div>
         </div>
       </div>
       <!-- 宣傳圖片設定 -->
