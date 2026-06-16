@@ -160,18 +160,14 @@ let curSignupCustomFields=[];
 // 判斷工作人員報名是否開放（OR 邏輯）
 function isStaffRegOpen(ev) {
   const now = Date.now();
-  // 條件1：手動開關 ON（工作人員專用）
+  // 條件1：手動開關 ON → 一律可報名
   if (ev.staffRegistrationOpen) return true;
-  // 條件2：有設定時間，且現在在範圍內
+  // 未手動開放：須在時間範圍內才能報名（未設定視為不限制）
   const start = ev.staffRegistrationStartAt?.toDate?.()?.getTime() ?? null;
   const end   = ev.staffRegistrationEndAt?.toDate?.()?.getTime() ?? null;
-  const hasTime = (start !== null || end !== null);
-  if (hasTime) {
-    const afterStart = (start === null || now >= start);
-    const beforeEnd  = (end   === null || now <= end);
-    if (afterStart && beforeEnd) return true;
-  }
-  return false;
+  const afterStart = (start === null || now >= start);
+  const beforeEnd  = (end   === null || now <= end);
+  return afterStart && beforeEnd;
 }
 
 // 產生報名資訊說明文字

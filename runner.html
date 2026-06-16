@@ -246,21 +246,19 @@ let curSignupCustomFields=[];
 // 判斷選手報名是否開放（OR 邏輯：任一條件符合即開放）
 function isRunnerRegOpen(ev, entryCount) {
   const now = Date.now();
-  // 條件1：手動開關 ON
+  // 條件1：手動開關 ON → 一律可報名
   if (ev.registrationOpen) return true;
-  // 條件2：有設定時間，且現在在範圍內
+  // 未手動開放：須同時符合「時間範圍內」且「人數未滿」才能報名
+  // 時間範圍：未設定視為不限制（通過）
   const start = ev.registrationStartAt?.toDate?.()?.getTime() ?? null;
   const end   = ev.registrationEndAt?.toDate?.()?.getTime() ?? null;
-  const hasTime = (start !== null || end !== null);
-  if (hasTime) {
-    const afterStart = (start === null || now >= start);
-    const beforeEnd  = (end   === null || now <= end);
-    if (afterStart && beforeEnd) return true;
-  }
-  // 條件3：有設定人數上限，且尚未額滿（0 或未設定 = 不列入此條件）
+  const afterStart = (start === null || now >= start);
+  const beforeEnd  = (end   === null || now <= end);
+  const inTimeRange = afterStart && beforeEnd;
+  // 人數上限：0 或未設定視為不限制（通過）
   const cap = ev.registrationCapacity ?? 0;
-  if (cap > 0 && entryCount < cap) return true;
-  return false;
+  const underCapacity = (cap === 0 || entryCount < cap);
+  return inTimeRange && underCapacity;
 }
 
 // 產生報名資訊說明文字（顯示在賽事資訊卡）
