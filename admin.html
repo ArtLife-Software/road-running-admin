@@ -317,7 +317,23 @@ window.toggleStaffRegistration = async function(id,open){
 }
 window.activateEvent = async function(id) { await setDoc(doc(db,'config','active'),{eventId:id}); showToast('已開放掃描'); loadEvents(); }
 window.deactivateEvent = async function() { await setDoc(doc(db,'config','active'),{eventId:null}); showToast('已關閉掃描'); loadEvents(); }
+// 初始化時/分下拉選單（24小時制，00~23 / 00~59 每5分一格）
+function initHourMinSelects() {
+  const hourIds = ['evRegStartHour','evRegEndHour','evStaffRegStartHour','evStaffRegEndHour'];
+  const minIds   = ['evRegStartMin','evRegEndMin','evStaffRegStartMin','evStaffRegEndMin'];
+  hourIds.forEach(id=>{
+    const el=document.getElementById(id); if(!el||el.dataset.inited)return;
+    el.dataset.inited='1';
+    for(let h=0;h<24;h++){const o=document.createElement('option');o.value=String(h).padStart(2,'0');o.textContent=String(h).padStart(2,'0');el.appendChild(o);}
+  });
+  minIds.forEach(id=>{
+    const el=document.getElementById(id); if(!el||el.dataset.inited)return;
+    el.dataset.inited='1';
+    for(let m=0;m<60;m+=5){const o=document.createElement('option');o.value=String(m).padStart(2,'0');o.textContent=String(m).padStart(2,'0');el.appendChild(o);}
+  });
+}
 window.showAddEvent = function() {
+  initHourMinSelects();
   document.getElementById('eventModalTitle').textContent='新增賽事';
   document.getElementById('eventForm').reset();
   document.getElementById('eventDocId').value='';
@@ -325,14 +341,13 @@ window.showAddEvent = function() {
   document.getElementById('evStaffBannerUrl').value='';
   document.getElementById('evBannerPreview').style.display='none';
   document.getElementById('evStaffBannerPreview').style.display='none';
-  document.getElementById('evRegStart').value='';
-  document.getElementById('evRegEnd').value='';
+  ['evRegStartDate','evRegEndDate','evStaffRegStartDate','evStaffRegEndDate'].forEach(id=>document.getElementById(id).value='');
+  ['evRegStartHour','evRegStartMin','evRegEndHour','evRegEndMin','evStaffRegStartHour','evStaffRegStartMin','evStaffRegEndHour','evStaffRegEndMin'].forEach(id=>document.getElementById(id).value='00');
   document.getElementById('evRegCapacity').value='';
-  document.getElementById('evStaffRegStart').value='';
-  document.getElementById('evStaffRegEnd').value='';
   document.getElementById('eventModal').style.display='flex';
 }
 window.editEvent = async function(id) {
+  initHourMinSelects();
   const snap = await getDoc(doc(db,'events',id)); if (!snap.exists()) return;
   const ev = snap.data();
   document.getElementById('eventModalTitle').textContent='編輯賽事';
@@ -349,16 +364,31 @@ window.editEvent = async function(id) {
   const sPreview=document.getElementById('evStaffBannerPreview');
   if(sUrl){document.getElementById('evStaffBannerImg').src=sUrl;sPreview.style.display='block';}
   else sPreview.style.display='none';
-  // 報名時間欄位
-  document.getElementById('evRegStart').value=tsToLocal(ev.registrationStartAt);
-  document.getElementById('evRegEnd').value=tsToLocal(ev.registrationEndAt);
+  // 報名時間欄位：拆成日期 + 時 + 分
+  setDateTimeFields('evRegStart', ev.registrationStartAt);
+  setDateTimeFields('evRegEnd', ev.registrationEndAt);
   document.getElementById('evRegCapacity').value=ev.registrationCapacity||'';
-  document.getElementById('evStaffRegStart').value=tsToLocal(ev.staffRegistrationStartAt);
-  document.getElementById('evStaffRegEnd').value=tsToLocal(ev.staffRegistrationEndAt);
+  setDateTimeFields('evStaffRegStart', ev.staffRegistrationStartAt);
+  setDateTimeFields('evStaffRegEnd', ev.staffRegistrationEndAt);
   document.getElementById('eventModal').style.display='flex';
+}
+// 輔助：把 Timestamp 拆填入 date + hour + min 三個欄位
+function setDateTimeFields(prefix, ts) {
+  const dateEl=document.getElementById(prefix+'Date');
+  const hourEl=document.getElementById(prefix+'Hour');
+  const minEl=document.getElementById(prefix+'Min');
+  if(!ts){dateEl.value='';hourEl.value='00';minEl.value='00';return;}
+  const d=ts.toDate?ts.toDate():new Date(ts);
+  const pad=n=>String(n).padStart(2,'0');
+  dateEl.value=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+  hourEl.value=pad(d.getHours());
+  // 對齊到 5 分鐘選項中最接近者
+  const m=d.getMinutes(); const rounded=Math.round(m/5)*5%60;
+  minEl.value=pad(rounded);
 }
 // 圖片URL輸入後即時預覽
 document.addEventListener('DOMContentLoaded',()=>{
+  initHourMinSelects();
   document.getElementById('evBannerUrl').addEventListener('input',function(){
     const url=this.value.trim();
     const preview=document.getElementById('evBannerPreview');
@@ -372,17 +402,13 @@ document.addEventListener('DOMContentLoaded',()=>{
     else preview.style.display='none';
   });
 });
-// 輔助：datetime-local 字串 → Firestore Timestamp，空字串回傳 deleteField()
-function dtLocalToTs(v) {
-  if (!v) return deleteField();
-  return Timestamp.fromDate(new Date(v));
-}
-// 輔助：Firestore Timestamp → datetime-local 字串
-function tsToLocal(ts) {
-  if (!ts) return '';
-  const d = ts.toDate ? ts.toDate() : new Date(ts);
-  const pad = n => String(n).padStart(2,'0');
-  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+// 輔助：date + hour + min 三欄 → Firestore Timestamp，日期空白回傳 deleteField()
+function dtFieldsToTs(prefix) {
+  const dateVal=document.getElementById(prefix+'Date').value;
+  if (!dateVal) return deleteField();
+  const hour=document.getElementById(prefix+'Hour').value||'00';
+  const min=document.getElementById(prefix+'Min').value||'00';
+  return Timestamp.fromDate(new Date(dateVal+'T'+hour+':'+min+':00'));
 }
 window.saveEvent = async function() {
   const id = document.getElementById('eventDocId').value;
@@ -394,11 +420,11 @@ window.saveEvent = async function() {
     name:document.getElementById('evName').value.trim(),
     date:document.getElementById('evDate').value,
     bannerUrl, staffBannerUrl,
-    registrationStartAt: dtLocalToTs(document.getElementById('evRegStart').value),
-    registrationEndAt:   dtLocalToTs(document.getElementById('evRegEnd').value),
+    registrationStartAt: dtFieldsToTs('evRegStart'),
+    registrationEndAt:   dtFieldsToTs('evRegEnd'),
     registrationCapacity: regCapacity,
-    staffRegistrationStartAt: dtLocalToTs(document.getElementById('evStaffRegStart').value),
-    staffRegistrationEndAt:   dtLocalToTs(document.getElementById('evStaffRegEnd').value),
+    staffRegistrationStartAt: dtFieldsToTs('evStaffRegStart'),
+    staffRegistrationEndAt:   dtFieldsToTs('evStaffRegEnd'),
     updatedAt:serverTimestamp()
   };
   if (!data.name) { showToast('賽事名稱為必填','error'); return; }
@@ -620,7 +646,7 @@ window.loadEntries=async function(){
       ?'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'entriesTableBody\',\''+baseSortKeys[i]+'\')">'+h+'<span class="sort-icon"> ⇅</span></th>'
       :'<th>'+h+'</th>'
     ).join('')
-    +curEntryCustomFields.map(f=>'<th>'+f.label+'</th>').join('')
+    +curEntryCustomFields.map(f=>'<th data-sort="customData.'+f.id+'" onclick="sortTable(\'entriesTableBody\',\'customData.'+f.id+'\')">'+f.label+'<span class="sort-icon"> ⇅</span></th>').join('')
     +'<th>操作</th>';
   const snap=await getDocs(collection(db,'events',eventId,'runners'));
   const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
@@ -1769,7 +1795,7 @@ window.loadStaff=async function(){
       ?'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'staffTableBody\',\''+baseSortKeys[i]+'\')">'+h+'<span class="sort-icon"> ⇅</span></th>'
       :'<th>'+h+'</th>'
     ).join('')
-    +curStaffCustomFields.map(f=>'<th>'+f.label+'</th>').join('')
+    +curStaffCustomFields.map(f=>'<th data-sort="customData.'+f.id+'" onclick="sortTable(\'staffTableBody\',\'customData.'+f.id+'\')">'+f.label+'<span class="sort-icon"> ⇅</span></th>').join('')
     +'<th>操作</th>';
   const snap=await getDocs(collection(db,'events',eventId,'staff'));
   allStaff=snap.docs.map(d=>({id:d.id,...d.data()}));
@@ -2018,6 +2044,10 @@ function sortData(data, key, dir) {
   return [...data].sort((a, b) => {
     let va = key.split('.').reduce((o,k)=>o?.[k], a) ?? '';
     let vb = key.split('.').reduce((o,k)=>o?.[k], b) ?? '';
+    // Boolean（自訂欄位 checkbox）
+    if (typeof va === 'boolean' || typeof vb === 'boolean') {
+      return ((va?1:0) - (vb?1:0)) * dir;
+    }
     // Firestore Timestamp
     if (va?.toDate) va = va.toDate().getTime();
     if (vb?.toDate) vb = vb.toDate().getTime();
@@ -2224,6 +2254,10 @@ tr.row-active td{background:rgba(249,115,22,.05);}
 th[data-sort]{cursor:pointer;user-select:none;white-space:nowrap;}
 th[data-sort]:hover{color:var(--accent);}
 .sort-icon{font-size:.7rem;color:var(--muted);}
+.dt-row{display:flex;align-items:center;gap:6px;}
+.dt-row input[type="date"]{flex:1.4;min-width:0;}
+.dt-row .dt-hm{flex:0 0 56px;min-width:0;padding:10px 4px;text-align:center;}
+.dt-row span{color:var(--muted);font-size:.85rem;}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;}
 .station-stats{display:flex;flex-direction:column;gap:10px;}
 .station-stat-row{display:grid;grid-template-columns:160px 1fr 55px;align-items:center;gap:10px;}
@@ -2465,7 +2499,7 @@ th[data-sort]:hover{color:var(--accent);}
         <th data-sort="name" onclick="sortTable('recordsTableBody','name')">姓名<span class="sort-icon"> ⇅</span></th>
         <th data-sort="station" onclick="sortTable('recordsTableBody','station')">站點<span class="sort-icon"> ⇅</span></th>
         <th data-sort="scanTime" onclick="sortTable('recordsTableBody','scanTime')">掃描時間<span class="sort-icon"> ⇅</span></th>
-        <th>掃描器</th><th>操作</th>
+        <th data-sort="deviceName" onclick="sortTable('recordsTableBody','deviceName')">掃描器<span class="sort-icon"> ⇅</span></th><th>操作</th>
       </tr></thead><tbody id="recordsTableBody"><tr><td colspan="9" class="loading-cell">載入中...</td></tr></tbody></table></div>
     </div>
 
@@ -2558,8 +2592,24 @@ th[data-sort]:hover{color:var(--accent);}
         <div style="font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:12px;letter-spacing:.05em">🏃 選手報名時間設定</div>
         <div class="csv-hint" style="margin-bottom:12px">以下任一條件符合即開放報名：手動開關 ON、在日期時間範圍內、未超過人數上限。若均未符合則關閉報名。</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <div class="input-group" style="margin:0"><label>報名開始日期時間</label><input id="evRegStart" type="datetime-local" class="input"></div>
-          <div class="input-group" style="margin:0"><label>報名結束日期時間</label><input id="evRegEnd" type="datetime-local" class="input"></div>
+          <div class="input-group" style="margin:0">
+            <label>報名開始日期時間</label>
+            <div class="dt-row">
+              <input id="evRegStartDate" type="date" class="input">
+              <select id="evRegStartHour" class="input dt-hm"></select>
+              <span>:</span>
+              <select id="evRegStartMin" class="input dt-hm"></select>
+            </div>
+          </div>
+          <div class="input-group" style="margin:0">
+            <label>報名結束日期時間</label>
+            <div class="dt-row">
+              <input id="evRegEndDate" type="date" class="input">
+              <select id="evRegEndHour" class="input dt-hm"></select>
+              <span>:</span>
+              <select id="evRegEndMin" class="input dt-hm"></select>
+            </div>
+          </div>
         </div>
         <div class="input-group" style="margin-top:12px"><label>報名總人數（0 或留空＝無限制）</label><input id="evRegCapacity" type="number" min="0" class="input" placeholder="0"></div>
       </div>
@@ -2568,8 +2618,24 @@ th[data-sort]:hover{color:var(--accent);}
         <div style="font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:12px;letter-spacing:.05em">🦺 工作人員報名時間設定</div>
         <div class="csv-hint" style="margin-bottom:12px">以下任一條件符合即開放報名：手動開關 ON、在日期時間範圍內。若均未符合則關閉報名。</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <div class="input-group" style="margin:0"><label>報名開始日期時間</label><input id="evStaffRegStart" type="datetime-local" class="input"></div>
-          <div class="input-group" style="margin:0"><label>報名結束日期時間</label><input id="evStaffRegEnd" type="datetime-local" class="input"></div>
+          <div class="input-group" style="margin:0">
+            <label>報名開始日期時間</label>
+            <div class="dt-row">
+              <input id="evStaffRegStartDate" type="date" class="input">
+              <select id="evStaffRegStartHour" class="input dt-hm"></select>
+              <span>:</span>
+              <select id="evStaffRegStartMin" class="input dt-hm"></select>
+            </div>
+          </div>
+          <div class="input-group" style="margin:0">
+            <label>報名結束日期時間</label>
+            <div class="dt-row">
+              <input id="evStaffRegEndDate" type="date" class="input">
+              <select id="evStaffRegEndHour" class="input dt-hm"></select>
+              <span>:</span>
+              <select id="evStaffRegEndMin" class="input dt-hm"></select>
+            </div>
+          </div>
         </div>
       </div>
       <!-- 宣傳圖片設定 -->
