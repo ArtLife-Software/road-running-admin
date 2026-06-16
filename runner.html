@@ -79,7 +79,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
       <div class="input-group"><label>編號</label><input id="statusBib" type="text" class="input" placeholder="001" oninput="applyHalf(this)"></div>
       <div class="input-group"><label>姓名</label><input id="statusName" type="text" class="input" placeholder="王小明"></div>
       <div class="input-group"><label>性別</label><select id="statusGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>
-      <div class="input-group"><label>生日（yyyy/mm/dd）</label><div class="input-row"><input id="statusBirthday" type="text" class="input" placeholder="1990/01/01" oninput="applyHalf(this)"><button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById('statusBirthdayPicker');_d.showPicker?_d.showPicker():_d.click()">📅</button><input type="date" id="statusBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('statusBirthday').value=y+'/'+m+'/'+d;this.value=''}"></div></div>
+      <div class="input-group"><label>生日（yyyy/mm/dd）</label><div class="input-row"><input id="statusBirthday" data-fmt="ymd" type="text" class="input" placeholder="1990/01/01" oninput="applyHalf(this)"><button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById('statusBirthdayPicker');_d.showPicker?_d.showPicker():_d.click()">📅</button><input type="date" id="statusBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('statusBirthday').value=y+'/'+m+'/'+d;this.value=''}"></div></div>
       <button class="btn btn-primary btn-full" onclick="doStatusQuery()">🔍 查詢報名</button>
     </div>
     <div id="statusResult"></div>
@@ -93,7 +93,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
         <div class="input-group" style="margin:0"><label>ID</label><input id="lookupId" type="text" class="input" placeholder="R000001" oninput="applyHalf(this)"></div>
         <div class="input-group" style="margin:0"><label>身分證字號</label><input id="lookupIdNum" type="text" class="input" placeholder="A123456789" oninput="applyHalf(this)"></div>
       </div>
-      <div class="input-group"><label>生日（yyyy/mm/dd）*</label><div class="input-row"><input id="lookupBirthday" type="text" class="input" placeholder="1990/01/01" oninput="applyHalf(this)"><button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById('lookupBirthdayPicker');_d.showPicker?_d.showPicker():_d.click()">📅</button><input type="date" id="lookupBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('lookupBirthday').value=y+'/'+m+'/'+d;this.value=''}"></div></div>
+      <div class="input-group"><label>生日（yyyy/mm/dd）*</label><div class="input-row"><input id="lookupBirthday" data-fmt="ymd" type="text" class="input" placeholder="1990/01/01" oninput="applyHalf(this)"><button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById('lookupBirthdayPicker');_d.showPicker?_d.showPicker():_d.click()">📅</button><input type="date" id="lookupBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('lookupBirthday').value=y+'/'+m+'/'+d;this.value=''}"></div></div>
       <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
         <div class="input-group" id="lookupEventRow" style="margin:0;flex:1;min-width:160px"><label>選擇賽事</label><select id="lookupEventSelect" class="input"><option value="">請選擇賽事...</option></select></div>
         <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;cursor:pointer;white-space:nowrap;margin-top:18px">
@@ -150,6 +150,18 @@ function applyHalf(el) {
 window.toHalf = toHalf;
 window.applyHalf = applyHalf;
 
+function autoSlashDate(el) {
+  const isDelete = el._lastLen !== undefined && el.value.length < el._lastLen;
+  el._lastLen = el.value.length;
+  if (isDelete) return;
+  let digits = el.value.replace(/\D/g, '').slice(0, 8);
+  let out = digits;
+  if (digits.length > 4) out = digits.slice(0,4) + '/' + digits.slice(4);
+  if (digits.length > 6) out = digits.slice(0,4) + '/' + digits.slice(4,6) + '/' + digits.slice(6);
+  if (out !== el.value) { el.value = out; el._lastLen = out.length; }
+}
+window.autoSlashDate = autoSlashDate;
+
 // ── 全形→半形：統一監聽所有 input ──
 document.addEventListener('input', function(e) {
   const el = e.target;
@@ -163,6 +175,7 @@ document.addEventListener('input', function(e) {
     el.value = v;
     try { el.setSelectionRange(pos, pos); } catch(e) {}
   }
+  if (el.dataset.fmt === 'ymd') autoSlashDate(el);
 }, true);
 
 function validateBirthday(v) {
@@ -345,7 +358,7 @@ async function selectSignupEvent(eventId, keepWrapper){
   formHtml+='<div class="input-group"><label>姓名 *</label><input id="suName" type="text" class="input" placeholder="王小明"></div>';
   formHtml+='<div class="input-group"><label>性別 *</label><select id="suGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>';
   formHtml+='<div class="input-group"><label>生日（yyyy/mm/dd）*</label>';
-  formHtml+='<div class="input-row"><input id="suBirthday" type="text" class="input" placeholder="yyyy/mm/dd" onblur="setFieldError(\'suBirthday\',!validateBirthday(this.value.trim()))">';
+  formHtml+='<div class="input-row"><input id="suBirthday" data-fmt="ymd" type="text" class="input" placeholder="yyyy/mm/dd" onblur="setFieldError(\'suBirthday\',!validateBirthday(this.value.trim()))">';
   formHtml+='<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\'suBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>';
   formHtml+='<input type="date" id="suBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'suBirthday\').value=y+\'/\'+m+\'/\'+d;setFieldError(\'suBirthday\',false);this.value=\'\'}"></div></div>';
   formHtml+='<div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="if(this.value.trim())setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
@@ -674,7 +687,7 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   html+='<div class="input-group"><label>性別</label><select id="'+cardId+'_eGender" class="input"><option value="男"'+(r.gender==='男'?' selected':'')+'>男</option><option value="女"'+(r.gender==='女'?' selected':'')+'>女</option></select></div>';
   html+='<div class="input-group"><label>生日（yyyy/mm/dd）</label>'
     +'<div class="input-row">'
-    +'<input id="'+cardId+'_eBirthday" type="text" class="input" value="'+(r.birthday||'')+'" oninput="applyHalf(this)">'
+    +'<input id="'+cardId+'_eBirthday" data-fmt="ymd" type="text" class="input" value="'+(r.birthday||'')+'" oninput="applyHalf(this)">'
     +'<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\''+cardId+'_eBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>'
     +'<input type="date" id="'+cardId+'_eBirthdayPicker" style="display:none" '
     +'onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\''+cardId+'_eBirthday\').value=y+\'/\'+m+\'/\'+d;this.value=\'\'}">'
