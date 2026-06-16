@@ -282,6 +282,21 @@ window.saveRunner = async function() {
   showToast('已更新'); closeModal('runnerModal'); loadRunners();
 }
 window.deleteRunner = async function(id, name) {
+  const rDoc = await getDoc(doc(db,'runners',id));
+  const uniqueId = rDoc.exists() ? rDoc.data().uniqueId : null;
+  // 檢查所有賽事是否有這位選手的報名記錄
+  let relatedEvents = [];
+  if (uniqueId) {
+    const eventsSnap = await getDocs(collection(db,'events'));
+    for (const evDoc of eventsSnap.docs) {
+      const entrySnap = await getDocs(query(collection(db,'events',evDoc.id,'runners'),where('uniqueId','==',uniqueId)));
+      if (!entrySnap.empty) relatedEvents.push(evDoc.data().name||evDoc.id);
+    }
+  }
+  if (relatedEvents.length) {
+    showToast('無法刪除：「'+name+'」尚有報名記錄於「'+relatedEvents.join('、')+'」，請先刪除對應報名記錄','error');
+    return;
+  }
   if (!confirm('確定刪除選手「'+name+'」？')) return;
   await deleteDoc(doc(db,'runners',id)); showToast('已刪除'); loadRunners();
 }
@@ -1107,11 +1122,21 @@ window.saveEntry=async function(){
   if(!id){
     const existingEntry=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
     if(!existingEntry.empty){
-      // 已報名：更新 bibNumber、group、customData
+      // 已報名：更新 bibNumber、group、customData，同時同步個人資料到 runners 主檔
       await updateDoc(doc(db,'events',eventId,'runners',existingEntry.docs[0].id),{bibNumber,group,customData,updatedAt:serverTimestamp()});
+      await updateDoc(doc(db,'runners',(await getDocs(query(collection(db,'runners'),where('uniqueId','==',uniqueId)))).docs[0].id),
+        {name,gender,birthday,phone,email,idNumber:idNum,note,updatedAt:serverTimestamp()});
       showToast('此選手已報名過此賽事，資料已更新');
       closeModal('entryModal'); loadEntries();
       return;
+    }
+  }
+  // 只要綁定到既有選手（編輯，或新增時選了現有選手），就把表單上的個人資料同步寫回 runners 主檔
+  // （新增且未選現有選手的情況，主檔已在上方第1066-1105行建立/更新過，這裡不重複處理）
+  if(id || (document.getElementById('entryUniqueId').value)){
+    const rSnap=await getDocs(query(collection(db,'runners'),where('uniqueId','==',uniqueId)));
+    if(!rSnap.empty){
+      await updateDoc(doc(db,'runners',rSnap.docs[0].id),{name,gender,birthday,phone,email,idNumber:idNum,note,updatedAt:serverTimestamp()});
     }
   }
   const data={uniqueId,bibNumber,group,customData,updatedAt:serverTimestamp()};
@@ -2143,6 +2168,24 @@ function resetBatchUI(tbodyId, selectAllId, btnId){
 window.batchDeleteRunners=async function(){
   const ids=getCheckedIds('runnersTableBody');
   if(!ids.length)return;
+  // 檢查這些選手是否有任何賽事的報名記錄
+  const uniqueIds=[];
+  for(const id of ids){
+    const rDoc=await getDoc(doc(db,'runners',id));
+    if(rDoc.exists()&&rDoc.data().uniqueId)uniqueIds.push({id,uniqueId:rDoc.data().uniqueId,name:rDoc.data().name});
+  }
+  const eventsSnap=await getDocs(collection(db,'events'));
+  const blocked=[];
+  for(const {uniqueId,name} of uniqueIds){
+    for(const evDoc of eventsSnap.docs){
+      const entrySnap=await getDocs(query(collection(db,'events',evDoc.id,'runners'),where('uniqueId','==',uniqueId)));
+      if(!entrySnap.empty){blocked.push(name);break;}
+    }
+  }
+  if(blocked.length){
+    showToast('以下選手尚有報名記錄，無法刪除：'+blocked.join('、'),'error');
+    return;
+  }
   if(!confirm('確定刪除選取的 '+ids.length+' 筆選手資料？'))return;
   const batch=writeBatch(db);
   ids.forEach(id=>batch.delete(doc(db,'runners',id)));
