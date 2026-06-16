@@ -141,7 +141,7 @@ onAuthStateChanged(auth, user => {
     // 管理員才顯示帳戶管理
     const isAdmin=user.email===ADMIN_EMAIL;
     document.querySelectorAll('.admin-only').forEach(el=>el.style.display=isAdmin?'flex':'none');
-    loadRunners();
+    loadEvents();
   } else {
     document.getElementById('loginScreen').style.display='flex';
     document.getElementById('appScreen').style.display='none';
@@ -2260,8 +2260,8 @@ th[data-sort]:hover{color:var(--accent);}
       <div class="sidebar-logo-sub">管理後台</div>
     </div>
     <nav class="nav">
-      <div class="nav-item active" data-nav="runners" onclick="showSection('runners')"><span class="nav-icon">👥</span><span>選手資料</span></div>
-      <div class="nav-item" data-nav="events" onclick="showSection('events')"><span class="nav-icon">🏁</span><span>賽事管理</span></div>
+      <div class="nav-item active" data-nav="events" onclick="showSection('events')"><span class="nav-icon">🏁</span><span>賽事管理</span></div>
+      <div class="nav-item" data-nav="runners" onclick="showSection('runners')"><span class="nav-icon">👥</span><span>選手資料</span></div>
       <div class="nav-item" data-nav="entries" onclick="showSection('entries')"><span class="nav-icon">📝</span><span>報名管理</span></div>
       <div class="nav-item" data-nav="staff" onclick="showSection('staff')"><span class="nav-icon">🦺</span><span>工作人員</span></div>
       <div class="nav-item" data-nav="records" onclick="showSection('records')"><span class="nav-icon">📋</span><span>打卡記錄</span></div>
@@ -2284,8 +2284,8 @@ th[data-sort]:hover{color:var(--accent);}
   </div>
 
   <div class="bottom-nav">
-    <div class="bottom-nav-item active" data-nav="runners" onclick="showSection('runners')"><span class="nav-icon">👥</span><span>選手</span></div>
-    <div class="bottom-nav-item" data-nav="events" onclick="showSection('events')"><span class="nav-icon">🏁</span><span>賽事</span></div>
+    <div class="bottom-nav-item active" data-nav="events" onclick="showSection('events')"><span class="nav-icon">🏁</span><span>賽事</span></div>
+    <div class="bottom-nav-item" data-nav="runners" onclick="showSection('runners')"><span class="nav-icon">👥</span><span>選手</span></div>
     <div class="bottom-nav-item" data-nav="entries" onclick="showSection('entries')"><span class="nav-icon">📝</span><span>報名</span></div>
     <div class="bottom-nav-item" data-nav="staff" onclick="showSection('staff')"><span class="nav-icon">🦺</span><span>工作</span></div>
     <div class="bottom-nav-item" data-nav="records" onclick="showSection('records')"><span class="nav-icon">📋</span><span>打卡</span></div>
@@ -2297,7 +2297,7 @@ th[data-sort]:hover{color:var(--accent);}
   <div class="main">
 
     <!-- 選手資料 -->
-    <div id="sec-runners" class="section active">
+    <div id="sec-runners" class="section">
       <div class="section-header">
         <div class="section-title">選手資料</div>
         <div class="section-actions">
@@ -2339,7 +2339,7 @@ th[data-sort]:hover{color:var(--accent);}
     </div>
 
     <!-- 賽事管理 -->
-    <div id="sec-events" class="section">
+    <div id="sec-events" class="section active">
       <div class="section-header">
         <div class="section-title">賽事管理</div>
         <button class="btn btn-primary" onclick="showAddEvent()">＋ 新增賽事</button>
