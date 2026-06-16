@@ -595,16 +595,23 @@ window.editCustomField=async function(i){
 }
 window.onCfTypeChange=function(){
   document.getElementById('cfOptionsRow').style.display=document.getElementById('cfType').value==='select'?'block':'none';
+  const isCheckbox=document.getElementById('cfType').value==='checkbox';
+  document.getElementById('cfRequiredRow').style.display=isCheckbox?'none':'block';
+  if(isCheckbox)document.getElementById('cfRequired').checked=false;
 }
 window.cancelCustomField=function(){document.getElementById('cfForm').style.display='none';}
 window.saveCustomField=async function(){
   const idx=document.getElementById('cfFieldIndex').value;
   const label=document.getElementById('cfLabel').value.trim();
-  const type=document.getElementById('cfType').value;
-  const required=document.getElementById('cfRequired').checked;
+  let type=document.getElementById('cfType').value;
+  const required=type==='checkbox'?false:document.getElementById('cfRequired').checked;
   if(!label){showToast('欄位名稱為必填','error');return;}
   const field={id:'cf_'+Date.now()+'_'+Math.floor(Math.random()*1000), label, type, required};
-  if(type==='select'){
+  if(type==='yesno'){
+    // 「是/否下拉」本質為 select，固定選項，正規化後沿用既有 select 邏輯
+    field.type='select';
+    field.options=['是','否'];
+  } else if(type==='select'){
     const options=document.getElementById('cfOptions').value.split('\n').map(s=>s.trim()).filter(Boolean);
     if(!options.length){showToast('下拉選單請至少輸入一個選項','error');return;}
     field.options=options;
@@ -895,7 +902,7 @@ function collectEntryCustomData(){
 }
 function validateEntryCustomFields(){
   for(const f of curEntryCustomFields){
-    if(!f.required||f.type==='checkbox')continue;
+    if(!f.required)continue;
     const el=document.getElementById('cfInput_'+f.id);
     if(el&&!el.value.trim())return f.label;
   }
@@ -2747,14 +2754,15 @@ th[data-sort]:hover{color:var(--accent);}
         <select id="cfType" class="input" onchange="onCfTypeChange()">
           <option value="text">文字</option>
           <option value="select">下拉選單</option>
-          <option value="checkbox">是／否</option>
+          <option value="checkbox">是／否（勾選框，不可必填）</option>
+          <option value="yesno">是／否（下拉選單，可必填）</option>
         </select>
       </div>
       <div class="input-group" id="cfOptionsRow" style="display:none">
         <label>選項（每行一個）</label>
         <textarea id="cfOptions" class="input" rows="3" placeholder="S&#10;M&#10;L&#10;XL"></textarea>
       </div>
-      <div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="cfRequired"> 必填</label></div>
+      <div class="input-group" id="cfRequiredRow"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="cfRequired"> 必填</label></div>
       <div class="modal-actions" style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="cancelCustomField()">取消</button><button class="btn btn-primary btn-sm" onclick="saveCustomField()">儲存欄位</button></div>
     </div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('customFieldsModal')">關閉</button></div>
