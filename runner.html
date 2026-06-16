@@ -559,7 +559,7 @@ function showSignupSuccess(info){
   html+='<span class="badge">編號 '+info.bibNumber+'</span>';
   html+='</div>';
   html+='<div id="signupQR" class="qr-box"></div>';
-  html+='<div class="csv-hint" style="text-align:left;margin-top:16px">請截圖保存此 QR Code，比賽當天報到時使用。也可至「查詢報名／修改」分頁重新查詢。</div>';
+  html+='<div class="csv-hint" style="text-align:left;margin-top:16px">請截圖保存此 QR Code，比賽當天報到時使用。或記得編號，於「查詢報名／修改」分頁重新查詢。</div>';
   html+='</div>';
   content.innerHTML=html;
   const qrText=[info.uniqueId,info.bibNumber].join('|');
