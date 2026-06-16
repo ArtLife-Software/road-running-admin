@@ -102,6 +102,22 @@ function applyHalf(el) {
 }
 window.toHalf = toHalf;
 window.applyHalf = applyHalf;
+
+// ── 全形→半形：統一監聽所有 input ──
+document.addEventListener('input', function(e) {
+  const el = e.target;
+  const tag = el.tagName;
+  const type = (el.type||'').toLowerCase();
+  if (tag !== 'INPUT' && tag !== 'TEXTAREA') return;
+  if (['checkbox','radio','file','date','datetime-local','time','color','range'].includes(type)) return;
+  const v = toHalf(el.value);
+  if (v !== el.value) {
+    const pos = el.selectionStart;
+    el.value = v;
+    try { el.setSelectionRange(pos, pos); } catch(e) {}
+  }
+}, true);
+
 function validateBirthday(v){if(!v)return false;if(!/^\d{4}\/\d{2}\/\d{2}$/.test(v))return false;const[y,m,d]=v.split('/').map(Number);const dt=new Date(y,m-1,d);return dt.getFullYear()===y&&dt.getMonth()===m-1&&dt.getDate()===d;}
 function validatePhone(v){return /^09\d{8}$/.test(v);}
 function validateEmail(v){if(!v)return true;return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);}
@@ -146,10 +162,15 @@ function isStaffRegOpen(ev) {
   const now = Date.now();
   // 條件1：手動開關 ON（工作人員專用）
   if (ev.staffRegistrationOpen) return true;
-  // 條件2：在日期時間範圍內
+  // 條件2：有設定時間，且現在在範圍內
   const start = ev.staffRegistrationStartAt?.toDate?.()?.getTime() ?? null;
   const end   = ev.staffRegistrationEndAt?.toDate?.()?.getTime() ?? null;
-  if ((start === null || now >= start) && (end === null || now <= end) && (start !== null || end !== null)) return true;
+  const hasTime = (start !== null || end !== null);
+  if (hasTime) {
+    const afterStart = (start === null || now >= start);
+    const beforeEnd  = (end   === null || now <= end);
+    if (afterStart && beforeEnd) return true;
+  }
   return false;
 }
 
@@ -195,19 +216,18 @@ async function selectSignupEvent(eventId,keepWrapper){
   if(curSignupEvent.staffBannerUrl){
     formHtml+='<div style="margin-bottom:12px"><img src="'+curSignupEvent.staffBannerUrl+'" style="max-width:100%;border-radius:12px;display:block" onerror="this.style.display=\'none\'"></div>';
   }
-  if(!keepWrapper){
-    const regInfo=buildStaffRegInfoHtml(curSignupEvent);
-    formHtml+='<div class="card" style="text-align:center;margin-bottom:12px"><strong>'+curSignupEvent.name+'</strong>'
-      +(curSignupEvent.date?'<div style="font-size:.78rem;color:var(--muted);margin-top:4px">'+curSignupEvent.date+'</div>':'')
-      +(regInfo?'<div style="margin-top:8px;text-align:left">'+regInfo+'</div>':'')
-      +'</div>';
-  }
+  // 賽事資訊卡（含報名時間，無論單/多賽事都顯示）
+  const regInfo=buildStaffRegInfoHtml(curSignupEvent);
+  formHtml+='<div class="card" style="text-align:center;margin-bottom:12px"><strong>'+curSignupEvent.name+'</strong>'
+    +(curSignupEvent.date?'<div style="font-size:.78rem;color:var(--muted);margin-top:4px">'+curSignupEvent.date+'</div>':'')
+    +(regInfo?'<div style="margin-top:8px;text-align:left">'+regInfo+'</div>':'')
+    +'</div>';
   formHtml+='<div class="card">';
   formHtml+='<div class="input-group"><label>姓名 *</label><input id="suName" type="text" class="input" placeholder="王小明"></div>';
   formHtml+='<div class="input-group"><label>性別 *</label><select id="suGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>';
   formHtml+='<div class="input-group"><label>生日（yyyy/mm/dd）*</label>';
   formHtml+='<div class="input-row"><input id="suBirthday" type="text" class="input" placeholder="yyyy/mm/dd" onblur="setFieldError(\'suBirthday\',!validateBirthday(this.value.trim()))">';
-  formHtml+='<div style="position:relative"><button type="button" class="btn btn-ghost btn-sm">📅</button>';
+  formHtml+='<label class="btn btn-ghost btn-sm" style="position:relative;cursor:pointer">📅';
   formHtml+='<input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'suBirthday\').value=y+\'/\'+m+\'/\'+d;setFieldError(\'suBirthday\',false);this.value=\'\'}"></div></div></div>';
   formHtml+='<div class="input-group"><label>身分證字號（1英文+9數字）*</label><input id="suIdNumber" type="text" class="input" placeholder="A123456789" onblur="setFieldError(\'suIdNumber\',!validateId(this.value.trim()))"></div>';
   formHtml+='<div class="input-group"><label>手機號碼</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="if(this.value.trim())setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
@@ -341,7 +361,7 @@ window.showEditForm=async function(eventId,staffDocId,cardId){
   html+='<div class="input-group"><label>生日 *</label>'
     +'<div class="input-row">'
     +'<input id="'+cardId+'_birthday" type="text" class="input" value="'+(e.birthday||'')+'" oninput="applyHalf(this)">'
-    +'<div style="position:relative"><button type="button" class="btn btn-ghost btn-sm">📅</button>'
+    +'<label class="btn btn-ghost btn-sm" style="position:relative;cursor:pointer">📅'
     +'<input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" '
     +'onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\''+cardId+'_birthday\').value=y+\'/\'+m+\'/\'+d;this.value=\'\'}">'
     +'</div></div></div>';

@@ -79,7 +79,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
       <div class="input-group"><label>編號</label><input id="statusBib" type="text" class="input" placeholder="001" oninput="applyHalf(this)"></div>
       <div class="input-group"><label>姓名</label><input id="statusName" type="text" class="input" placeholder="王小明"></div>
       <div class="input-group"><label>性別</label><select id="statusGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>
-      <div class="input-group"><label>生日（yyyy/mm/dd）</label><div class="input-row"><input id="statusBirthday" type="text" class="input" placeholder="1990/01/01" oninput="applyHalf(this)"><div style="position:relative"><button type="button" class="btn btn-ghost btn-sm">📅</button><input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('statusBirthday').value=y+'/'+m+'/'+d;this.value=''}"></div></div></div>
+      <div class="input-group"><label>生日（yyyy/mm/dd）</label><div class="input-row"><input id="statusBirthday" type="text" class="input" placeholder="1990/01/01" oninput="applyHalf(this)"><label class="btn btn-ghost btn-sm" style="position:relative;cursor:pointer">📅<input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('statusBirthday').value=y+'/'+m+'/'+d;this.value=''}"></label></div></div>
       <button class="btn btn-primary btn-full" onclick="doStatusQuery()">🔍 查詢報名</button>
     </div>
     <div id="statusResult"></div>
@@ -93,7 +93,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
         <div class="input-group" style="margin:0"><label>ID</label><input id="lookupId" type="text" class="input" placeholder="R000001" oninput="applyHalf(this)"></div>
         <div class="input-group" style="margin:0"><label>身分證字號</label><input id="lookupIdNum" type="text" class="input" placeholder="A123456789" oninput="applyHalf(this)"></div>
       </div>
-      <div class="input-group"><label>生日（yyyy/mm/dd）*</label><div class="input-row"><input id="lookupBirthday" type="text" class="input" placeholder="1990/01/01" oninput="applyHalf(this)"><div style="position:relative"><button type="button" class="btn btn-ghost btn-sm">📅</button><input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('lookupBirthday').value=y+'/'+m+'/'+d;this.value=''}"></div></div></div>
+      <div class="input-group"><label>生日（yyyy/mm/dd）*</label><div class="input-row"><input id="lookupBirthday" type="text" class="input" placeholder="1990/01/01" oninput="applyHalf(this)"><label class="btn btn-ghost btn-sm" style="position:relative;cursor:pointer">📅<input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('lookupBirthday').value=y+'/'+m+'/'+d;this.value=''}"></label></div></div>
       <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
         <div class="input-group" id="lookupEventRow" style="margin:0;flex:1;min-width:160px"><label>選擇賽事</label><select id="lookupEventSelect" class="input"><option value="">請選擇賽事...</option></select></div>
         <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;cursor:pointer;white-space:nowrap;margin-top:18px">
@@ -149,6 +149,22 @@ function applyHalf(el) {
 }
 window.toHalf = toHalf;
 window.applyHalf = applyHalf;
+
+// ── 全形→半形：統一監聽所有 input ──
+document.addEventListener('input', function(e) {
+  const el = e.target;
+  const tag = el.tagName;
+  const type = (el.type||'').toLowerCase();
+  if (tag !== 'INPUT' && tag !== 'TEXTAREA') return;
+  if (['checkbox','radio','file','date','datetime-local','time','color','range'].includes(type)) return;
+  const v = toHalf(el.value);
+  if (v !== el.value) {
+    const pos = el.selectionStart;
+    el.value = v;
+    try { el.setSelectionRange(pos, pos); } catch(e) {}
+  }
+}, true);
+
 function validateBirthday(v) {
   if (!v) return true;
   if (!/^\d{4}\/\d{2}\/\d{2}$/.test(v)) return false;
@@ -232,13 +248,18 @@ function isRunnerRegOpen(ev, entryCount) {
   const now = Date.now();
   // 條件1：手動開關 ON
   if (ev.registrationOpen) return true;
-  // 條件2：在日期時間範圍內
+  // 條件2：有設定時間，且現在在範圍內
   const start = ev.registrationStartAt?.toDate?.()?.getTime() ?? null;
   const end   = ev.registrationEndAt?.toDate?.()?.getTime() ?? null;
-  if ((start === null || now >= start) && (end === null || now <= end) && (start !== null || end !== null)) return true;
-  // 條件3：未超過人數上限（capacity 0 或未設定 = 無限制 → 此條件算通過）
+  const hasTime = (start !== null || end !== null);
+  if (hasTime) {
+    const afterStart = (start === null || now >= start);
+    const beforeEnd  = (end   === null || now <= end);
+    if (afterStart && beforeEnd) return true;
+  }
+  // 條件3：有設定人數上限，且尚未額滿（0 或未設定 = 不列入此條件）
   const cap = ev.registrationCapacity ?? 0;
-  if (cap === 0 || entryCount < cap) return true;
+  if (cap > 0 && entryCount < cap) return true;
   return false;
 }
 
@@ -302,12 +323,17 @@ async function selectSignupEvent(eventId, keepWrapper){
   if(curSignupEvent.bannerUrl){
     formHtml+='<div style="margin-bottom:12px"><img src="'+curSignupEvent.bannerUrl+'" style="max-width:100%;border-radius:12px;display:block" onerror="this.style.display=\'none\'"></div>';
   }
+  // 賽事資訊卡（單賽事時用 card，多賽事時在 signupForm 內補一個資訊區塊）
+  const regInfo=buildRegInfoHtml(curSignupEvent, curSignupEvent._entryCount||0);
+  const infoCardHtml='<div class="card" style="text-align:center;margin-bottom:12px"><strong>'+curSignupEvent.name+'</strong>'
+    +(curSignupEvent.date?'<div style="font-size:.78rem;color:var(--muted);margin-top:4px">'+curSignupEvent.date+'</div>':'')
+    +(regInfo?'<div style="margin-top:8px;text-align:left">'+regInfo+'</div>':'')
+    +'</div>';
   if(!keepWrapper){
-    const regInfo=buildRegInfoHtml(curSignupEvent, curSignupEvent._entryCount||0);
-    formHtml+='<div class="card" style="text-align:center;margin-bottom:12px"><strong>'+curSignupEvent.name+'</strong>'
-      +(curSignupEvent.date?'<div style="font-size:.78rem;color:var(--muted);margin-top:4px">'+curSignupEvent.date+'</div>':'')
-      +(regInfo?'<div style="margin-top:8px;text-align:left">'+regInfo+'</div>':'')
-      +'</div>';
+    formHtml+=infoCardHtml;
+  } else {
+    // 多賽事：在表單最上方插入資訊卡
+    formHtml+=infoCardHtml;
   }
   formHtml+='<div class="card">';
   formHtml+='<div class="input-group"><label>組別 *</label><select id="suGroup" class="input">';
@@ -321,7 +347,7 @@ async function selectSignupEvent(eventId, keepWrapper){
   formHtml+='<div class="input-group"><label>性別 *</label><select id="suGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>';
   formHtml+='<div class="input-group"><label>生日（yyyy/mm/dd）*</label>';
   formHtml+='<div class="input-row"><input id="suBirthday" type="text" class="input" placeholder="yyyy/mm/dd" onblur="setFieldError(\'suBirthday\',!validateBirthday(this.value.trim()))">';
-  formHtml+='<div style="position:relative"><button type="button" class="btn btn-ghost btn-sm">📅</button>';
+  formHtml+='<label class="btn btn-ghost btn-sm" style="position:relative;cursor:pointer">📅';
   formHtml+='<input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'suBirthday\').value=y+\'/\'+m+\'/\'+d;setFieldError(\'suBirthday\',false);this.value=\'\'}"></div></div></div>';
   formHtml+='<div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="if(this.value.trim())setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
   formHtml+='<div class="input-group"><label>E-Mail</label><input id="suEmail" type="email" class="input" placeholder="example@email.com" onblur="setFieldError(\'suEmail\',!validateEmail(this.value.trim()))"></div>';
@@ -650,10 +676,10 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   html+='<div class="input-group"><label>生日（yyyy/mm/dd）</label>'
     +'<div class="input-row">'
     +'<input id="'+cardId+'_eBirthday" type="text" class="input" value="'+(r.birthday||'')+'" oninput="applyHalf(this)">'
-    +'<div style="position:relative"><button type="button" class="btn btn-ghost btn-sm">📅</button>'
+    +'<label class="btn btn-ghost btn-sm" style="position:relative;cursor:pointer">📅'
     +'<input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" '
     +'onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\''+cardId+'_eBirthday\').value=y+\'/\'+m+\'/\'+d;this.value=\'\'}">'
-    +'</div></div></div>';
+    +'</label></div></div>';
   html+='<div class="input-group"><label>手機號碼</label><input id="'+cardId+'_ePhone" type="tel" class="input" value="'+(r.phone||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>E-Mail</label><input id="'+cardId+'_eEmail" type="email" class="input" value="'+(r.email||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>身分證字號</label><input id="'+cardId+'_eIdNumber" type="text" class="input" value="'+(r.idNumber||'')+'" oninput="applyHalf(this)"></div>';

@@ -7,7 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, where, onSnapshot, serverTimestamp, writeBatch, Timestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, where, onSnapshot, serverTimestamp, writeBatch, Timestamp, deleteField } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
@@ -69,6 +69,21 @@ function applyHalf(el) {
 }
 window.toHalf = toHalf;
 window.applyHalf = applyHalf;
+
+// ── 全形→半形：統一監聽所有 input（確保動態產生的欄位也能轉換）──
+document.addEventListener('input', function(e) {
+  const el = e.target;
+  const tag = el.tagName;
+  const type = (el.type||'').toLowerCase();
+  if (tag !== 'INPUT' && tag !== 'TEXTAREA') return;
+  if (['checkbox','radio','file','date','datetime-local','time','color','range'].includes(type)) return;
+  const v = toHalf(el.value);
+  if (v !== el.value) {
+    const pos = el.selectionStart;
+    el.value = v;
+    try { el.setSelectionRange(pos, pos); } catch(e) {}
+  }
+}, true);
 
 // ── 格式驗證 ──
 function validateBirthday(v) {
@@ -357,9 +372,9 @@ document.addEventListener('DOMContentLoaded',()=>{
     else preview.style.display='none';
   });
 });
-// 輔助：datetime-local 字串 → Firestore Timestamp，空字串回傳 null
+// 輔助：datetime-local 字串 → Firestore Timestamp，空字串回傳 deleteField()
 function dtLocalToTs(v) {
-  if (!v) return null;
+  if (!v) return deleteField();
   return Timestamp.fromDate(new Date(v));
 }
 // 輔助：Firestore Timestamp → datetime-local 字串
@@ -602,7 +617,7 @@ window.loadEntries=async function(){
   const baseSortKeys=['bibNumber','group','uniqueId','name','runnerData.gender','runnerData.birthday','','','runnerData.idNumber','runnerData.note','checkin.checkedInAt'];
   thead.innerHTML='<th style="width:36px"><input type="checkbox" id="entriesSelectAll" onchange="toggleSelectAll(\'entriesTableBody\',\'entriesSelectAll\',\'entriesBatchDeleteBtn\')"></th>'
     +baseHeads.map((h,i)=>baseSortKeys[i]
-      ?'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'entriesTableBody\',\''+baseSortKeys[i]+'\',()=>renderEntries(getSorted(\'entriesTableBody\',allEntries)))">'+h+'<span class="sort-icon"> ⇅</span></th>'
+      ?'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'entriesTableBody\',\''+baseSortKeys[i]+'\')">'+h+'<span class="sort-icon"> ⇅</span></th>'
       :'<th>'+h+'</th>'
     ).join('')
     +curEntryCustomFields.map(f=>'<th>'+f.label+'</th>').join('')
@@ -1750,7 +1765,10 @@ window.loadStaff=async function(){
   const baseHeads=['姓名','性別','生日','手機','Email','身分證','備註'];
   const baseSortKeys=['name','gender','birthday','','','idNumber','note'];
   thead.innerHTML='<th style="width:36px"><input type="checkbox" id="staffSelectAll" onchange="toggleSelectAll(\'staffTableBody\',\'staffSelectAll\',\'staffBatchDeleteBtn\')"></th>'
-    +baseHeads.map((h,i)=>'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'staffTableBody\',\''+baseSortKeys[i]+'\',()=>renderStaff(getSorted(\'staffTableBody\',allStaff)))">'+h+'<span class="sort-icon"> ⇅</span></th>').join('')
+    +baseHeads.map((h,i)=>baseSortKeys[i]
+      ?'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'staffTableBody\',\''+baseSortKeys[i]+'\')">'+h+'<span class="sort-icon"> ⇅</span></th>'
+      :'<th>'+h+'</th>'
+    ).join('')
     +curStaffCustomFields.map(f=>'<th>'+f.label+'</th>').join('')
     +'<th>操作</th>';
   const snap=await getDocs(collection(db,'events',eventId,'staff'));
@@ -2010,17 +2028,23 @@ function sortData(data, key, dir) {
   });
 }
 
-// 點擊表頭時呼叫
-window.sortTable = function(tableId, key, renderFn) {
+// 點擊表頭時呼叫（tableId, key 由 inline onclick 傳入，資料由內部取得）
+window.sortTable = function(tableId, key) {
   const s = sortState[tableId] || { key: null, dir: 1 };
   const dir = s.key === key ? -s.dir : 1;
   sortState[tableId] = { key, dir };
   updateSortHeaders(tableId, key, dir);
-  renderFn();
+  // 根據 tableId 取對應資料並重新渲染
+  if (tableId === 'runnersTableBody') renderRunners(getSorted(tableId, allRunners));
+  else if (tableId === 'entriesTableBody') renderEntries(getSorted(tableId, allEntries));
+  else if (tableId === 'staffTableBody') renderStaff(getSorted(tableId, allStaff));
+  else if (tableId === 'recordsTableBody') reRenderRecords();
 }
 
 function updateSortHeaders(tableId, key, dir) {
-  const table = document.getElementById(tableId)?.closest('table');
+  // 從 tbody 往上找 table
+  const tbody = document.getElementById(tableId);
+  const table = tbody ? tbody.closest('table') : null;
   if (!table) return;
   table.querySelectorAll('th[data-sort]').forEach(th => {
     th.querySelector('.sort-icon').textContent =
@@ -2028,12 +2052,16 @@ function updateSortHeaders(tableId, key, dir) {
   });
 }
 
-// 取得目前排序後的資料
 function getSorted(tableId, data) {
   const s = sortState[tableId];
   if (!s || !s.key) return data;
   return sortData(data, s.key, s.dir);
 }
+window.getSorted = getSorted;
+window.renderRunners = function(list) { renderRunners(list); };
+window.renderEntries = function(list) { renderEntries(list); };
+window.renderStaff   = function(list) { renderStaff(list); };
+window.reRenderRecords = reRenderRecords;
 
 // ════════════════════════════
 // 批次刪除
@@ -2327,13 +2355,13 @@ th[data-sort]:hover{color:var(--accent);}
       </div>
       <div class="table-wrap"><table id="runnersTable"><thead><tr>
         <th style="width:36px"><input type="checkbox" id="runnersSelectAll" onchange="toggleSelectAll('runnersTableBody','runnersSelectAll','runnersBatchDeleteBtn')"></th>
-        <th data-sort="uniqueId" onclick="sortTable('runnersTableBody','uniqueId',()=>renderRunners(getSorted('runnersTableBody',allRunners)))">ID<span class="sort-icon"> ⇅</span></th>
-        <th data-sort="name" onclick="sortTable('runnersTableBody','name',()=>renderRunners(getSorted('runnersTableBody',allRunners)))">姓名<span class="sort-icon"> ⇅</span></th>
-        <th data-sort="gender" onclick="sortTable('runnersTableBody','gender',()=>renderRunners(getSorted('runnersTableBody',allRunners)))">性別<span class="sort-icon"> ⇅</span></th>
-        <th data-sort="birthday" onclick="sortTable('runnersTableBody','birthday',()=>renderRunners(getSorted('runnersTableBody',allRunners)))">生日<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="uniqueId" onclick=\"sortTable('runnersTableBody','uniqueId')\">ID<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="name" onclick=\"sortTable('runnersTableBody','name')\">姓名<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="gender" onclick=\"sortTable('runnersTableBody','gender')\">性別<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="birthday" onclick=\"sortTable('runnersTableBody','birthday')\">生日<span class="sort-icon"> ⇅</span></th>
         <th>手機</th><th>Email</th>
-        <th data-sort="idNumber" onclick="sortTable('runnersTableBody','idNumber',()=>renderRunners(getSorted('runnersTableBody',allRunners)))">身分證<span class="sort-icon"> ⇅</span></th>
-        <th data-sort="note" onclick="sortTable('runnersTableBody','note',()=>renderRunners(getSorted('runnersTableBody',allRunners)))">備註<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="idNumber" onclick=\"sortTable('runnersTableBody','idNumber')\">身分證<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="note" onclick=\"sortTable('runnersTableBody','note')\">備註<span class="sort-icon"> ⇅</span></th>
         <th>操作</th>
       </tr></thead><tbody id="runnersTableBody"><tr><td colspan="10" class="loading-cell">載入中...</td></tr></tbody></table></div>
     </div>
@@ -2431,12 +2459,12 @@ th[data-sort]:hover{color:var(--accent);}
       <div class="event-select-row"><label>選擇賽事：</label><select id="recordEventSelect" class="input" onchange="onRecordEventChange()"><option value="">請選擇賽事...</option></select></div>
       <div class="table-wrap"><table id="recordsTable"><thead><tr>
         <th style="width:36px"><input type="checkbox" id="recordsSelectAll" onchange="toggleSelectAll('recordsTableBody','recordsSelectAll','recordsBatchDeleteBtn')"></th>
-        <th data-sort="bibNumber" onclick="sortTable('recordsTableBody','bibNumber',reRenderRecords)">編號<span class="sort-icon"> ⇅</span></th>
-        <th data-sort="group" onclick="sortTable('recordsTableBody','group',reRenderRecords)">組別<span class="sort-icon"> ⇅</span></th>
-        <th data-sort="uniqueId" onclick="sortTable('recordsTableBody','uniqueId',reRenderRecords)">ID<span class="sort-icon"> ⇅</span></th>
-        <th data-sort="name" onclick="sortTable('recordsTableBody','name',reRenderRecords)">姓名<span class="sort-icon"> ⇅</span></th>
-        <th data-sort="station" onclick="sortTable('recordsTableBody','station',reRenderRecords)">站點<span class="sort-icon"> ⇅</span></th>
-        <th data-sort="scanTime" onclick="sortTable('recordsTableBody','scanTime',reRenderRecords)">掃描時間<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="bibNumber" onclick=\"sortTable('recordsTableBody','bibNumber')\">編號<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="group" onclick=\"sortTable('recordsTableBody','group')\">組別<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="uniqueId" onclick=\"sortTable('recordsTableBody','uniqueId')\">ID<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="name" onclick=\"sortTable('recordsTableBody','name')\">姓名<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="station" onclick=\"sortTable('recordsTableBody','station')\">站點<span class="sort-icon"> ⇅</span></th>
+        <th data-sort="scanTime" onclick=\"sortTable('recordsTableBody','scanTime')\">掃描時間<span class="sort-icon"> ⇅</span></th>
         <th>掃描器</th><th>操作</th>
       </tr></thead><tbody id="recordsTableBody"><tr><td colspan="9" class="loading-cell">載入中...</td></tr></tbody></table></div>
     </div>
@@ -2506,10 +2534,7 @@ th[data-sort]:hover{color:var(--accent);}
     <div class="input-group"><label>生日（yyyy/mm/dd）</label>
       <div class="input-row">
         <input id="rBirthday" type="text" class="input" placeholder="yyyy/mm/dd" oninput="applyHalf(this);setFieldError('rBirthday',!validateBirthday(this.value))">
-        <div style="position:relative">
-          <button type="button" class="btn btn-ghost btn-sm">📅</button>
-          <input type="date" id="rDatePicker" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('rBirthday').value=y+'/'+m+'/'+d;setFieldError('rBirthday',false);this.value=''}">
-        </div>
+        <label class="btn btn-ghost btn-sm" style="position:relative;cursor:pointer">📅<input type="date" id="rDatePicker" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('rBirthday').value=y+'/'+m+'/'+d;setFieldError('rBirthday',false);this.value=''}"></label>
       </div>
     </div>
     <div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="rPhone" type="tel" class="input" oninput="applyHalf(this);setFieldError('rPhone',!validatePhone(this.value))"></div>
@@ -2629,10 +2654,7 @@ th[data-sort]:hover{color:var(--accent);}
     <div class="input-group"><label>生日（yyyy/mm/dd）</label>
       <div class="input-row">
         <input id="eBirthday" type="text" class="input" placeholder="yyyy/mm/dd" onblur="validateEntryField('birthday')" oninput="applyHalf(this)">
-        <div style="position:relative">
-          <button type="button" class="btn btn-ghost btn-sm">📅</button>
-          <input type="date" id="datePicker" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('eBirthday').value=y+'/'+m+'/'+d;setFieldError('eBirthday',false);this.value=''}">
-        </div>
+        <label class="btn btn-ghost btn-sm" style="position:relative;cursor:pointer">📅<input type="date" id="datePicker" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('eBirthday').value=y+'/'+m+'/'+d;setFieldError('eBirthday',false);this.value=''}"></label>
       </div>
     </div>
     <div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="ePhone" type="tel" class="input" placeholder="0912345678" onblur="validateEntryField('phone')" oninput="applyHalf(this)"></div>
@@ -2674,8 +2696,7 @@ th[data-sort]:hover{color:var(--accent);}
     <div class="input-group"><label>生日（yyyy/mm/dd）*</label>
       <div class="input-row">
         <input id="sBirthday" type="text" class="input" placeholder="yyyy/mm/dd" oninput="applyHalf(this);setFieldError('sBirthday',!validateBirthday(this.value))">
-        <div style="position:relative"><button type="button" class="btn btn-ghost btn-sm">📅</button>
-        <input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('sBirthday').value=y+'/'+m+'/'+d;setFieldError('sBirthday',false);this.value=''}"></div>
+        <label class="btn btn-ghost btn-sm" style="position:relative;cursor:pointer">📅<input type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('sBirthday').value=y+'/'+m+'/'+d;setFieldError('sBirthday',false);this.value=''}"></label>
       </div>
     </div>
     <div class="input-group"><label>身分證字號 *</label><input id="sIdNumber" type="text" class="input" placeholder="A123456789" oninput="applyHalf(this);setFieldError('sIdNumber',this.value&&!validateId(this.value))"></div>
