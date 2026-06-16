@@ -1558,17 +1558,23 @@ async function loadStatsForEvent(eventId){
   const groups=gSnap.docs.map(d=>d.data());
   const checkinIds=new Set(checkinSnap.docs.map(d=>d.id));
 
-  // 計算整體進度
-  function calcProgress(ents, recs, stations){
-    if(!ents.length||!stations.length)return 0;
-    let total=0;
+  // 建立組別名稱 → 站點陣列的對照表
+  const groupStationsMap={};
+  groups.forEach(g=>{groupStationsMap[g.name]=g.stations||[];});
+
+  // 計算進度：每位選手只用「自己所屬組別」的站點數當分母，不可用全賽事聯集站點數
+  // 進度 = 目前掃描次數總和 / 全部應掃描次數總和（所有人的所有掃描動作權重相同）
+  function calcProgress(ents, recs){
+    if(!ents.length)return 0;
+    let scannedCount=0, expectedCount=0;
     ents.forEach(e=>{
+      const stations=groupStationsMap[e.group]||[];
+      if(!stations.length)return; // 該組別沒有設站點，不列入計算
       const myRecs=recs.filter(r=>r.uniqueId===e.uniqueId);
-      let reached=0;
-      stations.forEach(s=>{if(myRecs.find(r=>r.station===s))reached++;});
-      total+=reached/stations.length;
+      expectedCount+=stations.length;
+      stations.forEach(s=>{if(myRecs.find(r=>r.station===s))scannedCount++;});
     });
-    return Math.round(total/ents.length*100);
+    return expectedCount?Math.round(scannedCount/expectedCount*100):0;
   }
 
   // 上方資訊框
@@ -1577,7 +1583,7 @@ async function loadStatsForEvent(eventId){
     const lastStation=g.stations[g.stations.length-1];
     return acc+new Set(records.filter(r=>r.station===lastStation&&entries.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size;
   },0);
-  const overallProgress=calcProgress(entries, records, allStations);
+  const overallProgress=calcProgress(entries, records);
   const maleCount=entries.filter(e=>(rMap[e.uniqueId]?.gender)==='男').length;
   const femaleCount=entries.filter(e=>(rMap[e.uniqueId]?.gender)==='女').length;
   const totalCheckin=entries.filter(e=>checkinIds.has(e.uniqueId)).length;
@@ -1596,7 +1602,7 @@ async function loadStatsForEvent(eventId){
     if(!ents.length)return '';
     const lastStation=gStations[gStations.length-1];
     const finishers=lastStation?new Set(recs.filter(r=>r.station===lastStation&&ents.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size:0;
-    const progress=calcProgress(ents,recs,gStations);
+    const progress=calcProgress(ents,recs);
     const gMale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='男').length;
     const gFemale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='女').length;
     const gCheckin=ents.filter(e=>checkinIds.has(e.uniqueId)).length;
