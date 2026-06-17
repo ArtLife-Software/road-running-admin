@@ -56,6 +56,32 @@ function evFileName(evName, evDate) {
   return evName+(evDate?'('+evDate+')':'');
 }
 
+// ── HTML escape（防止使用者輸入被當作HTML/JS執行）──
+// 用於一般文字內容、value="..." 等屬性
+function esc(v) {
+  return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+// 用於 onclick="fn('...','...')" 內、被包在JS單引號字串裡的參數
+// 先處理JS字串層（反斜線、單引號），再處理HTML屬性層（&、<、>、雙引號）
+function escJs(v) {
+  return String(v ?? '')
+    .replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── 只查指定 uniqueId 的選手主檔，取代整個 runners 集合全表掃描 ──
+// Firestore 'in' 查詢上限30個，超過自動分批、平行查詢
+async function fetchRunnersByUniqueIds(uniqueIds) {
+  const ids = [...new Set((uniqueIds||[]).filter(Boolean))];
+  const map = {};
+  if (!ids.length) return map;
+  const chunks = [];
+  for (let i=0; i<ids.length; i+=30) chunks.push(ids.slice(i, i+30));
+  const snaps = await Promise.all(chunks.map(c=>getDocs(query(collection(db,'runners'), where('uniqueId','in',c)))));
+  snaps.forEach(snap=>snap.docs.forEach(d=>{ const r=d.data(); if(r.uniqueId) map[r.uniqueId]=r; }));
+  return map;
+}
+
 // ── 全形→半形自動轉換 ──
 function toHalf(str) {
   if (!str) return str;
@@ -183,6 +209,9 @@ onAuthStateChanged(auth, user => {
 
 // ── 導覽 ──
 window.showSection = function(id) {
+  // 離開「打卡記錄」「統計分析」分頁時取消即時監聽，避免切到別的分頁後監聽器仍在背景持續耗用讀取
+  if (id!=='records' && recordsUnsub) { recordsUnsub(); recordsUnsub=null; }
+  if (id!=='stats' && statsUnsub) { statsUnsub(); statsUnsub=null; }
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nav-item,.bottom-nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('sec-'+id).classList.add('active');
@@ -213,14 +242,14 @@ function renderRunners(list) {
   if (!list.length) { tbody.innerHTML='<tr><td colspan="10" class="loading-cell">無資料</td></tr>'; return; }
   tbody.innerHTML = list.map(r =>
     '<tr><td><input type="checkbox" class="row-cb" data-id="'+r.id+'" onchange="onRowCbChange(\'runnersBatchDeleteBtn\',\'runnersTableBody\',\'runnersSelectAll\')"></td>'
-    +'<td><span class="mono">'+r.uniqueId+'</span></td>'
-    +'<td>'+r.name+'</td><td>'+(r.gender||'-')+'</td><td>'+(r.birthday||'-')+'</td>'
-    +'<td>'+(r.phone||'-')+'</td><td>'+(r.email||'-')+'</td>'
-    +'<td><span class="mono" style="font-size:.75rem">'+(r.idNumber||'-')+'</span></td>'
-    +'<td>'+(r.note||'-')+'</td>'
+    +'<td><span class="mono">'+esc(r.uniqueId)+'</span></td>'
+    +'<td>'+esc(r.name)+'</td><td>'+esc(r.gender||'-')+'</td><td>'+esc(r.birthday||'-')+'</td>'
+    +'<td>'+esc(r.phone||'-')+'</td><td>'+esc(r.email||'-')+'</td>'
+    +'<td><span class="mono" style="font-size:.75rem">'+esc(r.idNumber||'-')+'</span></td>'
+    +'<td>'+esc(r.note||'-')+'</td>'
     +'<td style="white-space:nowrap">'
     +'<button class="btn btn-sm btn-ghost" onclick="editRunner(\''+r.id+'\')">編輯</button> '
-    +'<button class="btn btn-sm btn-danger" onclick="deleteRunner(\''+r.id+'\',\''+r.name.replace(/'/g,'')+'\')">刪除</button>'
+    +'<button class="btn btn-sm btn-danger" onclick="deleteRunner(\''+r.id+'\',\''+escJs(r.name)+'\')">刪除</button>'
     +'</td></tr>'
   ).join('');
 }
@@ -284,14 +313,15 @@ window.saveRunner = async function() {
 window.deleteRunner = async function(id, name) {
   const rDoc = await getDoc(doc(db,'runners',id));
   const uniqueId = rDoc.exists() ? rDoc.data().uniqueId : null;
-  // 檢查所有賽事是否有這位選手的報名記錄
+  // 檢查所有賽事是否有這位選手的報名記錄（平行查詢，避免賽事一多就要序列等待很久）
   let relatedEvents = [];
   if (uniqueId) {
     const eventsSnap = await getDocs(collection(db,'events'));
-    for (const evDoc of eventsSnap.docs) {
-      const entrySnap = await getDocs(query(collection(db,'events',evDoc.id,'runners'),where('uniqueId','==',uniqueId)));
-      if (!entrySnap.empty) relatedEvents.push(evDoc.data().name||evDoc.id);
-    }
+    const results = await Promise.all(eventsSnap.docs.map(evDoc=>
+      getDocs(query(collection(db,'events',evDoc.id,'runners'),where('uniqueId','==',uniqueId)))
+        .then(entrySnap=>entrySnap.empty?null:(evDoc.data().name||evDoc.id))
+    ));
+    relatedEvents = results.filter(Boolean);
   }
   if (relatedEvents.length) {
     showToast('無法刪除：「'+name+'」尚有報名記錄於「'+relatedEvents.join('、')+'」，請先刪除對應報名記錄','error');
@@ -328,11 +358,11 @@ async function loadEvents() {
     // 工作人員報名開關
     btns+=(!ev.staffRegistrationOpen?'<button class="btn btn-sm btn-green" onclick="toggleStaffRegistration(\''+d.id+'\',true)">開放工作人員報名</button> ':'<button class="btn btn-sm btn-danger" onclick="toggleStaffRegistration(\''+d.id+'\',false)">關閉工作人員報名</button> ');
     btns+='<button class="btn btn-sm btn-ghost" onclick="editEvent(\''+d.id+'\')">編輯</button> ';
-    btns+='<button class="btn btn-sm btn-ghost" onclick="manageGroups(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\')">組別</button> ';
-    btns+='<button class="btn btn-sm btn-ghost" onclick="manageCustomFields(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\',\'runner\')">選手表單</button> ';
-    btns+='<button class="btn btn-sm btn-ghost" onclick="manageCustomFields(\''+d.id+'\',\''+ev.name.replace(/'/g,'')+'\',\'staff\')">工作人員表單</button>';
+    btns+='<button class="btn btn-sm btn-ghost" onclick="manageGroups(\''+d.id+'\',\''+escJs(ev.name)+'\')">組別</button> ';
+    btns+='<button class="btn btn-sm btn-ghost" onclick="manageCustomFields(\''+d.id+'\',\''+escJs(ev.name)+'\',\'runner\')">選手表單</button> ';
+    btns+='<button class="btn btn-sm btn-ghost" onclick="manageCustomFields(\''+d.id+'\',\''+escJs(ev.name)+'\',\'staff\')">工作人員表單</button>';
     return '<tr'+(isActive?' class="row-active"':'')+'>'
-      +'<td><strong>'+ev.name+'</strong></td><td>'+(ev.date||'-')+'</td><td>'+gNames+'</td>'
+      +'<td><strong>'+esc(ev.name)+'</strong></td><td>'+esc(ev.date||'-')+'</td><td>'+esc(gNames)+'</td>'
       +'<td>'+statusHtml+'</td>'
       +'<td style="white-space:nowrap">'+btns+'</td></tr>';
   }));
@@ -479,9 +509,9 @@ async function loadGroups() {
   if (snap.empty) { tbody.innerHTML='<tr><td colspan="3" class="loading-cell">尚無組別</td></tr>'; return; }
   tbody.innerHTML=snap.docs.map(d=>{
     const g=d.data();
-    return '<tr><td><strong>'+g.name+'</strong></td>'
-      +'<td style="font-size:.78rem;color:var(--muted)">'+(g.stations||[]).join(' → ')+'</td>'
-      +'<td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="editGroup(\''+d.id+'\')">編輯</button> <button class="btn btn-sm btn-danger" onclick="deleteGroup(\''+d.id+'\',\''+g.name+'\')">刪除</button></td></tr>';
+    return '<tr><td><strong>'+esc(g.name)+'</strong></td>'
+      +'<td style="font-size:.78rem;color:var(--muted)">'+esc((g.stations||[]).join(' → '))+'</td>'
+      +'<td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="editGroup(\''+d.id+'\')">編輯</button> <button class="btn btn-sm btn-danger" onclick="deleteGroup(\''+d.id+'\',\''+escJs(g.name)+'\')">刪除</button></td></tr>';
   }).join('');
 }
 window.showAddGroup=function(){
@@ -501,7 +531,7 @@ window.editGroup=async function(id){
 }
 window.addGStation=function(val=''){
   const div=document.createElement('div'); div.className='station-row';
-  div.innerHTML='<input type="text" class="input g-station-input" value="'+val+'" placeholder="站點名稱"><button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">✕</button>';
+  div.innerHTML='<input type="text" class="input g-station-input" value="'+esc(val)+'" placeholder="站點名稱"><button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">✕</button>';
   document.getElementById('gStationList').appendChild(div);
 }
 window.saveGroup=async function(){
@@ -549,9 +579,9 @@ async function loadCustomFields(){
   list.innerHTML=fields.map((f,i)=>{
     const typeLabel={text:'文字',select:'下拉選單',checkbox:'是／否'}[f.type]||f.type;
     let detail=typeLabel+(f.required?'　必填':'　選填');
-    if(f.type==='select')detail+='　選項：'+(f.options||[]).join('、');
+    if(f.type==='select')detail+='　選項：'+esc((f.options||[]).join('、'));
     return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">'
-      +'<div><strong>'+f.label+'</strong><div style="font-size:.75rem;color:var(--muted)">'+detail+'</div></div>'
+      +'<div><strong>'+esc(f.label)+'</strong><div style="font-size:.75rem;color:var(--muted)">'+detail+'</div></div>'
       +'<div style="white-space:nowrap">'
       +(i>0?'<button class="btn btn-sm btn-ghost" onclick="moveCustomField('+i+',-1)">↑</button> ':'')
       +(i<fields.length-1?'<button class="btn btn-sm btn-ghost" onclick="moveCustomField('+i+',1)">↓</button> ':'')
@@ -684,12 +714,14 @@ window.loadEntries=async function(){
       ?'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'entriesTableBody\',\''+baseSortKeys[i]+'\')">'+h+'<span class="sort-icon"> ⇅</span></th>'
       :'<th>'+h+'</th>'
     ).join('')
-    +curEntryCustomFields.map(f=>'<th data-sort="customData.'+f.id+'" onclick="sortTable(\'entriesTableBody\',\'customData.'+f.id+'\')">'+f.label+'<span class="sort-icon"> ⇅</span></th>').join('')
+    +curEntryCustomFields.map(f=>'<th data-sort="customData.'+f.id+'" onclick="sortTable(\'entriesTableBody\',\'customData.'+f.id+'\')">'+esc(f.label)+'<span class="sort-icon"> ⇅</span></th>').join('')
     +'<th>操作</th>';
   const snap=await getDocs(collection(db,'events',eventId,'runners'));
-  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
-  // 載入報到記錄
-  const checkinSnap=await getDocs(collection(db,'events',eventId,'checkins'));
+  const uniqueIds=snap.docs.map(d=>d.data().uniqueId);
+  const [rMap, checkinSnap]=await Promise.all([
+    fetchRunnersByUniqueIds(uniqueIds),
+    getDocs(collection(db,'events',eventId,'checkins'))
+  ]);
   const checkinMap={};
   checkinSnap.docs.forEach(d=>{checkinMap[d.id]=d.data();});
   allEntries=snap.docs.map(d=>({id:d.id,...d.data(),runnerData:rMap[d.data().uniqueId]||{},checkin:checkinMap[d.data().uniqueId]||null}));
@@ -708,7 +740,7 @@ function renderEntries(list){
     curEntryCustomFields.forEach(f=>{
       let v=cd[f.id];
       if(f.type==='checkbox') v=v?'是':'否';
-      customCells+='<td>'+(v!==undefined&&v!==''?v:'-')+'</td>';
+      customCells+='<td>'+(v!==undefined&&v!==''?esc(v):'-')+'</td>';
     });
     const checkinCell=ci
       ?'<td><span class="badge badge-green">✅ 已報到</span><div style="font-size:.7rem;color:var(--muted)">'+(ci.checkedInAt?.toDate?ci.checkedInAt.toDate().toLocaleTimeString('zh-TW',{hour12:false}):'-')+'</div>'
@@ -716,21 +748,21 @@ function renderEntries(list){
       :'<td><button class="btn btn-sm btn-ghost" onclick="manualCheckin(\''+eventId+'\',\''+e.uniqueId+'\')">標記報到</button></td>';
     return '<tr>'
       +'<td><input type="checkbox" class="row-cb" data-id="'+e.id+'" onchange="onRowCbChange(\'entriesBatchDeleteBtn\',\'entriesTableBody\',\'entriesSelectAll\')"></td>'
-      +'<td><strong>'+(e.bibNumber||'-')+'</strong></td>'
-      +'<td><span class="badge">'+(e.group||'-')+'</span></td>'
-      +'<td><span class="mono">'+(e.uniqueId||'')+'</span></td>'
-      +'<td>'+(e.name||r.name||'-')+'</td>'
-      +'<td>'+(r.gender||'-')+'</td>'
-      +'<td>'+(r.birthday||'-')+'</td>'
-      +'<td>'+(r.phone||'-')+'</td>'
-      +'<td style="font-size:.78rem">'+(r.email||'-')+'</td>'
-      +'<td><span class="mono" style="font-size:.75rem">'+(r.idNumber||'-')+'</span></td>'
-      +'<td>'+(r.note||'-')+'</td>'
+      +'<td><strong>'+esc(e.bibNumber||'-')+'</strong></td>'
+      +'<td><span class="badge">'+esc(e.group||'-')+'</span></td>'
+      +'<td><span class="mono">'+esc(e.uniqueId||'')+'</span></td>'
+      +'<td>'+esc(e.name||r.name||'-')+'</td>'
+      +'<td>'+esc(r.gender||'-')+'</td>'
+      +'<td>'+esc(r.birthday||'-')+'</td>'
+      +'<td>'+esc(r.phone||'-')+'</td>'
+      +'<td style="font-size:.78rem">'+esc(r.email||'-')+'</td>'
+      +'<td><span class="mono" style="font-size:.75rem">'+esc(r.idNumber||'-')+'</span></td>'
+      +'<td>'+esc(r.note||'-')+'</td>'
       +checkinCell
       +customCells
       +'<td style="white-space:nowrap">'
       +'<button class="btn btn-sm btn-ghost" onclick="editEntry(\''+e.id+'\')">編輯</button> '
-      +'<button class="btn btn-sm btn-danger" onclick="deleteEntry(\''+e.id+'\',\''+(e.name||'').replace(/'/g,'')+'\')">刪除</button>'
+      +'<button class="btn btn-sm btn-danger" onclick="deleteEntry(\''+e.id+'\',\''+escJs(e.name||'')+'\')">刪除</button>'
       +'</td></tr>';
   }).join('');
 }
@@ -882,12 +914,12 @@ function renderEntryCustomFields(values){
     const id='cfInput_'+f.id;
     const reqMark=f.required?' *':'';
     if(f.type==='select'){
-      const opts=(f.options||[]).map(o=>'<option value="'+o+'"'+(values[f.id]===o?' selected':'')+'>'+o+'</option>').join('');
-      return '<div class="input-group"><label>'+f.label+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select></div>';
+      const opts=(f.options||[]).map(o=>'<option value="'+esc(o)+'"'+(values[f.id]===o?' selected':'')+'>'+esc(o)+'</option>').join('');
+      return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select></div>';
     } else if(f.type==='checkbox'){
-      return '<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+f.label+'</label></div>';
+      return '<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+esc(f.label)+'</label></div>';
     } else {
-      return '<div class="input-group"><label>'+f.label+reqMark+'</label><input id="'+id+'" type="text" class="input" value="'+(values[f.id]!==undefined?values[f.id]:'')+'"></div>';
+      return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input" value="'+esc(values[f.id]!==undefined?values[f.id]:'')+'"></div>';
     }
   }).join('');
 }
@@ -1004,12 +1036,12 @@ window.searchEntryRunner=async function(){
   if(!matched.length){results.style.display='none';return;}
   results.style.display='block';
   results.innerHTML=matched.map(r=>
-    '<div onclick="selectEntryRunner(\''+r.uniqueId+'\',\''+r.name.replace(/'/g,'')+'\',\''+
-    (r.gender||'')+'\',\''+(r.birthday||'')+'\',\''+(r.phone||'')+'\',\''+(r.email||'')+'\',\''+(r.idNumber||'')+'\',\''+(r.note||'').replace(/'/g,'')+'\'" '
+    '<div onclick="selectEntryRunner(\''+r.uniqueId+'\',\''+escJs(r.name)+'\',\''+
+    escJs(r.gender||'')+'\',\''+escJs(r.birthday||'')+'\',\''+escJs(r.phone||'')+'\',\''+escJs(r.email||'')+'\',\''+escJs(r.idNumber||'')+'\',\''+escJs(r.note||'')+'\')" '
     +'style="padding:10px 14px;cursor:pointer;font-size:.85rem;border-bottom:1px solid var(--border)" '
     +'onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'"> '
-    +'<span class="mono" style="font-size:.78rem">'+r.uniqueId+'</span> '+r.name
-    +(r.phone?'<span style="color:var(--muted);font-size:.78rem;margin-left:8px">'+r.phone+'</span>':'')
+    +'<span class="mono" style="font-size:.78rem">'+esc(r.uniqueId)+'</span> '+esc(r.name)
+    +(r.phone?'<span style="color:var(--muted);font-size:.78rem;margin-left:8px">'+esc(r.phone)+'</span>':'')
     +'</div>'
   ).join('');
 }
@@ -1200,14 +1232,14 @@ function renderRecordRows(rows) {
     const r = d.data ? d.data() : d;
     const id = d.id || d._id;
     return '<tr><td><input type="checkbox" class="row-cb" data-id="'+id+'" onchange="onRowCbChange(\'recordsBatchDeleteBtn\',\'recordsTableBody\',\'recordsSelectAll\')"></td>'
-      +'<td><strong>'+(r.bibNumber||'-')+'</strong></td>'
-      +'<td><span class="badge">'+(r.group||'-')+'</span></td>'
-      +'<td><span class="mono">'+(r.uniqueId||'')+'</span></td>'
-      +'<td>'+name+'</td>'
-      +'<td>'+r.station+'</td>'
+      +'<td><strong>'+esc(r.bibNumber||'-')+'</strong></td>'
+      +'<td><span class="badge">'+esc(r.group||'-')+'</span></td>'
+      +'<td><span class="mono">'+esc(r.uniqueId||'')+'</span></td>'
+      +'<td>'+esc(name)+'</td>'
+      +'<td>'+esc(r.station)+'</td>'
       +'<td>'+fmt(r.scanTime)+'</td>'
-      +'<td><span style="font-size:.78rem;color:var(--muted)">'+(r.deviceName||'-')+'</span></td>'
-      +'<td><button class="btn btn-sm btn-danger" onclick="deleteRecord(\''+id+'\',\''+(r.uniqueId||'')+'\',\''+(r.station||'')+'\')">刪除</button></td>'
+      +'<td><span style="font-size:.78rem;color:var(--muted)">'+esc(r.deviceName||'-')+'</span></td>'
+      +'<td><button class="btn btn-sm btn-danger" onclick="deleteRecord(\''+id+'\',\''+escJs(r.uniqueId||'')+'\',\''+escJs(r.station||'')+'\')">刪除</button></td>'
       +'</tr>';
   }).join('');
 }
@@ -1216,21 +1248,24 @@ async function loadRecords(){
   const evDoc=await getDoc(doc(db,'events',curRecordEventId));
   if(evDoc.exists())document.getElementById('recordsEventName').textContent=evDoc.data().name;
   if(recordsUnsub)recordsUnsub();
+
+  // 姓名對照表只在「選擇賽事」時讀取一次，不在每次打卡（onSnapshot觸發）時重新下載整個runners集合，
+  // 否則比賽當天多站連續掃描、加上公開統計頁多人同時觀看，會被讀取成本壓垮。
+  // 範圍只涵蓋此賽事已報名的選手；若某筆打卡記錄的uniqueId不在報名清單中（異常資料），姓名會顯示「-」。
+  const entrySnap=await getDocs(collection(db,'events',curRecordEventId,'runners'));
+  const entryNameMap={};
+  const uniqueIds=[];
+  entrySnap.docs.forEach(d=>{const e=d.data(); uniqueIds.push(e.uniqueId); if(e.name)entryNameMap[e.uniqueId]=e.name;});
+  const rMap=await fetchRunnersByUniqueIds(uniqueIds);
+
   recordsUnsub=onSnapshot(
     query(collection(db,'events',curRecordEventId,'records'),orderBy('scanTime','desc')),
-    async snap=>{
+    snap=>{
       const tbody=document.getElementById('recordsTableBody');
       if(snap.empty){tbody.innerHTML='<tr><td colspan="9" class="loading-cell">尚無打卡記錄</td></tr>';_lastRecordsData=[];return;}
-      const rMap={};
-      (await getDocs(collection(db,'runners'))).docs.forEach(d=>{
-        const r=d.data(); if(r.uniqueId)rMap[r.uniqueId]=r.name||'';
-      });
-      const entrySnap=await getDocs(collection(db,'events',curRecordEventId,'runners'));
-      const entryNameMap={};
-      entrySnap.docs.forEach(d=>{const e=d.data();if(e.name)entryNameMap[e.uniqueId]=e.name;});
       _lastRecordsData=snap.docs.map(d=>{
         const r=d.data();
-        const name=r.name||entryNameMap[r.uniqueId]||rMap[r.uniqueId]||'-';
+        const name=r.name||entryNameMap[r.uniqueId]||rMap[r.uniqueId]?.name||'-';
         return {...r, _id:d.id, name, d};
       });
       renderRecordRows(getSorted('recordsTableBody',_lastRecordsData));
@@ -1263,11 +1298,11 @@ window.printRecords=async function(){
   const snap=await getDocs(query(collection(db,'events',curRecordEventId,'records'),orderBy('scanTime','asc')));
   const rows=snap.docs.map(d=>{
     const r=d.data();
-    return '<tr><td>'+(r.bibNumber||'')+'</td><td>'+(r.group||'')+'</td><td>'+(r.uniqueId||'')+'</td><td>'+(r.name||'')+'</td><td>'+r.station+'</td><td>'+fmt(r.scanTime)+'</td><td>'+(r.deviceName||'-')+'</td></tr>';
+    return '<tr><td>'+esc(r.bibNumber||'')+'</td><td>'+esc(r.group||'')+'</td><td>'+esc(r.uniqueId||'')+'</td><td>'+esc(r.name||'')+'</td><td>'+esc(r.station)+'</td><td>'+fmt(r.scanTime)+'</td><td>'+esc(r.deviceName||'-')+'</td></tr>';
   }).join('');
   const win=window.open('','_blank');
-  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+evName+'</title><style>body{font-family:sans-serif;padding:20px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f0f0f0;padding:6px;border:1px solid #ddd}td{padding:5px 6px;border:1px solid #ddd}@media print{button{display:none}}</style></head><body>'
-    +'<h2>'+evName+' 打卡記錄</h2><p style="font-size:11px;color:#666">'+new Date().toLocaleString('zh-TW')+' ｜ 共'+snap.size+'筆</p>'
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+esc(evName)+'</title><style>body{font-family:sans-serif;padding:20px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f0f0f0;padding:6px;border:1px solid #ddd}td{padding:5px 6px;border:1px solid #ddd}@media print{button{display:none}}</style></head><body>'
+    +'<h2>'+esc(evName)+' 打卡記錄</h2><p style="font-size:11px;color:#666">'+new Date().toLocaleString('zh-TW')+' ｜ 共'+snap.size+'筆</p>'
     +'<button onclick="window.print()" style="margin-bottom:10px;padding:5px 12px;cursor:pointer">🖨️ 列印</button>'
     +'<table><thead><tr><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>站點</th><th>掃描時間</th><th>掃描器</th></tr></thead><tbody>'+rows+'</tbody></table></body></html>');
   win.document.close();
@@ -1356,13 +1391,17 @@ window.doSearch=async function(){
   const evDoc=await getDoc(doc(db,'events',eventId));
   const evName=evDoc.data()?.name||'賽事';
   const evDate=evDoc.data()?.date||'';
-  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
+  const [entrySnap, recSnap, groupSnap]=await Promise.all([
+    getDocs(collection(db,'events',eventId,'runners')),
+    getDocs(query(collection(db,'events',eventId,'records'),orderBy('scanTime','asc'))),
+    getDocs(collection(db,'events',eventId,'groups'))
+  ]);
   const entryMap={};
-  (await getDocs(collection(db,'events',eventId,'runners'))).docs.forEach(d=>{entryMap[d.data().uniqueId]=d.data();});
-  const recSnap=await getDocs(query(collection(db,'events',eventId,'records'),orderBy('scanTime','asc')));
+  entrySnap.docs.forEach(d=>{entryMap[d.data().uniqueId]=d.data();});
+  const rMap=await fetchRunnersByUniqueIds(Object.keys(entryMap));
   const allRecs=recSnap.docs.map(d=>({id:d.id,...d.data()}));
   const groupStations={};
-  (await getDocs(collection(db,'events',eventId,'groups'))).docs.forEach(d=>{groupStations[d.data().name]=d.data().stations||[];});
+  groupSnap.docs.forEach(d=>{groupStations[d.data().name]=d.data().stations||[];});
 
   // 篩選選手
   let targetEntries=Object.entries(entryMap);
@@ -1434,12 +1473,12 @@ window.doSearch=async function(){
     let thead='<tr><th>編號</th><th>ID</th><th>姓名</th>';
     gStations.forEach((s,i)=>{
       if(i===0){
-        thead+='<th>'+s+'<br><small style="font-weight:400;color:var(--muted)">到達</small></th>';
+        thead+='<th>'+esc(s)+'<br><small style="font-weight:400;color:var(--muted)">到達</small></th>';
       } else {
-        thead+='<th>'+s+'<br><small style="font-weight:400;color:var(--muted)">到達</small></th>'
-          +'<th>'+s+'<br><small style="font-weight:400;color:var(--muted)">區段</small></th>'
-          +'<th>'+s+'<br><small style="font-weight:400;color:var(--muted)">累積</small></th>'
-          +'<th>'+s+'<br><small style="font-weight:400;color:var(--muted)">名次</small></th>';
+        thead+='<th>'+esc(s)+'<br><small style="font-weight:400;color:var(--muted)">到達</small></th>'
+          +'<th>'+esc(s)+'<br><small style="font-weight:400;color:var(--muted)">區段</small></th>'
+          +'<th>'+esc(s)+'<br><small style="font-weight:400;color:var(--muted)">累積</small></th>'
+          +'<th>'+esc(s)+'<br><small style="font-weight:400;color:var(--muted)">名次</small></th>';
       }
     });
     thead+='<th>終點排名</th></tr>';
@@ -1450,9 +1489,9 @@ window.doSearch=async function(){
       const r=rMap[uid]||{};
       const myRecs=allRecs.filter(x=>x.uniqueId===uid);
       let firstRec=null;
-      let row='<tr><td><strong>'+(e.bibNumber||'-')+'</strong></td>'
-        +'<td><span class="mono">'+uid+'</span></td>'
-        +'<td>'+(e.name||r.name||'-')+'</td>';
+      let row='<tr><td><strong>'+esc(e.bibNumber||'-')+'</strong></td>'
+        +'<td><span class="mono">'+esc(uid)+'</span></td>'
+        +'<td>'+esc(e.name||r.name||'-')+'</td>';
       gStations.forEach((s,i)=>{
         const rec=myRecs.find(x=>x.station===s);
         if(!rec){
@@ -1477,7 +1516,7 @@ window.doSearch=async function(){
     }
 
     resultHtml+='<div style="margin-bottom:28px">'
-      +'<div style="font-size:1rem;font-weight:700;margin-bottom:8px;color:var(--accent)">'+gName+'</div>'
+      +'<div style="font-size:1rem;font-weight:700;margin-bottom:8px;color:var(--accent)">'+esc(gName)+'</div>'
       +'<div class="table-wrap"><table><thead>'+thead+'</thead><tbody>'+tbody+'</tbody></table></div>'
       +'</div>';
   }
@@ -1567,9 +1606,12 @@ function startStatsLive(eventId){
   if(statsUnsub){statsUnsub();statsUnsub=null;}
   const content=document.getElementById('statsContent');
   content.innerHTML='<div class="loading-cell">載入中...</div>';
-  // 監聽打卡記錄，有更新就重新計算
-  statsUnsub=onSnapshot(collection(db,'events',eventId,'records'),async ()=>{
-    await loadStatsForEvent(eventId);
+  // 報名/組別/選手名單只在切換賽事時讀一次並快取；之後每次打卡只重新抓 records + checkins
+  loadStatsRoster(eventId).then(roster=>{
+    statsUnsub=onSnapshot(collection(db,'events',eventId,'records'), async recSnap=>{
+      const checkinSnap=await getDocs(collection(db,'events',eventId,'checkins'));
+      renderStatsContent(roster, recSnap.docs.map(d=>d.data()), new Set(checkinSnap.docs.map(d=>d.id)));
+    });
   });
 }
 window.loadStats=async function(){
@@ -1578,17 +1620,21 @@ window.loadStats=async function(){
   if(isStatsMode){startStatsLive(eventId);}
   else{await loadStatsForEvent(eventId);}
 }
-async function loadStatsForEvent(eventId){
-  const content=document.getElementById('statsContent');
-  const recSnap=await getDocs(collection(db,'events',eventId,'records'));
-  const entrySnap=await getDocs(collection(db,'events',eventId,'runners'));
-  const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
-  const checkinSnap=await getDocs(collection(db,'events',eventId,'checkins'));
-  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
-  const records=recSnap.docs.map(d=>d.data());
+// 載入賽事的報名/組別/選手名單（即時模式下只在切換賽事時呼叫一次，不隨每次打卡重新整個下載）
+async function loadStatsRoster(eventId){
+  const [entrySnap, gSnap]=await Promise.all([
+    getDocs(collection(db,'events',eventId,'runners')),
+    getDocs(collection(db,'events',eventId,'groups'))
+  ]);
   const entries=entrySnap.docs.map(d=>d.data());
   const groups=gSnap.docs.map(d=>d.data());
-  const checkinIds=new Set(checkinSnap.docs.map(d=>d.id));
+  const rMap=await fetchRunnersByUniqueIds(entries.map(e=>e.uniqueId));
+  return {entries, groups, rMap};
+}
+// 用既有名單(roster) + 最新的打卡記錄/報到記錄畫面統計畫面
+function renderStatsContent(roster, records, checkinIds){
+  const content=document.getElementById('statsContent');
+  const {entries, groups, rMap}=roster;
 
   // 建立組別名稱 → 站點陣列的對照表
   const groupStationsMap={};
@@ -1639,7 +1685,7 @@ async function loadStatsForEvent(eventId){
     const gFemale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='女').length;
     const gCheckin=ents.filter(e=>checkinIds.has(e.uniqueId)).length;
     let card='<div class="runner-card" style="margin-bottom:16px">'
-      +'<div class="runner-card-header"><strong>'+label+'</strong>'
+      +'<div class="runner-card-header"><strong>'+esc(label)+'</strong>'
       +' <span class="badge">報名'+ents.length+'人</span>'
       +' <span class="badge">男生'+gMale+'人</span>'
       +' <span class="badge">女生'+gFemale+'人</span>'
@@ -1653,7 +1699,7 @@ async function loadStatsForEvent(eventId){
     gStations.forEach((s,i)=>{
       const cnt=new Set(recs.filter(r=>r.station===s&&ents.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size;
       const pct=ents.length>0?Math.round(cnt/ents.length*100):0;
-      card+='<div class="station-stat-row"><div class="station-stat-label"><span class="station-num">'+(i+1)+'</span><span>'+s+'</span></div><div class="station-stat-bar"><div class="station-stat-fill" style="width:'+pct+'%"></div></div><div class="station-stat-count">'+cnt+'人</div></div>';
+      card+='<div class="station-stat-row"><div class="station-stat-label"><span class="station-num">'+(i+1)+'</span><span>'+esc(s)+'</span></div><div class="station-stat-bar"><div class="station-stat-fill" style="width:'+pct+'%"></div></div><div class="station-stat-count">'+cnt+'人</div></div>';
     });
     card+='</div></div>';
     return card;
@@ -1671,6 +1717,15 @@ async function loadStatsForEvent(eventId){
     content.innerHTML+='<div style="text-align:center;font-size:.72rem;color:var(--muted);margin-top:8px">最後更新：'+new Date().toLocaleTimeString('zh-TW',{hour12:false})+'</div>';
   }
 }
+// 單次載入（非即時模式，例如管理員手動點開某場賽事）：每次都重新抓最新報名/組別/選手名單
+async function loadStatsForEvent(eventId){
+  const roster=await loadStatsRoster(eventId);
+  const [recSnap, checkinSnap]=await Promise.all([
+    getDocs(collection(db,'events',eventId,'records')),
+    getDocs(collection(db,'events',eventId,'checkins'))
+  ]);
+  renderStatsContent(roster, recSnap.docs.map(d=>d.data()), new Set(checkinSnap.docs.map(d=>d.id)));
+}
 
 // ════════════════════════════
 // 帳戶管理（管理員限定）
@@ -1682,8 +1737,8 @@ async function loadAccountsSection(){
   if(snap.empty){list.innerHTML='<tr><td colspan="3" class="loading-cell">尚無其他帳戶</td></tr>';return;}
   list.innerHTML=snap.docs.map(d=>{
     const a=d.data();
-    return '<tr><td>'+a.email+'</td><td>'+(a.note||'-')+'</td>'
-      +'<td style="white-space:nowrap"><button class="btn btn-sm btn-danger" onclick="deleteAccount(\''+d.id+'\',\''+a.email+'\')">刪除</button></td></tr>';
+    return '<tr><td>'+esc(a.email)+'</td><td>'+esc(a.note||'-')+'</td>'
+      +'<td style="white-space:nowrap"><button class="btn btn-sm btn-danger" onclick="deleteAccount(\''+d.id+'\',\''+escJs(a.email)+'\')">刪除</button></td></tr>';
   }).join('');
 }
 window.showAddAccount=function(){
@@ -1849,7 +1904,7 @@ window.loadStaff=async function(){
       ?'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'staffTableBody\',\''+baseSortKeys[i]+'\')">'+h+'<span class="sort-icon"> ⇅</span></th>'
       :'<th>'+h+'</th>'
     ).join('')
-    +curStaffCustomFields.map(f=>'<th data-sort="customData.'+f.id+'" onclick="sortTable(\'staffTableBody\',\'customData.'+f.id+'\')">'+f.label+'<span class="sort-icon"> ⇅</span></th>').join('')
+    +curStaffCustomFields.map(f=>'<th data-sort="customData.'+f.id+'" onclick="sortTable(\'staffTableBody\',\'customData.'+f.id+'\')">'+esc(f.label)+'<span class="sort-icon"> ⇅</span></th>').join('')
     +'<th>操作</th>';
   const snap=await getDocs(collection(db,'events',eventId,'staff'));
   allStaff=snap.docs.map(d=>({id:d.id,...d.data()}));
@@ -1865,21 +1920,21 @@ function renderStaff(list){
     let customCells='';
     curStaffCustomFields.forEach(f=>{
       let v=cd[f.id]; if(f.type==='checkbox')v=v?'是':'否';
-      customCells+='<td>'+(v!==undefined&&v!==''?v:'-')+'</td>';
+      customCells+='<td>'+(v!==undefined&&v!==''?esc(v):'-')+'</td>';
     });
     return '<tr>'
       +'<td><input type="checkbox" class="row-cb" data-id="'+e.id+'" onchange="onRowCbChange(\'staffBatchDeleteBtn\',\'staffTableBody\',\'staffSelectAll\')"></td>'
-      +'<td>'+(e.name||'-')+'</td>'
-      +'<td>'+(e.gender||'-')+'</td>'
-      +'<td>'+(e.birthday||'-')+'</td>'
-      +'<td>'+(e.phone||'-')+'</td>'
-      +'<td style="font-size:.78rem">'+(e.email||'-')+'</td>'
-      +'<td><span class="mono" style="font-size:.75rem">'+(e.idNumber||'-')+'</span></td>'
-      +'<td>'+(e.note||'-')+'</td>'
+      +'<td>'+esc(e.name||'-')+'</td>'
+      +'<td>'+esc(e.gender||'-')+'</td>'
+      +'<td>'+esc(e.birthday||'-')+'</td>'
+      +'<td>'+esc(e.phone||'-')+'</td>'
+      +'<td style="font-size:.78rem">'+esc(e.email||'-')+'</td>'
+      +'<td><span class="mono" style="font-size:.75rem">'+esc(e.idNumber||'-')+'</span></td>'
+      +'<td>'+esc(e.note||'-')+'</td>'
       +customCells
       +'<td style="white-space:nowrap">'
       +'<button class="btn btn-sm btn-ghost" onclick="editStaff(\''+e.id+'\')">編輯</button> '
-      +'<button class="btn btn-sm btn-danger" onclick="deleteStaff(\''+e.id+'\',\''+(e.name||'').replace(/'/g,'')+'\')">刪除</button>'
+      +'<button class="btn btn-sm btn-danger" onclick="deleteStaff(\''+e.id+'\',\''+escJs(e.name||'')+'\')">刪除</button>'
       +'</td></tr>';
   }).join('');
 }
@@ -1941,12 +1996,12 @@ function renderStaffCustomFields(values){
     const id='scfInput_'+f.id;
     const reqMark=f.required?' *':'';
     if(f.type==='select'){
-      const opts=(f.options||[]).map(o=>'<option value="'+o+'"'+(values[f.id]===o?' selected':'')+'>'+o+'</option>').join('');
-      return '<div class="input-group"><label>'+f.label+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select></div>';
+      const opts=(f.options||[]).map(o=>'<option value="'+esc(o)+'"'+(values[f.id]===o?' selected':'')+'>'+esc(o)+'</option>').join('');
+      return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select></div>';
     } else if(f.type==='checkbox'){
-      return '<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+f.label+'</label></div>';
+      return '<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+esc(f.label)+'</label></div>';
     } else {
-      return '<div class="input-group"><label>'+f.label+reqMark+'</label><input id="'+id+'" type="text" class="input" value="'+(values[f.id]!==undefined?values[f.id]:'')+'"></div>';
+      return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input" value="'+esc(values[f.id]!==undefined?values[f.id]:'')+'"></div>';
     }
   }).join('');
 }
@@ -1960,12 +2015,12 @@ window.searchStaffRunner=async function(){
   if(!matched.length){results.style.display='none';return;}
   results.style.display='block';
   results.innerHTML=matched.map(e=>
-    '<div onclick="selectStaffRunner(\''+e.name.replace(/'/g,'')+'\',\''+
-    (e.gender||'')+'\',\''+(e.birthday||'')+'\',\''+(e.phone||'')+'\',\''+(e.email||'')+'\',\''+(e.idNumber||'')+'\',\''+(e.note||'').replace(/'/g,'')+'\') " '
+    '<div onclick="selectStaffRunner(\''+escJs(e.name)+'\',\''+
+    escJs(e.gender||'')+'\',\''+escJs(e.birthday||'')+'\',\''+escJs(e.phone||'')+'\',\''+escJs(e.email||'')+'\',\''+escJs(e.idNumber||'')+'\',\''+escJs(e.note||'')+'\')" '
     +'style="padding:10px 14px;cursor:pointer;font-size:.85rem;border-bottom:1px solid var(--border)" '
     +'onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'"> '
-    +e.name
-    +(e.idNumber?'<span style="color:var(--muted);font-size:.78rem;margin-left:8px">'+e.idNumber+'</span>':'')
+    +esc(e.name)
+    +(e.idNumber?'<span style="color:var(--muted);font-size:.78rem;margin-left:8px">'+esc(e.idNumber)+'</span>':'')
     +'</div>'
   ).join('');
 }
@@ -2057,9 +2112,9 @@ function showSimilarPersonDialog(match, runnerData){
       const diff=oldVal!==curVal;
       const rowStyle=diff?'color:var(--accent)':'color:var(--green)';
       return '<tr style="'+rowStyle+'">'
-        +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted);white-space:nowrap;border:none">'+f.label+'</td>'
-        +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+(oldVal||'')+'</td>'
-        +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+(curVal||'')+'</td>'
+        +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted);white-space:nowrap;border:none">'+esc(f.label)+'</td>'
+        +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+esc(oldVal||'')+'</td>'
+        +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+esc(curVal||'')+'</td>'
         +'</tr>';
     }).join('');
     const dialog=document.createElement('div');
@@ -2176,19 +2231,26 @@ window.batchDeleteRunners=async function(){
   const ids=getCheckedIds('runnersTableBody');
   if(!ids.length)return;
   // 檢查這些選手是否有任何賽事的報名記錄
-  const uniqueIds=[];
-  for(const id of ids){
-    const rDoc=await getDoc(doc(db,'runners',id));
-    if(rDoc.exists()&&rDoc.data().uniqueId)uniqueIds.push({id,uniqueId:rDoc.data().uniqueId,name:rDoc.data().name});
-  }
-  const eventsSnap=await getDocs(collection(db,'events'));
-  const blocked=[];
-  for(const {uniqueId,name} of uniqueIds){
-    for(const evDoc of eventsSnap.docs){
-      const entrySnap=await getDocs(query(collection(db,'events',evDoc.id,'runners'),where('uniqueId','==',uniqueId)));
-      if(!entrySnap.empty){blocked.push(name);break;}
+  // 平行抓取選手主檔，再用 'in' 批次查詢，每場賽事一次查完所有選中的uniqueId，取代序列巢狀迴圈
+  const runnerDocs=await Promise.all(ids.map(id=>getDoc(doc(db,'runners',id))));
+  const uniqueIds=[]; const nameByUid={};
+  runnerDocs.forEach(rDoc=>{
+    if(rDoc.exists()&&rDoc.data().uniqueId){
+      const uid=rDoc.data().uniqueId;
+      uniqueIds.push(uid); nameByUid[uid]=rDoc.data().name;
     }
-  }
+  });
+  const eventsSnap=await getDocs(collection(db,'events'));
+  const uidChunks=[];
+  for(let i=0;i<uniqueIds.length;i+=30)uidChunks.push(uniqueIds.slice(i,i+30));
+  const blockedUidSet=new Set();
+  await Promise.all(eventsSnap.docs.flatMap(evDoc=>
+    uidChunks.map(chunk=>
+      getDocs(query(collection(db,'events',evDoc.id,'runners'),where('uniqueId','in',chunk)))
+        .then(snap=>snap.docs.forEach(d=>blockedUidSet.add(d.data().uniqueId)))
+    )
+  ));
+  const blocked=[...blockedUidSet].map(uid=>nameByUid[uid]);
   if(blocked.length){
     showToast('以下選手尚有報名記錄，無法刪除：'+blocked.join('、'),'error');
     return;

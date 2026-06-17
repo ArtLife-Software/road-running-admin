@@ -125,6 +125,27 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
+// ── HTML escape（防止使用者輸入被當作HTML/JS執行）──
+function esc(v) {
+  return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function escJs(v) {
+  return String(v ?? '')
+    .replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+// ── 只查指定 uniqueId 的選手主檔，取代整個 runners 集合全表掃描 ──
+async function fetchRunnersByUniqueIds(uniqueIds) {
+  const ids = [...new Set((uniqueIds||[]).filter(Boolean))];
+  const map = {};
+  if (!ids.length) return map;
+  const chunks = [];
+  for (let i=0; i<ids.length; i+=30) chunks.push(ids.slice(i, i+30));
+  const snaps = await Promise.all(chunks.map(c=>getDocs(query(collection(db,'runners'), where('uniqueId','in',c)))));
+  snaps.forEach(snap=>snap.docs.forEach(d=>{ const r=d.data(); if(r.uniqueId) map[r.uniqueId]=r; }));
+  return map;
+}
+
 // ── 工具函式 ──
 function fmt(ts) {
   if (!ts) return '-';
@@ -314,7 +335,7 @@ async function initSignupPage(){
   } else {
     let html='<div class="card"><div class="input-group"><label>選擇賽事</label><select id="signupEventSelect" class="input" onchange="onSignupEventSelect()">';
     html+='<option value="">請選擇...</option>';
-    signupEvents.forEach(ev=>{html+='<option value="'+ev.id+'">'+ev.name+(ev.date?'（'+ev.date+'）':'')+'</option>';});
+    signupEvents.forEach(ev=>{html+='<option value="'+ev.id+'">'+esc(ev.name)+(ev.date?'（'+esc(ev.date)+'）':'')+'</option>';});
     html+='</select></div></div><div id="signupForm"></div>';
     content.innerHTML=html;
   }
@@ -333,12 +354,12 @@ async function selectSignupEvent(eventId, keepWrapper){
   let formHtml='';
   // 圖片永遠顯示在最上方
   if(curSignupEvent.bannerUrl){
-    formHtml+='<div style="margin-bottom:12px"><img src="'+curSignupEvent.bannerUrl+'" style="max-width:100%;border-radius:12px;display:block" onerror="this.style.display=\'none\'"></div>';
+    formHtml+='<div style="margin-bottom:12px"><img src="'+esc(curSignupEvent.bannerUrl)+'" style="max-width:100%;border-radius:12px;display:block" onerror="this.style.display=\'none\'"></div>';
   }
   // 賽事資訊卡（單賽事時用 card，多賽事時在 signupForm 內補一個資訊區塊）
   const regInfo=buildRegInfoHtml(curSignupEvent, curSignupEvent._entryCount||0);
-  const infoCardHtml='<div class="card" style="text-align:center;margin-bottom:12px"><strong>'+curSignupEvent.name+'</strong>'
-    +(curSignupEvent.date?'<div style="font-size:.78rem;color:var(--muted);margin-top:4px">'+curSignupEvent.date+'</div>':'')
+  const infoCardHtml='<div class="card" style="text-align:center;margin-bottom:12px"><strong>'+esc(curSignupEvent.name)+'</strong>'
+    +(curSignupEvent.date?'<div style="font-size:.78rem;color:var(--muted);margin-top:4px">'+esc(curSignupEvent.date)+'</div>':'')
     +(regInfo?'<div style="margin-top:8px;text-align:left">'+regInfo+'</div>':'')
     +'</div>';
   if(!keepWrapper){
@@ -350,7 +371,7 @@ async function selectSignupEvent(eventId, keepWrapper){
   formHtml+='<div class="card">';
   formHtml+='<div class="input-group"><label>組別 *</label><select id="suGroup" class="input">';
   if(groups.length){
-    groups.forEach(g=>{formHtml+='<option value="'+g+'">'+g+'</option>';});
+    groups.forEach(g=>{formHtml+='<option value="'+esc(g)+'">'+esc(g)+'</option>';});
   }else{
     formHtml+='<option value="未分組">未分組</option>';
   }
@@ -371,13 +392,13 @@ async function selectSignupEvent(eventId, keepWrapper){
     const id='su_cf_'+f.id;
     const reqMark=f.required?' *':'';
     if(f.type==='select'){
-      formHtml+='<div class="input-group"><label>'+f.label+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>';
-      (f.options||[]).forEach(o=>{formHtml+='<option value="'+o+'">'+o+'</option>';});
+      formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>';
+      (f.options||[]).forEach(o=>{formHtml+='<option value="'+esc(o)+'">'+esc(o)+'</option>';});
       formHtml+='</select></div>';
     } else if(f.type==='checkbox'){
-      formHtml+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'"> '+f.label+'</label></div>';
+      formHtml+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'"> '+esc(f.label)+'</label></div>';
     } else {
-      formHtml+='<div class="input-group"><label>'+f.label+reqMark+'</label><input id="'+id+'" type="text" class="input"></div>';
+      formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input"></div>';
     }
   });
 
@@ -454,7 +475,7 @@ window.submitSignup=async function(){
           let dbCell, rowStyle='';
           if(!diff){
             rowStyle='color:var(--green)';
-            dbCell=oldVal||'';
+            dbCell=esc(oldVal||'');
           } else if(!oldVal){
             rowStyle='';
             dbCell='';
@@ -463,15 +484,15 @@ window.submitSignup=async function(){
             dbCell='<span style="font-size:.75rem;padding:2px 6px;background:rgba(249,115,22,.12);border-radius:4px;border:1px solid rgba(249,115,22,.3)">有差異</span>';
           }
           return '<tr style="'+rowStyle+'">'
-            +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted);white-space:nowrap;border:none">'+f.label+'</td>'
+            +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted);white-space:nowrap;border:none">'+esc(f.label)+'</td>'
             +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+dbCell+'</td>'
-            +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+(curVal||'')+'</td>'
+            +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+esc(curVal||'')+'</td>'
             +'</tr>';
         }).join('');
         const diffEmptyFields=fields.filter(f=>(f.old||'').trim()&&!(f.new||'').trim()).map(f=>f.label);
         const hintHtml=diffEmptyFields.length
           ?'<div style="font-size:.75rem;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.25);border-radius:8px;padding:8px 12px;margin-bottom:12px;line-height:1.6">'
-            +'💡 建議補填 <strong>'+diffEmptyFields.join('、')+'</strong>，有助於進一步確認是否為同一人。'
+            +'💡 建議補填 <strong>'+esc(diffEmptyFields.join('、'))+'</strong>，有助於進一步確認是否為同一人。'
             +'<br><span style="color:var(--muted)">可點「重填」回到表單補充資料。</span>'
             +'</div>'
           :'';
@@ -565,11 +586,11 @@ function showSignupSuccess(info){
   let html='<div class="card" style="text-align:center">';
   html+='<div style="font-size:2.5rem;margin-bottom:8px">✅</div>';
   html+='<div style="font-size:1.05rem;font-weight:900;margin-bottom:4px">報名成功！</div>';
-  html+='<div style="font-size:.82rem;color:var(--muted);margin-bottom:16px">'+info.eventName+(info.eventDate?'（'+info.eventDate+'）':'')+'</div>';
+  html+='<div style="font-size:.82rem;color:var(--muted);margin-bottom:16px">'+esc(info.eventName)+(info.eventDate?'（'+esc(info.eventDate)+'）':'')+'</div>';
   html+='<div class="runner-card-header" style="justify-content:center">';
-  html+='<strong style="font-size:1.05rem">'+info.name+'</strong>';
-  html+='<span class="badge">'+info.group+'</span>';
-  html+='<span class="badge">編號 '+info.bibNumber+'</span>';
+  html+='<strong style="font-size:1.05rem">'+esc(info.name)+'</strong>';
+  html+='<span class="badge">'+esc(info.group)+'</span>';
+  html+='<span class="badge">編號 '+esc(info.bibNumber)+'</span>';
   html+='</div>';
   html+='<div id="signupQR" class="qr-box"></div>';
   html+='<div class="csv-hint" style="text-align:left;margin-top:16px">請截圖保存此 QR Code，比賽當天報到時使用。或記得編號，於「查詢報名／修改」分頁重新查詢。</div>';
@@ -598,13 +619,20 @@ window.doStatusQuery=async function(){
   if(!bib||!name||!gender||!birthday){showToast('請填寫全部四個欄位','error');return;}
   result.innerHTML='<div class="card"><div class="loading-cell">查詢中...</div></div>';
 
-  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
   const evSnap=await getDocs(query(collection(db,'events'),orderBy('date','desc')));
+  // 平行查詢每場賽事「此編號」的報名記錄，取代序列逐場查詢
+  const perEventEntries=await Promise.all(evSnap.docs.map(evDoc=>
+    getDocs(query(collection(db,'events',evDoc.id,'runners'),where('bibNumber','==',bib)))
+      .then(entrySnap=>({evDoc, ev:evDoc.data(), entries:entrySnap.docs}))
+  ));
+  // 只查詢牽涉到的uniqueId，取代整個runners集合全表掃描
+  const allUids=perEventEntries.flatMap(({entries})=>entries.map(d=>d.data().uniqueId));
+  const rMap=await fetchRunnersByUniqueIds(allUids);
+
   let html=''; let found=false;
-  for(const evDoc of evSnap.docs){
-    const ev=evDoc.data();
-    const entrySnap=await getDocs(query(collection(db,'events',evDoc.id,'runners'),where('bibNumber','==',bib)));
-    for(const eDoc of entrySnap.docs){
+  const matched=[]; // 緩存符合條件的結果，產生 QR Code 時直接重複使用，不再重新查一次
+  for(const {evDoc, ev, entries} of perEventEntries){
+    for(const eDoc of entries){
       const e=eDoc.data();
       const r=rMap[e.uniqueId]||{};
       const entryName=r.name||'';
@@ -613,20 +641,21 @@ window.doStatusQuery=async function(){
       if((r.gender||'')!==gender)continue;
       if((r.birthday||'')!==birthday)continue;
       found=true;
+      matched.push({evDoc, eDoc, e});
       const cardId='statusCard_'+evDoc.id+'_'+eDoc.id;
       html+='<div class="card" id="'+cardId+'">';
-      html+='<div style="font-size:.78rem;color:var(--muted);margin-bottom:8px">'+ev.name+(ev.date?'　'+ev.date:'')+'</div>';
+      html+='<div style="font-size:.78rem;color:var(--muted);margin-bottom:8px">'+esc(ev.name)+(ev.date?'　'+esc(ev.date):'')+'</div>';
       html+='<div class="runner-card-header">';
-      html+='<strong style="font-size:1.05rem">'+entryName+'</strong>';
-      html+='<span class="badge">'+(e.group||'-')+'</span>';
-      html+='<span class="badge">編號 '+(e.bibNumber||'-')+'</span>';
-      html+='<span class="mono" style="font-size:.78rem;color:var(--accent)">'+e.uniqueId+'</span>';
+      html+='<strong style="font-size:1.05rem">'+esc(entryName)+'</strong>';
+      html+='<span class="badge">'+esc(e.group||'-')+'</span>';
+      html+='<span class="badge">編號 '+esc(e.bibNumber||'-')+'</span>';
+      html+='<span class="mono" style="font-size:.78rem;color:var(--accent)">'+esc(e.uniqueId)+'</span>';
       html+='</div>';
       html+='<div id="statusQR_'+evDoc.id+'_'+eDoc.id+'" class="qr-box"></div>';
       if(isRunnerRegOpen(ev, 0)){
         html+='<div id="'+cardId+'_edit" style="margin-top:12px"></div>';
         html+='<div style="display:flex;gap:8px;margin-top:8px">';
-        html+='<button class="btn btn-ghost btn-full" onclick="showEditForm(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+e.uniqueId+'\',\''+cardId+'\')">✏️ 修改報名資料</button>';
+        html+='<button class="btn btn-ghost btn-full" onclick="showEditForm(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+escJs(e.uniqueId)+'\',\''+cardId+'\')">✏️ 修改報名資料</button>';
         html+='<button class="btn btn-danger btn-sm" onclick="deleteEntry(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+cardId+'\')">🗑️ 取消報名</button>';
         html+='</div>';
       }
@@ -638,17 +667,11 @@ window.doStatusQuery=async function(){
     return;
   }
   result.innerHTML=html;
-  // 產生 QR Code
-  for(const evDoc of evSnap.docs){
-    const entrySnap=await getDocs(query(collection(db,'events',evDoc.id,'runners'),where('bibNumber','==',bib)));
-    for(const eDoc of entrySnap.docs){
-      const e=eDoc.data();
-      const r=rMap[e.uniqueId]||{};
-      if((r.name||'')!==name||(r.gender||'')!==gender||(r.birthday||'')!==birthday)continue;
-      const el=document.getElementById('statusQR_'+evDoc.id+'_'+eDoc.id);
-      if(!el)continue;
-      makeQRCode(el, [e.uniqueId,e.bibNumber||''].join('|'), 180);
-    }
+  // 產生 QR Code：直接重複利用上面已查到並驗證過的 matched 清單，不再重新查詢一次
+  for(const {evDoc, eDoc, e} of matched){
+    const el=document.getElementById('statusQR_'+evDoc.id+'_'+eDoc.id);
+    if(!el)continue;
+    makeQRCode(el, [e.uniqueId,e.bibNumber||''].join('|'), 180);
   }
 }
 
@@ -683,32 +706,32 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
 
   let html='<div class="card" style="background:var(--surface2)">';
   html+='<div class="csv-hint">可修改以下資料，ID 與編號無法變更。</div>';
-  html+='<div class="input-group"><label>姓名</label><input id="'+cardId+'_eName" type="text" class="input" value="'+(r.name||'')+'"></div>';
+  html+='<div class="input-group"><label>姓名</label><input id="'+cardId+'_eName" type="text" class="input" value="'+esc(r.name||'')+'"></div>';
   html+='<div class="input-group"><label>性別</label><select id="'+cardId+'_eGender" class="input"><option value="男"'+(r.gender==='男'?' selected':'')+'>男</option><option value="女"'+(r.gender==='女'?' selected':'')+'>女</option></select></div>';
   html+='<div class="input-group"><label>生日（yyyy/mm/dd）</label>'
     +'<div class="input-row">'
-    +'<input id="'+cardId+'_eBirthday" data-fmt="ymd" type="text" class="input" value="'+(r.birthday||'')+'" oninput="applyHalf(this)">'
+    +'<input id="'+cardId+'_eBirthday" data-fmt="ymd" type="text" class="input" value="'+esc(r.birthday||'')+'" oninput="applyHalf(this)">'
     +'<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\''+cardId+'_eBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>'
     +'<input type="date" id="'+cardId+'_eBirthdayPicker" style="display:none" '
     +'onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\''+cardId+'_eBirthday\').value=y+\'/\'+m+\'/\'+d;this.value=\'\'}">'
     +'</div></div>';
-  html+='<div class="input-group"><label>手機號碼</label><input id="'+cardId+'_ePhone" type="tel" class="input" value="'+(r.phone||'')+'" oninput="applyHalf(this)"></div>';
-  html+='<div class="input-group"><label>E-Mail</label><input id="'+cardId+'_eEmail" type="email" class="input" value="'+(r.email||'')+'" oninput="applyHalf(this)"></div>';
-  html+='<div class="input-group"><label>身分證字號</label><input id="'+cardId+'_eIdNumber" type="text" class="input" value="'+(r.idNumber||'')+'" oninput="applyHalf(this)"></div>';
-  html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_eNote" type="text" class="input" value="'+(r.note||'')+'"></div>';
+  html+='<div class="input-group"><label>手機號碼</label><input id="'+cardId+'_ePhone" type="tel" class="input" value="'+esc(r.phone||'')+'" oninput="applyHalf(this)"></div>';
+  html+='<div class="input-group"><label>E-Mail</label><input id="'+cardId+'_eEmail" type="email" class="input" value="'+esc(r.email||'')+'" oninput="applyHalf(this)"></div>';
+  html+='<div class="input-group"><label>身分證字號</label><input id="'+cardId+'_eIdNumber" type="text" class="input" value="'+esc(r.idNumber||'')+'" oninput="applyHalf(this)"></div>';
+  html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_eNote" type="text" class="input" value="'+esc(r.note||'')+'"></div>';
   html+='<div class="input-group"><label>組別</label><select id="'+cardId+'_eGroup" class="input">';
-  groups.forEach(g=>{html+='<option value="'+g+'"'+(g===e.group?' selected':'')+'>'+g+'</option>';});
+  groups.forEach(g=>{html+='<option value="'+esc(g)+'"'+(g===e.group?' selected':'')+'>'+esc(g)+'</option>';});
   html+='</select></div>';
   customFields.forEach(f=>{
     const fid=cardId+'_ecf_'+f.id;
     if(f.type==='select'){
-      html+='<div class="input-group"><label>'+f.label+'</label><select id="'+fid+'" class="input"><option value="">請選擇...</option>';
-      (f.options||[]).forEach(o=>{html+='<option value="'+o+'"'+(customData[f.id]===o?' selected':'')+'>'+o+'</option>';});
+      html+='<div class="input-group"><label>'+esc(f.label)+'</label><select id="'+fid+'" class="input"><option value="">請選擇...</option>';
+      (f.options||[]).forEach(o=>{html+='<option value="'+esc(o)+'"'+(customData[f.id]===o?' selected':'')+'>'+esc(o)+'</option>';});
       html+='</select></div>';
     }else if(f.type==='checkbox'){
-      html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+fid+'" '+(customData[f.id]?'checked':'')+'> '+f.label+'</label></div>';
+      html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+fid+'" '+(customData[f.id]?'checked':'')+'> '+esc(f.label)+'</label></div>';
     }else{
-      html+='<div class="input-group"><label>'+f.label+'</label><input id="'+fid+'" type="text" class="input" value="'+(customData[f.id]!==undefined?customData[f.id]:'')+'"></div>';
+      html+='<div class="input-group"><label>'+esc(f.label)+'</label><input id="'+fid+'" type="text" class="input" value="'+esc(customData[f.id]!==undefined?customData[f.id]:'')+'"></div>';
     }
   });
   html+='<button class="btn btn-primary btn-full" onclick="saveEditEntry(\''+eventId+'\',\''+entryDocId+'\',\''+(rDocRef?rDocRef.id:'')+'\',\''+cardId+'\')">儲存修改</button>';
@@ -785,7 +808,17 @@ window.doLookup=async function(){
   if(!isAll&&!eventId){showToast('請先選擇賽事','error');return;}
   result.innerHTML='<div class="card"><div class="loading-cell">查詢中...</div></div>';
 
-  const rMap={}; (await getDocs(collection(db,'runners'))).docs.forEach(d=>{rMap[d.data().uniqueId]=d.data();});
+  // 只查詢符合 ID 或身分證的候選選手，取代整個runners集合全表掃描
+  // uniqueId固定為系統產生的大寫格式，统一轉大寫查詢；身分證字母可能存成大寫或小寫，兩種都查以維持原本大小寫不敏感的比對行為
+  const candidateQueries=[];
+  if(uid) candidateQueries.push(getDocs(query(collection(db,'runners'),where('uniqueId','==',uid.toUpperCase()))));
+  if(idNum){
+    candidateQueries.push(getDocs(query(collection(db,'runners'),where('idNumber','==',idNum.toUpperCase()))));
+    candidateQueries.push(getDocs(query(collection(db,'runners'),where('idNumber','==',idNum.toLowerCase()))));
+  }
+  const candidateSnaps=await Promise.all(candidateQueries);
+  const rMap={};
+  candidateSnaps.forEach(snap=>snap.docs.forEach(d=>{ const r=d.data(); if(r.uniqueId) rMap[r.uniqueId]=r; }));
 
   function matchEntry(e){
     const r=rMap[e.uniqueId]||{};
@@ -817,7 +850,7 @@ window.doLookup=async function(){
       const matched=entries.filter(matchEntry);
       if(!matched.length)continue;
       if(matched.length>1){
-        html+='<div class="card"><div style="font-size:.85rem;color:var(--muted)">'+ev.name+'（'+(ev.date||'日期不詳')+'）</div><div style="color:var(--accent);font-size:.85rem;margin-top:4px">找到多筆符合資料，請同時輸入 ID 和身分證字號</div></div>';
+        html+='<div class="card"><div style="font-size:.85rem;color:var(--muted)">'+esc(ev.name)+'（'+esc(ev.date||'日期不詳')+'）</div><div style="color:var(--accent);font-size:.85rem;margin-top:4px">找到多筆符合資料，請同時輸入 ID 和身分證字號</div></div>';
         continue;
       }
       html+=await buildLookupCard(matched[0], evDoc.id, rMap, ev);
@@ -835,13 +868,13 @@ async function buildLookupCard(e, eventId, rMap, evData){
   gSnap.docs.forEach(d=>{groupStations[d.data().name]=d.data().stations||[];});
   const stations=groupStations[e.group]||[];
 
-  const evTitle=evData?'<div style="font-size:.75rem;color:var(--muted);margin-bottom:8px">'+evData.name+(evData.date?' ・ '+evData.date:'')+'</div>':'';
+  const evTitle=evData?'<div style="font-size:.75rem;color:var(--muted);margin-bottom:8px">'+esc(evData.name)+(evData.date?' ・ '+esc(evData.date):'')+'</div>':'';
 
   let html='<div class="card">'+evTitle
     +'<div class="runner-card-header">'
-    +'<strong style="font-size:1.05rem">'+(e.name||r.name||'')+'</strong>'
-    +'<span class="badge">'+(e.group||'-')+'</span>'
-    +'<span class="badge">編號 '+(e.bibNumber||'-')+'</span>'
+    +'<strong style="font-size:1.05rem">'+esc(e.name||r.name||'')+'</strong>'
+    +'<span class="badge">'+esc(e.group||'-')+'</span>'
+    +'<span class="badge">編號 '+esc(e.bibNumber||'-')+'</span>'
     +'</div>';
   if(!allRecs.length){html+='<p style="color:var(--muted);font-size:.85rem;margin-top:8px">尚無打卡記錄</p></div>';return html;}
   html+='<div class="station-stats" style="margin-top:10px">';
@@ -852,7 +885,7 @@ async function buildLookupCard(e, eventId, rMap, evData){
     const total=arrived&&i>0?diffHMS(rec.scanTime,firstRec.scanTime):null;
     html+='<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">'
       +'<span class="station-num" style="background:'+(arrived?'var(--green)':'var(--surface2)')+';color:'+(arrived?'#fff':'var(--muted)')+';">'+(i+1)+'</span>'
-      +'<span style="flex:1;font-size:.88rem">'+s+'</span>'
+      +'<span style="flex:1;font-size:.88rem">'+esc(s)+'</span>'
       +(arrived
         ?'<span style="font-family:var(--mono);font-size:.82rem">'+fmt(rec.scanTime)+'</span>'
           +(total?'<span style="font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-left:8px">'+total+'</span>':'')

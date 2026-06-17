@@ -77,7 +77,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, updateDoc, deleteDoc, query, orderBy, where, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBWn7703qi0X6rL2c4WBhieTZ2-_JSrvco",
@@ -89,6 +89,16 @@ const firebaseConfig = {
 };
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+
+// ── HTML escape（防止使用者輸入被當作HTML/JS執行）──
+function esc(v) {
+  return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function escJs(v) {
+  return String(v ?? '')
+    .replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 // ── 工具函式 ──
 function toHalf(str) {
@@ -137,17 +147,6 @@ function validateEmail(v){if(!v)return true;return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.
 function validateId(v){if(!v)return false;return /^[A-Za-z]\d{9}$/.test(v);}
 function setFieldError(id,hasError){const el=document.getElementById(id);if(!el)return;el.style.borderColor=hasError?'var(--red)':'';}
 function showToast(msg,type='success'){const t=document.getElementById('toast');t.textContent=msg;t.className='toast show '+type;setTimeout(()=>t.classList.remove('show'),3500);}
-function isSamePerson(a,b){
-  if(a.idNumber&&b.idNumber)return a.idNumber===b.idNumber;
-  if(a.gender&&b.gender&&a.gender!==b.gender)return false;
-  if(a.birthday&&b.birthday&&a.birthday!==b.birthday)return false;
-  const nameMatch=a.name&&b.name&&a.name===b.name;
-  const phoneMatch=a.phone&&b.phone&&a.phone===b.phone;
-  const emailMatch=a.email&&b.email&&a.email===b.email;
-  if(nameMatch&&(phoneMatch||emailMatch))return true;
-  let cnt=0;['name','gender','birthday','phone','email'].forEach(f=>{if(a[f]&&b[f]&&a[f]===b[f])cnt++;});
-  return cnt>=3;
-}
 window.validateBirthday=validateBirthday;
 window.validatePhone=validatePhone;
 window.validateEmail=validateEmail;
@@ -208,7 +207,7 @@ async function initSignupPage(){
   else{
     let html='<div class="card"><div class="input-group"><label>選擇賽事</label><select id="signupEventSelect" class="input" onchange="onSignupEventSelect()">';
     html+='<option value="">請選擇...</option>';
-    signupEvents.forEach(ev=>{html+='<option value="'+ev.id+'">'+ev.name+(ev.date?'（'+ev.date+'）':'')+'</option>';});
+    signupEvents.forEach(ev=>{html+='<option value="'+ev.id+'">'+esc(ev.name)+(ev.date?'（'+esc(ev.date)+'）':'')+'</option>';});
     html+='</select></div></div><div id="signupForm"></div>';
     content.innerHTML=html;
   }
@@ -224,12 +223,12 @@ async function selectSignupEvent(eventId,keepWrapper){
   let formHtml='';
   // 圖片永遠顯示在最上方
   if(curSignupEvent.staffBannerUrl){
-    formHtml+='<div style="margin-bottom:12px"><img src="'+curSignupEvent.staffBannerUrl+'" style="max-width:100%;border-radius:12px;display:block" onerror="this.style.display=\'none\'"></div>';
+    formHtml+='<div style="margin-bottom:12px"><img src="'+esc(curSignupEvent.staffBannerUrl)+'" style="max-width:100%;border-radius:12px;display:block" onerror="this.style.display=\'none\'"></div>';
   }
   // 賽事資訊卡（含報名時間，無論單/多賽事都顯示）
   const regInfo=buildStaffRegInfoHtml(curSignupEvent);
-  formHtml+='<div class="card" style="text-align:center;margin-bottom:12px"><strong>'+curSignupEvent.name+'</strong>'
-    +(curSignupEvent.date?'<div style="font-size:.78rem;color:var(--muted);margin-top:4px">'+curSignupEvent.date+'</div>':'')
+  formHtml+='<div class="card" style="text-align:center;margin-bottom:12px"><strong>'+esc(curSignupEvent.name)+'</strong>'
+    +(curSignupEvent.date?'<div style="font-size:.78rem;color:var(--muted);margin-top:4px">'+esc(curSignupEvent.date)+'</div>':'')
     +(regInfo?'<div style="margin-top:8px;text-align:left">'+regInfo+'</div>':'')
     +'</div>';
   formHtml+='<div class="card">';
@@ -247,13 +246,13 @@ async function selectSignupEvent(eventId,keepWrapper){
   curSignupCustomFields.forEach(f=>{
     const id='su_cf_'+f.id; const reqMark=f.required?' *':'';
     if(f.type==='select'){
-      formHtml+='<div class="input-group"><label>'+f.label+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>';
-      (f.options||[]).forEach(o=>{formHtml+='<option value="'+o+'">'+o+'</option>';});
+      formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>';
+      (f.options||[]).forEach(o=>{formHtml+='<option value="'+esc(o)+'">'+esc(o)+'</option>';});
       formHtml+='</select></div>';
     }else if(f.type==='checkbox'){
-      formHtml+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'"> '+f.label+'</label></div>';
+      formHtml+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'"> '+esc(f.label)+'</label></div>';
     }else{
-      formHtml+='<div class="input-group"><label>'+f.label+reqMark+'</label><input id="'+id+'" type="text" class="input"></div>';
+      formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input"></div>';
     }
   });
   formHtml+='<button class="btn btn-primary btn-full" onclick="submitSignup()">送出報名</button></div>';
@@ -287,22 +286,29 @@ window.submitSignup=async function(){
   const btn=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
   btn.textContent='送出中...'; btn.disabled=true;
   try{
-    // 檢查同賽事身分證是否已存在
-    const existing=await getDocs(query(collection(db,'events',eventId,'staff'),where('idNumber','==',idNumber)));
-    if(!existing.empty){showToast('您已報名過此賽事','error');btn.textContent='送出報名';btn.disabled=false;return;}
-    await addDoc(collection(db,'events',eventId,'staff'),{
-      name,gender,birthday,phone,email,idNumber,note,customData,
-      createdAt:serverTimestamp(),updatedAt:serverTimestamp()
+    // 用身分證字號當這場賽事工作人員報名記錄的文件ID，包進transaction做「不存在才寫入」
+    // 取代原本「先查詢、查無才寫入」的寫法，避免兩個分頁或兩次快速送出同一張身分證時都通過檢查、造成重複報名
+    const staffRef=doc(db,'events',eventId,'staff',idNumber);
+    await runTransaction(db, async tx=>{
+      const existing=await tx.get(staffRef);
+      if(existing.exists()) throw new Error('DUP_SIGNUP');
+      tx.set(staffRef,{
+        name,gender,birthday,phone,email,idNumber,note,customData,
+        createdAt:serverTimestamp(),updatedAt:serverTimestamp()
+      });
     });
     const content=document.getElementById('signupContent');
     content.innerHTML='<div class="card" style="text-align:center">'
       +'<div style="font-size:2.5rem;margin-bottom:8px">✅</div>'
       +'<div style="font-size:1.05rem;font-weight:900;margin-bottom:4px">報名成功！</div>'
-      +'<div style="font-size:.82rem;color:var(--muted)">'+curSignupEvent.name+'</div>'
-      +'<div style="margin-top:16px;font-size:.88rem">'+name+'　'+gender+'　'+birthday+'</div>'
+      +'<div style="font-size:.82rem;color:var(--muted)">'+esc(curSignupEvent.name)+'</div>'
+      +'<div style="margin-top:16px;font-size:.88rem">'+esc(name)+'　'+esc(gender)+'　'+esc(birthday)+'</div>'
       +'<div class="csv-hint" style="margin-top:16px;text-align:left">如需查詢 / 修改，請至「查詢報名／修改」分頁輸入身分證字號查詢 / 修改。</div>'
       +'</div>';
-  }catch(e){showToast('報名失敗：'+e.message,'error');btn.textContent='送出報名';btn.disabled=false;}
+  }catch(e){
+    if(e.message==='DUP_SIGNUP'){showToast('您已報名過此賽事','error');btn.textContent='送出報名';btn.disabled=false;return;}
+    showToast('報名失敗：'+e.message,'error');btn.textContent='送出報名';btn.disabled=false;
+  }
 }
 
 // ════════════════════════════
@@ -314,21 +320,23 @@ window.doStatusQuery=async function(){
   if(!idNum){showToast('請輸入身分證字號','error');return;}
   if(!validateId(idNum)){showToast('身分證字號格式錯誤','error');return;}
   result.innerHTML='<div class="card"><div class="loading-cell">查詢中...</div></div>';
-  // 查詢所有賽事的工作人員報名記錄
+  // 查詢所有賽事的工作人員報名記錄（平行查詢，取代序列逐場查詢）
   const evSnap=await getDocs(query(collection(db,'events'),orderBy('date','desc')));
+  const perEventStaff=await Promise.all(evSnap.docs.map(evDoc=>
+    getDocs(query(collection(db,'events',evDoc.id,'staff'),where('idNumber','==',idNum)))
+      .then(staffSnap=>({evDoc, ev:evDoc.data(), staffDocs:staffSnap.docs}))
+  ));
   let html=''; let found=false;
-  for(const evDoc of evSnap.docs){
-    const ev=evDoc.data();
-    const staffSnap=await getDocs(query(collection(db,'events',evDoc.id,'staff'),where('idNumber','==',idNum)));
-    if(staffSnap.empty)continue;
+  for(const {evDoc, ev, staffDocs} of perEventStaff){
+    if(!staffDocs.length)continue;
     found=true;
-    for(const eDocRef of staffSnap.docs){
+    for(const eDocRef of staffDocs){
       const e=eDocRef.data();
       const cardId='sCard_'+evDoc.id+'_'+eDocRef.id;
       html+='<div class="card" id="'+cardId+'">';
-      html+='<div style="font-size:.78rem;color:var(--muted);margin-bottom:8px">'+ev.name+(ev.date?'　'+ev.date:'')+'</div>';
-      html+='<div style="font-size:1rem;font-weight:700;margin-bottom:4px">'+e.name+'</div>';
-      html+='<div style="font-size:.82rem;color:var(--muted)">'+e.gender+'　'+e.birthday+(e.phone?'　'+e.phone:'')+'</div>';
+      html+='<div style="font-size:.78rem;color:var(--muted);margin-bottom:8px">'+esc(ev.name)+(ev.date?'　'+esc(ev.date):'')+'</div>';
+      html+='<div style="font-size:1rem;font-weight:700;margin-bottom:4px">'+esc(e.name)+'</div>';
+      html+='<div style="font-size:.82rem;color:var(--muted)">'+esc(e.gender)+'　'+esc(e.birthday)+(e.phone?'　'+esc(e.phone):'')+'</div>';
       if(isStaffRegOpen(ev)){
         html+='<div style="display:flex;gap:8px;margin-top:12px">';
         html+='<button class="btn btn-ghost btn-sm" onclick="showEditForm(\''+evDoc.id+'\',\''+eDocRef.id+'\',\''+cardId+'\')">✏️ 修改資料</button>';
@@ -366,29 +374,29 @@ window.showEditForm=async function(eventId,staffDocId,cardId){
   const cd=e.customData||{};
   let html='<div class="card" style="background:var(--surface2);margin-top:12px">';
   html+='<div class="csv-hint">如需修改身分證字號，請直接填入正確號碼。</div>';
-  html+='<div class="input-group"><label>姓名 *</label><input id="'+cardId+'_name" type="text" class="input" value="'+(e.name||'')+'"></div>';
+  html+='<div class="input-group"><label>姓名 *</label><input id="'+cardId+'_name" type="text" class="input" value="'+esc(e.name||'')+'"></div>';
   html+='<div class="input-group"><label>性別 *</label><select id="'+cardId+'_gender" class="input"><option value="男"'+(e.gender==='男'?' selected':'')+'>男</option><option value="女"'+(e.gender==='女'?' selected':'')+'>女</option></select></div>';
   html+='<div class="input-group"><label>生日 *</label>'
     +'<div class="input-row">'
-    +'<input id="'+cardId+'_birthday" data-fmt="ymd" type="text" class="input" value="'+(e.birthday||'')+'" oninput="applyHalf(this)">'
+    +'<input id="'+cardId+'_birthday" data-fmt="ymd" type="text" class="input" value="'+esc(e.birthday||'')+'" oninput="applyHalf(this)">'
     +'<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\''+cardId+'_birthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>'
     +'<input type="date" id="'+cardId+'_birthdayPicker" style="display:none" '
     +'onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\''+cardId+'_birthday\').value=y+\'/\'+m+\'/\'+d;this.value=\'\'}">'
     +'</div></div>';
-  html+='<div class="input-group"><label>身分證字號 *</label><input id="'+cardId+'_idNumber" type="text" class="input" value="'+(e.idNumber||'')+'" oninput="applyHalf(this)"></div>';
-  html+='<div class="input-group"><label>手機</label><input id="'+cardId+'_phone" type="tel" class="input" value="'+(e.phone||'')+'" oninput="applyHalf(this)"></div>';
-  html+='<div class="input-group"><label>Email</label><input id="'+cardId+'_email" type="email" class="input" value="'+(e.email||'')+'" oninput="applyHalf(this)"></div>';
-  html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_note" type="text" class="input" value="'+(e.note||'')+'"></div>';
+  html+='<div class="input-group"><label>身分證字號 *</label><input id="'+cardId+'_idNumber" type="text" class="input" value="'+esc(e.idNumber||'')+'" oninput="applyHalf(this)"></div>';
+  html+='<div class="input-group"><label>手機</label><input id="'+cardId+'_phone" type="tel" class="input" value="'+esc(e.phone||'')+'" oninput="applyHalf(this)"></div>';
+  html+='<div class="input-group"><label>Email</label><input id="'+cardId+'_email" type="email" class="input" value="'+esc(e.email||'')+'" oninput="applyHalf(this)"></div>';
+  html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_note" type="text" class="input" value="'+esc(e.note||'')+'"></div>';
   customFields.forEach(f=>{
     const fid=cardId+'_cf_'+f.id;
     if(f.type==='select'){
-      html+='<div class="input-group"><label>'+f.label+'</label><select id="'+fid+'" class="input"><option value="">請選擇...</option>';
-      (f.options||[]).forEach(o=>{html+='<option value="'+o+'"'+(cd[f.id]===o?' selected':'')+'>'+o+'</option>';});
+      html+='<div class="input-group"><label>'+esc(f.label)+'</label><select id="'+fid+'" class="input"><option value="">請選擇...</option>';
+      (f.options||[]).forEach(o=>{html+='<option value="'+esc(o)+'"'+(cd[f.id]===o?' selected':'')+'>'+esc(o)+'</option>';});
       html+='</select></div>';
     }else if(f.type==='checkbox'){
-      html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+fid+'" '+(cd[f.id]?'checked':'')+'> '+f.label+'</label></div>';
+      html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+fid+'" '+(cd[f.id]?'checked':'')+'> '+esc(f.label)+'</label></div>';
     }else{
-      html+='<div class="input-group"><label>'+f.label+'</label><input id="'+fid+'" type="text" class="input" value="'+(cd[f.id]||'')+'"></div>';
+      html+='<div class="input-group"><label>'+esc(f.label)+'</label><input id="'+fid+'" type="text" class="input" value="'+esc(cd[f.id]||'')+'"></div>';
     }
   });
   html+='<button class="btn btn-primary btn-full" onclick="saveEdit(\''+eventId+'\',\''+staffDocId+'\',\''+cardId+'\')">儲存修改</button>';
