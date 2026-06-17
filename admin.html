@@ -705,11 +705,12 @@ window.loadEntries=async function(){
   tbody.innerHTML='<tr><td colspan="'+baseCols+'" class="loading-cell">載入中...</td></tr>';
   const evDoc=await getDoc(doc(db,'events',eventId));
   curEntryCustomFields=evDoc.data()?.customFields||[];
+  refreshSearchFieldOptions('entrySearchField',curEntryCustomFields);
   // 更新表頭
   const thead=document.getElementById('entriesTableHead');
   const baseHeads=['編號','組別','ID','姓名','性別','生日','手機','Email','身分證','備註','報到'];
   const baseSortKeys=['bibNumber','group','uniqueId','name','runnerData.gender','runnerData.birthday','','','runnerData.idNumber','runnerData.note','checkin.checkedInAt'];
-  thead.innerHTML='<th style="width:36px"><input type="checkbox" id="entriesSelectAll" onchange="toggleSelectAll(\'entriesTableBody\',\'entriesSelectAll\',\'entriesBatchDeleteBtn\')"></th>'
+  thead.innerHTML='<th style="width:36px"><input type="checkbox" id="entriesSelectAll" onchange="toggleSelectAll(\'entriesTableBody\',\'entriesSelectAll\',\'entriesBatchDeleteBtn\',\'entriesBatchRejectBtn\')"></th>'
     +baseHeads.map((h,i)=>baseSortKeys[i]
       ?'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'entriesTableBody\',\''+baseSortKeys[i]+'\')">'+h+'<span class="sort-icon"> ⇅</span></th>'
       :'<th>'+h+'</th>'
@@ -746,12 +747,14 @@ function renderEntries(list){
       ?'<td><span class="badge badge-green">✅ 已報到</span><div style="font-size:.7rem;color:var(--muted)">'+(ci.checkedInAt?.toDate?ci.checkedInAt.toDate().toLocaleTimeString('zh-TW',{hour12:false}):'-')+'</div>'
         +'<button class="btn btn-sm btn-danger" style="margin-top:4px" onclick="cancelCheckin(\''+eventId+'\',\''+e.uniqueId+'\')">取消報到</button></td>'
       :'<td><button class="btn btn-sm btn-ghost" onclick="manualCheckin(\''+eventId+'\',\''+e.uniqueId+'\')">標記報到</button></td>';
+    const cancelBadge=e.cancelRequested?' <span class="badge" style="background:rgba(239,68,68,.1);color:var(--red);border-color:rgba(239,68,68,.3)">⚠️ 申請取消中</span>':'';
+    const rejectBtn=e.cancelRequested?'<button class="btn btn-sm btn-ghost" onclick="rejectCancelRequest(\''+e.id+'\')">駁回申請</button> ':'';
     return '<tr>'
-      +'<td><input type="checkbox" class="row-cb" data-id="'+e.id+'" onchange="onRowCbChange(\'entriesBatchDeleteBtn\',\'entriesTableBody\',\'entriesSelectAll\')"></td>'
+      +'<td><input type="checkbox" class="row-cb" data-id="'+e.id+'" onchange="onRowCbChange(\'entriesBatchDeleteBtn\',\'entriesTableBody\',\'entriesSelectAll\',\'entriesBatchRejectBtn\')"></td>'
       +'<td><strong>'+esc(e.bibNumber||'-')+'</strong></td>'
       +'<td><span class="badge">'+esc(e.group||'-')+'</span></td>'
       +'<td><span class="mono">'+esc(e.uniqueId||'')+'</span></td>'
-      +'<td>'+esc(e.name||r.name||'-')+'</td>'
+      +'<td>'+esc(e.name||r.name||'-')+cancelBadge+'</td>'
       +'<td>'+esc(r.gender||'-')+'</td>'
       +'<td>'+esc(r.birthday||'-')+'</td>'
       +'<td>'+esc(r.phone||'-')+'</td>'
@@ -761,24 +764,38 @@ function renderEntries(list){
       +checkinCell
       +customCells
       +'<td style="white-space:nowrap">'
+      +rejectBtn
       +'<button class="btn btn-sm btn-ghost" onclick="editEntry(\''+e.id+'\')">編輯</button> '
-      +'<button class="btn btn-sm btn-danger" onclick="deleteEntry(\''+e.id+'\',\''+escJs(e.name||'')+'\')">刪除</button>'
+      +'<button class="btn btn-sm btn-danger" onclick="deleteEntry(\''+e.id+'\',\''+escJs(e.name||'')+'\')">'+(e.cancelRequested?'核准刪除':'刪除')+'</button>'
       +'</td></tr>';
   }).join('');
 }
 window.doEntrySearch=function(){
   const field=document.getElementById('entrySearchField').value;
+  const cf=curEntryCustomFields.find(f=>f.id===field);
   let kw;
   if(field==='group') kw=document.getElementById('entrySearchKwGroup')?.value||'';
   else if(field==='gender') kw=document.getElementById('entrySearchKwGender').value;
+  else if(field==='checkin') kw=document.getElementById('entrySearchKwCheckin').value;
+  else if(cf&&cf.type==='select') kw=document.getElementById('entrySearchKwSelect').value;
   else kw=document.getElementById('entrySearchKw').value.trim().toLowerCase();
   if(!kw&&field!=='gender'){renderEntries(getSorted('entriesTableBody',allEntries));return;}
+  const cfVal=(e,f)=>{const cd=e.customData||{};let v=cd[f.id];if(f.type==='checkbox')v=v?'是':'否';return v!==undefined&&v!==null?String(v):'';};
   const filtered=allEntries.filter(e=>{
     const r=e.runnerData||{};
     const val=f=>(e[f]||r[f]||'').toString().toLowerCase();
-    if(field==='all') return ['uniqueId','name','bibNumber','group','gender','birthday','phone','email','idNumber','note'].some(f=>val(f).includes(kw));
+    if(field==='all'){
+      if(['uniqueId','name','bibNumber','group','gender','birthday','phone','email','idNumber','note'].some(f=>val(f).includes(kw))) return true;
+      if((e.checkin?'已報到':'未報到').includes(kw)) return true;
+      return curEntryCustomFields.some(f=>cfVal(e,f).toLowerCase().includes(kw));
+    }
     if(field==='group') return (e.group||'')===kw;
     if(field==='gender') return (e.gender||r.gender||'')===kw;
+    if(field==='checkin') return (e.checkin?'已報到':'未報到')===kw;
+    if(cf){
+      // 下拉選單類型是固定選項，跟組別/性別一樣用精準比對；文字/勾選框維持模糊比對
+      return cf.type==='select'?cfVal(e,cf)===kw:cfVal(e,cf).toLowerCase().includes(kw);
+    }
     return val(field).includes(kw);
   });
   renderEntries(getSorted('entriesTableBody',filtered));
@@ -812,7 +829,7 @@ window.handleEntryCSV=async function(e){
   existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
 
   const batch=writeBatch(db);
-  let addedRunners=0,updatedRunners=0,addedEntries=0,skippedEntries=0,fixedBibs=0;
+  let addedRunners=0,updatedRunners=0,addedEntries=0,skippedEntries=0,fixedBibs=0,reactivatedEntries=0;
 
   const startLine=isNaN(parseInt(lines[0].split(',')[0].replace(/"/g,'')))?1:0;
 
@@ -854,8 +871,19 @@ window.handleEntryCSV=async function(e){
       addedRunners++;
     }
 
-    // 比對報名資料：uniqueId重複則跳過
-    if(existingEntries.find(e=>e.uniqueId===uniqueId)){skippedEntries++;continue;}
+    // 比對報名資料：uniqueId重複則略過；若該筆原本申請取消中，視為重新啟用而非略過
+    const existingEntryObj=existingEntries.find(e=>e.uniqueId===uniqueId);
+    if(existingEntryObj){
+      if(existingEntryObj.cancelRequested){
+        batch.update(doc(db,'events',eventId,'runners',existingEntryObj.docId),{
+          group,cancelRequested:deleteField(),cancelRequestedAt:deleteField(),updatedAt:serverTimestamp()
+        });
+        reactivatedEntries++;
+      } else {
+        skippedEntries++;
+      }
+      continue;
+    }
 
     // 比對編號：重複則取下一個未使用編號
     let finalBib=bibNumber;
@@ -873,6 +901,7 @@ window.handleEntryCSV=async function(e){
 
   await batch.commit();
   let msg='匯入完成：新增選手'+addedRunners+'人，更新'+updatedRunners+'人，報名'+addedEntries+'筆';
+  if(reactivatedEntries)msg+='，重新啟用'+reactivatedEntries+'筆（原申請取消中）';
   if(skippedEntries)msg+='，略過重複'+skippedEntries+'筆';
   if(fixedBibs)msg+='，修正重複編號'+fixedBibs+'筆';
   showToast(msg);
@@ -1161,11 +1190,18 @@ window.saveEntry=async function(){
   if(!id){
     const existingEntry=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
     if(!existingEntry.empty){
-      // 已報名：更新 bibNumber、group、customData，同時同步個人資料到 runners 主檔
-      await updateDoc(doc(db,'events',eventId,'runners',existingEntry.docs[0].id),{bibNumber,group,customData,updatedAt:serverTimestamp()});
+      const exDoc=existingEntry.docs[0];
+      const exData=exDoc.data();
+      const entryUpdate={bibNumber,group,customData,updatedAt:serverTimestamp()};
+      if(exData.cancelRequested){
+        entryUpdate.cancelRequested=deleteField();
+        entryUpdate.cancelRequestedAt=deleteField();
+      }
+      // 已報名：更新 bibNumber、group、customData（若原本申請取消中，順便撤回），同時同步個人資料到 runners 主檔
+      await updateDoc(doc(db,'events',eventId,'runners',exDoc.id),entryUpdate);
       await updateDoc(doc(db,'runners',(await getDocs(query(collection(db,'runners'),where('uniqueId','==',uniqueId)))).docs[0].id),
         {name,gender,birthday,phone,email,idNumber:idNum,note,updatedAt:serverTimestamp()});
-      showToast('此選手已報名過此賽事，資料已更新');
+      showToast(exData.cancelRequested?'此選手原本申請取消，已重新啟用報名':'此選手已報名過此賽事，資料已更新');
       closeModal('entryModal'); loadEntries();
       return;
     }
@@ -1187,6 +1223,13 @@ window.deleteEntry=async function(id,name){
   const eventId=document.getElementById('entryEventSelect').value;
   if(!confirm('確定刪除「'+name+'」的報名資料？'))return;
   await deleteDoc(doc(db,'events',eventId,'runners',id)); showToast('已刪除'); loadEntries();
+}
+// 駁回取消申請：只清除標記，報名資料不受影響
+window.rejectCancelRequest=async function(id){
+  const eventId=document.getElementById('entryEventSelect').value;
+  if(!confirm('確定駁回此筆取消申請？報名資料會繼續保留。'))return;
+  await updateDoc(doc(db,'events',eventId,'runners',id),{cancelRequested:deleteField(),cancelRequestedAt:deleteField()});
+  showToast('已駁回申請'); loadEntries();
 }
 
 // ════════════════════════════
@@ -1311,19 +1354,39 @@ window.printRecords=async function(){
 // ── 查詢全部選手切換（已移除，由欄位選項取代）──
 // ── 組別下拉切換（查詢成績）──
 // ── 共用：依欄位切換查詢字詞控制項 ──
-function switchKwControl(field, kwInputId, kwGroupId, kwGenderId, eventSelectId){
+// ── 動態把自訂欄位加進搜尋欄位下拉選單（用 cf_ 開頭的id識別、避免跟固定欄位選項衝突）──
+function refreshSearchFieldOptions(selectId, customFields){
+  const sel=document.getElementById(selectId);
+  if(!sel)return;
+  const curVal=sel.value;
+  [...sel.options].forEach(o=>{if(o.value.startsWith('cf_'))sel.removeChild(o);});
+  customFields.forEach(f=>{
+    const o=document.createElement('option');
+    o.value=f.id; o.textContent=f.label;
+    sel.appendChild(o);
+  });
+  if([...sel.options].some(o=>o.value===curVal)) sel.value=curVal;
+}
+function switchKwControl(field, kwInputId, kwGroupId, kwGenderId, eventSelectId, kwSelectId, customFields){
   const kwInput=document.getElementById(kwInputId);
-  const kwGroup=document.getElementById(kwGroupId);
+  const kwGroup=kwGroupId?document.getElementById(kwGroupId):null;
   const kwGender=kwGenderId?document.getElementById(kwGenderId):null;
+  const kwSelect=kwSelectId?document.getElementById(kwSelectId):null;
   const hideAll=()=>{
     kwInput.style.display='none';
     if(kwGroup)kwGroup.style.display='none';
     if(kwGender)kwGender.style.display='none';
+    if(kwSelect)kwSelect.style.display='none';
   };
   hideAll();
+  const cf=customFields?customFields.find(f=>f.id===field):null;
   if(field==='__all__'){ /* 全部選手：全隱藏 */ }
   else if(field==='group'){ kwGroup.style.display='block'; if(eventSelectId)loadGroupDropdown(kwGroupId,eventSelectId); }
   else if(field==='gender'){ if(kwGender)kwGender.style.display='block'; }
+  else if(cf&&cf.type==='select'&&kwSelect){
+    kwSelect.innerHTML='<option value="">請選擇...</option>'+(cf.options||[]).map(o=>'<option value="'+esc(o)+'">'+esc(o)+'</option>').join('');
+    kwSelect.style.display='block';
+  }
   else { kwInput.style.display='block'; }
 }
 // ── 選手資料搜尋欄切換 ──
@@ -1342,9 +1405,21 @@ window.onSearchFieldChange=async function(){
 }
 // ── 報名管理搜尋欄切換 ──
 window.onEntrySearchFieldChange=async function(){
+  const field=document.getElementById('entrySearchField').value;
+  const kwCheckin=document.getElementById('entrySearchKwCheckin');
+  if(field==='checkin'){
+    document.getElementById('entrySearchKw').style.display='none';
+    document.getElementById('entrySearchKwGroup').style.display='none';
+    document.getElementById('entrySearchKwGender').style.display='none';
+    document.getElementById('entrySearchKwSelect').style.display='none';
+    kwCheckin.style.display='block';
+    return;
+  }
+  kwCheckin.style.display='none';
   switchKwControl(
-    document.getElementById('entrySearchField').value,
-    'entrySearchKw','entrySearchKwGroup','entrySearchKwGender','entryEventSelect'
+    field,
+    'entrySearchKw','entrySearchKwGroup','entrySearchKwGender','entryEventSelect',
+    'entrySearchKwSelect',curEntryCustomFields
   );
 }
 async function loadGroupDropdown(selectId,eventSelectId){
@@ -1895,11 +1970,12 @@ window.loadStaff=async function(){
   tbody.innerHTML='<tr><td colspan="9" class="loading-cell">載入中...</td></tr>';
   const evDoc=await getDoc(doc(db,'events',eventId));
   curStaffCustomFields=evDoc.data()?.staffCustomFields||[];
+  refreshSearchFieldOptions('staffSearchField',curStaffCustomFields);
   // 更新表頭
   const thead=document.getElementById('staffTableHead');
   const baseHeads=['姓名','性別','生日','手機','Email','身分證','備註'];
   const baseSortKeys=['name','gender','birthday','','','idNumber','note'];
-  thead.innerHTML='<th style="width:36px"><input type="checkbox" id="staffSelectAll" onchange="toggleSelectAll(\'staffTableBody\',\'staffSelectAll\',\'staffBatchDeleteBtn\')"></th>'
+  thead.innerHTML='<th style="width:36px"><input type="checkbox" id="staffSelectAll" onchange="toggleSelectAll(\'staffTableBody\',\'staffSelectAll\',\'staffBatchDeleteBtn\',\'staffBatchRejectBtn\')"></th>'
     +baseHeads.map((h,i)=>baseSortKeys[i]
       ?'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'staffTableBody\',\''+baseSortKeys[i]+'\')">'+h+'<span class="sort-icon"> ⇅</span></th>'
       :'<th>'+h+'</th>'
@@ -1922,9 +1998,11 @@ function renderStaff(list){
       let v=cd[f.id]; if(f.type==='checkbox')v=v?'是':'否';
       customCells+='<td>'+(v!==undefined&&v!==''?esc(v):'-')+'</td>';
     });
+    const cancelBadge=e.cancelRequested?' <span class="badge" style="background:rgba(239,68,68,.1);color:var(--red);border-color:rgba(239,68,68,.3)">⚠️ 申請取消中</span>':'';
+    const rejectBtn=e.cancelRequested?'<button class="btn btn-sm btn-ghost" onclick="rejectStaffCancelRequest(\''+e.id+'\')">駁回申請</button> ':'';
     return '<tr>'
-      +'<td><input type="checkbox" class="row-cb" data-id="'+e.id+'" onchange="onRowCbChange(\'staffBatchDeleteBtn\',\'staffTableBody\',\'staffSelectAll\')"></td>'
-      +'<td>'+esc(e.name||'-')+'</td>'
+      +'<td><input type="checkbox" class="row-cb" data-id="'+e.id+'" onchange="onRowCbChange(\'staffBatchDeleteBtn\',\'staffTableBody\',\'staffSelectAll\',\'staffBatchRejectBtn\')"></td>'
+      +'<td>'+esc(e.name||'-')+cancelBadge+'</td>'
       +'<td>'+esc(e.gender||'-')+'</td>'
       +'<td>'+esc(e.birthday||'-')+'</td>'
       +'<td>'+esc(e.phone||'-')+'</td>'
@@ -1933,22 +2011,33 @@ function renderStaff(list){
       +'<td>'+esc(e.note||'-')+'</td>'
       +customCells
       +'<td style="white-space:nowrap">'
+      +rejectBtn
       +'<button class="btn btn-sm btn-ghost" onclick="editStaff(\''+e.id+'\')">編輯</button> '
-      +'<button class="btn btn-sm btn-danger" onclick="deleteStaff(\''+e.id+'\',\''+escJs(e.name||'')+'\')">刪除</button>'
+      +'<button class="btn btn-sm btn-danger" onclick="deleteStaff(\''+e.id+'\',\''+escJs(e.name||'')+'\')">'+(e.cancelRequested?'核准刪除':'刪除')+'</button>'
       +'</td></tr>';
   }).join('');
 }
 window.onStaffSearchFieldChange=function(){
-  switchKwControl(document.getElementById('staffSearchField').value,'staffSearchKw','','staffSearchKwGender',null);
+  switchKwControl(document.getElementById('staffSearchField').value,'staffSearchKw','','staffSearchKwGender',null,'staffSearchKwSelect',curStaffCustomFields);
 }
 window.doStaffSearch=function(){
   const field=document.getElementById('staffSearchField').value;
-  const kw=field==='gender'?document.getElementById('staffSearchKwGender').value:document.getElementById('staffSearchKw').value.trim().toLowerCase();
+  const cf=curStaffCustomFields.find(f=>f.id===field);
+  const kw=field==='gender'?document.getElementById('staffSearchKwGender').value
+    :(cf&&cf.type==='select'?document.getElementById('staffSearchKwSelect').value
+    :document.getElementById('staffSearchKw').value.trim().toLowerCase());
   if(!kw&&field!=='gender'){renderStaff(getSorted('staffTableBody',allStaff));return;}
+  const cfVal=(e,f)=>{const cd=e.customData||{};let v=cd[f.id];if(f.type==='checkbox')v=v?'是':'否';return v!==undefined&&v!==null?String(v):'';};
   const filtered=allStaff.filter(e=>{
     const val=f=>(e[f]||'').toString().toLowerCase();
-    if(field==='all') return ['name','phone','email','idNumber','note'].some(f=>val(f).includes(kw));
+    if(field==='all'){
+      if(['name','phone','email','idNumber','note'].some(f=>val(f).includes(kw))) return true;
+      return curStaffCustomFields.some(f=>cfVal(e,f).toLowerCase().includes(kw));
+    }
     if(field==='gender') return (e.gender||'')===kw;
+    if(cf){
+      return cf.type==='select'?cfVal(e,cf)===kw:cfVal(e,cf).toLowerCase().includes(kw);
+    }
     return val(field).includes(kw);
   });
   renderStaff(getSorted('staffTableBody',filtered));
@@ -1988,6 +2077,13 @@ window.deleteStaff=async function(docId,name){
   const eventId=document.getElementById('staffEventSelect').value;
   await deleteDoc(doc(db,'events',eventId,'staff',docId));
   showToast('已刪除'); loadStaff();
+}
+// 駁回取消申請：只清除標記，報名資料不受影響
+window.rejectStaffCancelRequest=async function(docId){
+  if(!confirm('確定駁回此筆取消申請？報名資料會繼續保留。'))return;
+  const eventId=document.getElementById('staffEventSelect').value;
+  await updateDoc(doc(db,'events',eventId,'staff',docId),{cancelRequested:deleteField(),cancelRequestedAt:deleteField()});
+  showToast('已駁回申請'); loadStaff();
 }
 function renderStaffCustomFields(values){
   const container=document.getElementById('staffCustomFieldsContainer');
@@ -2205,25 +2301,28 @@ window.reRenderRecords = reRenderRecords;
 // ════════════════════════════
 // 批次刪除
 // ════════════════════════════
-// 全選/取消全選
-window.toggleSelectAll=function(tbodyId, selectAllId, btnId){
+// 全選/取消全選（extraBtnId 為選用的第二個批次按鈕，例如批次駁回）
+window.toggleSelectAll=function(tbodyId, selectAllId, btnId, extraBtnId){
   const checked=document.getElementById(selectAllId).checked;
   document.querySelectorAll('#'+tbodyId+' .row-cb').forEach(cb=>cb.checked=checked);
   document.getElementById(btnId).style.display=checked?'inline-flex':'none';
+  if(extraBtnId){const eb=document.getElementById(extraBtnId); if(eb) eb.style.display=checked?'inline-flex':'none';}
 }
 // 單列 checkbox 變更
-window.onRowCbChange=function(btnId, tbodyId, selectAllId){
+window.onRowCbChange=function(btnId, tbodyId, selectAllId, extraBtnId){
   const cbs=document.querySelectorAll('#'+tbodyId+' .row-cb');
   const checked=[...cbs].filter(cb=>cb.checked);
   document.getElementById(btnId).style.display=checked.length?'inline-flex':'none';
+  if(extraBtnId){const eb=document.getElementById(extraBtnId); if(eb) eb.style.display=checked.length?'inline-flex':'none';}
   document.getElementById(selectAllId).checked=checked.length===cbs.length&&cbs.length>0;
 }
 function getCheckedIds(tbodyId){
   return [...document.querySelectorAll('#'+tbodyId+' .row-cb:checked')].map(cb=>cb.dataset.id);
 }
-function resetBatchUI(tbodyId, selectAllId, btnId){
+function resetBatchUI(tbodyId, selectAllId, btnId, extraBtnId){
   const sa=document.getElementById(selectAllId); if(sa)sa.checked=false;
   const btn=document.getElementById(btnId); if(btn)btn.style.display='none';
+  if(extraBtnId){const eb=document.getElementById(extraBtnId); if(eb) eb.style.display='none';}
 }
 
 // 選手資料批次刪除
@@ -2273,8 +2372,29 @@ window.batchDeleteEntries=async function(){
   ids.forEach(id=>batch.delete(doc(db,'events',eventId,'runners',id)));
   await batch.commit();
   showToast('已刪除 '+ids.length+' 筆報名資料');
-  resetBatchUI('entriesTableBody','entriesSelectAll','entriesBatchDeleteBtn');
+  resetBatchUI('entriesTableBody','entriesSelectAll','entriesBatchDeleteBtn','entriesBatchRejectBtn');
   loadEntries();
+}
+// 報名管理批次駁回取消申請（只清除標記，資料保留）
+window.batchRejectEntries=async function(){
+  const ids=getCheckedIds('entriesTableBody');
+  const eventId=document.getElementById('entryEventSelect').value;
+  if(!ids.length||!eventId)return;
+  if(!confirm('確定駁回選取的 '+ids.length+' 筆取消申請？報名資料會繼續保留。'))return;
+  const batch=writeBatch(db);
+  ids.forEach(id=>batch.update(doc(db,'events',eventId,'runners',id),{cancelRequested:deleteField(),cancelRequestedAt:deleteField()}));
+  await batch.commit();
+  showToast('已駁回 '+ids.length+' 筆取消申請');
+  resetBatchUI('entriesTableBody','entriesSelectAll','entriesBatchDeleteBtn','entriesBatchRejectBtn');
+  loadEntries();
+}
+// 快速勾選所有「申請取消中」的報名列，方便批次審核
+window.selectCancelRequestedEntries=function(){
+  document.querySelectorAll('#entriesTableBody .row-cb').forEach(cb=>{
+    const item=allEntries.find(e=>e.id===cb.dataset.id);
+    cb.checked=!!(item&&item.cancelRequested);
+  });
+  onRowCbChange('entriesBatchDeleteBtn','entriesTableBody','entriesSelectAll','entriesBatchRejectBtn');
 }
 // 工作人員批次刪除
 window.batchDeleteStaff=async function(){
@@ -2286,8 +2406,29 @@ window.batchDeleteStaff=async function(){
   ids.forEach(id=>batch.delete(doc(db,'events',eventId,'staff',id)));
   await batch.commit();
   showToast('已刪除 '+ids.length+' 筆工作人員資料');
-  resetBatchUI('staffTableBody','staffSelectAll','staffBatchDeleteBtn');
+  resetBatchUI('staffTableBody','staffSelectAll','staffBatchDeleteBtn','staffBatchRejectBtn');
   loadStaff();
+}
+// 工作人員批次駁回取消申請（只清除標記，資料保留）
+window.batchRejectStaff=async function(){
+  const ids=getCheckedIds('staffTableBody');
+  const eventId=document.getElementById('staffEventSelect').value;
+  if(!ids.length||!eventId)return;
+  if(!confirm('確定駁回選取的 '+ids.length+' 筆取消申請？報名資料會繼續保留。'))return;
+  const batch=writeBatch(db);
+  ids.forEach(id=>batch.update(doc(db,'events',eventId,'staff',id),{cancelRequested:deleteField(),cancelRequestedAt:deleteField()}));
+  await batch.commit();
+  showToast('已駁回 '+ids.length+' 筆取消申請');
+  resetBatchUI('staffTableBody','staffSelectAll','staffBatchDeleteBtn','staffBatchRejectBtn');
+  loadStaff();
+}
+// 快速勾選所有「申請取消中」的工作人員列，方便批次審核
+window.selectCancelRequestedStaff=function(){
+  document.querySelectorAll('#staffTableBody .row-cb').forEach(cb=>{
+    const item=allStaff.find(e=>e.id===cb.dataset.id);
+    cb.checked=!!(item&&item.cancelRequested);
+  });
+  onRowCbChange('staffBatchDeleteBtn','staffTableBody','staffSelectAll','staffBatchRejectBtn');
 }
 // 打卡記錄批次刪除
 window.batchDeleteRecords=async function(){
@@ -2544,7 +2685,9 @@ th[data-sort]:hover{color:var(--accent);}
       <div class="section-header">
         <div class="section-title">報名管理</div>
         <div class="section-actions">
+          <button class="btn btn-ghost" onclick="selectCancelRequestedEntries()">⚠️ 只選申請取消中</button>
           <button class="btn btn-danger" id="entriesBatchDeleteBtn" style="display:none" onclick="batchDeleteEntries()">🗑️ 批次刪除</button>
+          <button class="btn btn-ghost" id="entriesBatchRejectBtn" style="display:none" onclick="batchRejectEntries()">↩️ 批次駁回</button>
           <input type="file" id="entryCsvFile" accept=".csv" style="display:none" onchange="handleEntryCSV(event)">
           <button class="btn btn-ghost" onclick="document.getElementById('entryCsvFile').click()">📥 匯入 CSV</button>
           <button class="btn btn-ghost" onclick="exportEntries()">📤 匯出 CSV</button>
@@ -2566,6 +2709,7 @@ th[data-sort]:hover{color:var(--accent);}
           <option value="email">E-Mail</option>
           <option value="idNumber">身分證字號</option>
           <option value="note">備註</option>
+          <option value="checkin">報到狀態</option>
         </select>
         <input id="entrySearchKw" type="text" class="input" placeholder="輸入查詢字詞...">
         <select id="entrySearchKwGroup" class="input" style="display:none;flex:1;min-width:150px"></select>
@@ -2573,9 +2717,14 @@ th[data-sort]:hover{color:var(--accent);}
           <option value="男">男</option>
           <option value="女">女</option>
         </select>
+        <select id="entrySearchKwCheckin" class="input" style="display:none;flex:1;min-width:150px">
+          <option value="已報到">已報到</option>
+          <option value="未報到">未報到</option>
+        </select>
+        <select id="entrySearchKwSelect" class="input" style="display:none;flex:1;min-width:150px"></select>
         <button class="btn btn-ghost" onclick="doEntrySearch()">搜尋</button>
       </div>
-      <div class="table-wrap"><table><thead><tr id="entriesTableHead"><th style="width:36px"><input type="checkbox" id="entriesSelectAll" onchange="toggleSelectAll('entriesTableBody','entriesSelectAll','entriesBatchDeleteBtn')"></th><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="entriesTableBody"><tr><td colspan="12" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr id="entriesTableHead"><th style="width:36px"><input type="checkbox" id="entriesSelectAll" onchange="toggleSelectAll('entriesTableBody','entriesSelectAll','entriesBatchDeleteBtn','entriesBatchRejectBtn')"></th><th>編號</th><th>組別</th><th>ID</th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="entriesTableBody"><tr><td colspan="12" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
     </div>
 
     <!-- 工作人員 -->
@@ -2583,7 +2732,9 @@ th[data-sort]:hover{color:var(--accent);}
       <div class="section-header">
         <div class="section-title">工作人員</div>
         <div class="section-actions">
+          <button class="btn btn-ghost" onclick="selectCancelRequestedStaff()">⚠️ 只選申請取消中</button>
           <button class="btn btn-danger" id="staffBatchDeleteBtn" style="display:none" onclick="batchDeleteStaff()">🗑️ 批次刪除</button>
+          <button class="btn btn-ghost" id="staffBatchRejectBtn" style="display:none" onclick="batchRejectStaff()">↩️ 批次駁回</button>
           <button class="btn btn-ghost" onclick="exportStaff()">📤 匯出 CSV</button>
           <button class="btn btn-primary" onclick="showAddStaff()">＋ 新增</button>
         </div>
@@ -2604,9 +2755,10 @@ th[data-sort]:hover{color:var(--accent);}
           <option value="男">男</option>
           <option value="女">女</option>
         </select>
+        <select id="staffSearchKwSelect" class="input" style="display:none;flex:1;min-width:150px"></select>
         <button class="btn btn-ghost" onclick="doStaffSearch()">搜尋</button>
       </div>
-      <div class="table-wrap"><table><thead><tr id="staffTableHead"><th style="width:36px"><input type="checkbox" id="staffSelectAll" onchange="toggleSelectAll('staffTableBody','staffSelectAll','staffBatchDeleteBtn')"></th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="staffTableBody"><tr><td colspan="9" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr id="staffTableHead"><th style="width:36px"><input type="checkbox" id="staffSelectAll" onchange="toggleSelectAll('staffTableBody','staffSelectAll','staffBatchDeleteBtn','staffBatchRejectBtn')"></th><th>姓名</th><th>性別</th><th>生日</th><th>手機</th><th>Email</th><th>身分證</th><th>備註</th><th>操作</th></tr></thead><tbody id="staffTableBody"><tr><td colspan="9" class="loading-cell">請先選擇賽事</td></tr></tbody></table></div>
     </div>
 
     <!-- 打卡記錄 -->

@@ -112,7 +112,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, where, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, query, orderBy, where, serverTimestamp, writeBatch, deleteField } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBWn7703qi0X6rL2c4WBhieTZ2-_JSrvco",
@@ -552,10 +552,21 @@ async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,
       // 檢查是否已報名此賽事
       const entrySnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
       if(!entrySnap.empty){
+        const existingEntry=entrySnap.docs[0];
+        const existingData=existingEntry.data();
         // 已報名：更新選手資料、group 及 customData
         await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
-        await updateDoc(doc(db,'events',eventId,'runners',entrySnap.docs[0].id),{group,customData,updatedAt:serverTimestamp()});
-        showToast('選手資料已更新，您已報名過此賽事');
+        if(existingData.cancelRequested){
+          // 之前申請取消但尚未經審核，視為撤回申請、重新啟用此筆報名
+          await updateDoc(doc(db,'events',eventId,'runners',existingEntry.id),{
+            group,customData,updatedAt:serverTimestamp(),
+            cancelRequested:deleteField(),cancelRequestedAt:deleteField()
+          });
+          showToast('已為您重新啟用此賽事的報名（取消申請已自動撤回）');
+        } else {
+          await updateDoc(doc(db,'events',eventId,'runners',existingEntry.id),{group,customData,updatedAt:serverTimestamp()});
+          showToast('選手資料已更新，您已報名過此賽事');
+        }
         if(btn){btn.textContent='送出報名';btn.disabled=false;}
         return;
       }
@@ -653,11 +664,20 @@ window.doStatusQuery=async function(){
       html+='</div>';
       html+='<div id="statusQR_'+evDoc.id+'_'+eDoc.id+'" class="qr-box"></div>';
       if(isRunnerRegOpen(ev, 0)){
-        html+='<div id="'+cardId+'_edit" style="margin-top:12px"></div>';
-        html+='<div style="display:flex;gap:8px;margin-top:8px">';
-        html+='<button class="btn btn-ghost btn-full" onclick="showEditForm(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+escJs(e.uniqueId)+'\',\''+cardId+'\')">✏️ 修改報名資料</button>';
-        html+='<button class="btn btn-danger btn-sm" onclick="deleteEntry(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+cardId+'\')">🗑️ 取消報名</button>';
-        html+='</div>';
+        if(e.cancelRequested){
+          html+='<div id="'+cardId+'_actions">';
+          html+='<div style="padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:.82rem;color:var(--muted);margin-bottom:8px">⏳ 已送出取消申請，請等待主辦方確認</div>';
+          html+='<button class="btn btn-ghost btn-full" onclick="withdrawCancelRequest(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+escJs(e.uniqueId)+'\',\''+cardId+'\')">↩️ 撤銷取消申請</button>';
+          html+='</div>';
+        } else {
+          html+='<div id="'+cardId+'_actions">';
+          html+='<div id="'+cardId+'_edit" style="margin-top:12px"></div>';
+          html+='<div style="display:flex;gap:8px;margin-top:8px">';
+          html+='<button class="btn btn-ghost btn-full" onclick="showEditForm(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+escJs(e.uniqueId)+'\',\''+cardId+'\')">✏️ 修改報名資料</button>';
+          html+='<button class="btn btn-danger btn-sm" onclick="requestCancelEntry(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+cardId+'\')">🗑️ 申請取消報名</button>';
+          html+='</div>';
+          html+='</div>';
+        }
       }
       html+='</div>';
     }
@@ -675,16 +695,37 @@ window.doStatusQuery=async function(){
   }
 }
 
-// ── 取消報名 ──
-window.deleteEntry=async function(eventId, entryDocId, cardId){
-  if(!confirm('確定取消此賽事報名？\n（個人資料不會被刪除，僅取消本次報名記錄）'))return;
+// ── 撤銷取消申請 ──
+window.withdrawCancelRequest=async function(eventId, entryDocId, uniqueId, cardId){
   try{
-    await deleteDoc(doc(db,'events',eventId,'runners',entryDocId));
-    const card=document.getElementById(cardId);
-    if(card) card.innerHTML='<div style="text-align:center;padding:16px;color:var(--muted);font-size:.88rem">✅ 已取消報名</div>';
-    showToast('已取消報名');
+    await updateDoc(doc(db,'events',eventId,'runners',entryDocId),{
+      cancelRequested:deleteField(), cancelRequestedAt:deleteField(), updatedAt:serverTimestamp()
+    });
+    const actions=document.getElementById(cardId+'_actions');
+    if(actions) actions.outerHTML='<div id="'+cardId+'_actions">'
+      +'<div id="'+cardId+'_edit" style="margin-top:12px"></div>'
+      +'<div style="display:flex;gap:8px;margin-top:8px">'
+      +'<button class="btn btn-ghost btn-full" onclick="showEditForm(\''+eventId+'\',\''+entryDocId+'\',\''+escJs(uniqueId)+'\',\''+cardId+'\')">✏️ 修改報名資料</button>'
+      +'<button class="btn btn-danger btn-sm" onclick="requestCancelEntry(\''+eventId+'\',\''+entryDocId+'\',\''+cardId+'\')">🗑️ 申請取消報名</button>'
+      +'</div></div>';
+    showToast('已撤銷取消申請');
   }catch(e){
-    showToast('取消失敗：'+e.message,'error');
+    showToast('撤銷失敗：'+e.message,'error');
+  }
+}
+
+// ── 申請取消報名（送出申請，待主辦方審核確認後才會真正刪除，不會立即生效）──
+window.requestCancelEntry=async function(eventId, entryDocId, cardId){
+  if(!confirm('確定要送出取消報名申請？\n（送出後請等待主辦方審核確認，不會立即取消，個人資料也不會被刪除）'))return;
+  try{
+    await updateDoc(doc(db,'events',eventId,'runners',entryDocId),{
+      cancelRequested:true, cancelRequestedAt:serverTimestamp()
+    });
+    const actions=document.getElementById(cardId+'_actions');
+    if(actions) actions.outerHTML='<div style="margin-top:12px;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:.82rem;color:var(--muted)">⏳ 已送出取消申請，請等待主辦方確認</div>';
+    showToast('已送出取消申請');
+  }catch(e){
+    showToast('申請失敗：'+e.message,'error');
   }
 }
 
