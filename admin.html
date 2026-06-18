@@ -990,7 +990,7 @@ window.manualCheckin=async function(eventId,uniqueId){
 window.showAddEntry=function(){
   const eventId=document.getElementById('entryEventSelect').value;
   if(!eventId){showToast('請先選擇賽事','error');return;}
-  document.getElementById('entryModalTitle').textContent='新增報名';
+  document.getElementById('entryModalTitle').textContent='新增選手';
   document.getElementById('entryDocId').value='';
   document.getElementById('entryUniqueId').value='';
   document.getElementById('entryRunnerSearch').value='';
@@ -1094,7 +1094,7 @@ window.editEntry=async function(id){
   const e=snap.data();
   const rSnap=await getDocs(query(collection(db,'runners'),where('uniqueId','==',e.uniqueId)));
   const r=rSnap.empty?{}:rSnap.docs[0].data();
-  document.getElementById('entryModalTitle').textContent='編輯報名';
+  document.getElementById('entryModalTitle').textContent='編輯選手';
   document.getElementById('entryDocId').value=id;
   document.getElementById('entryUniqueId').value=e.uniqueId;
   document.getElementById('entryRunnerSearch').value=e.name||r.name||'';
@@ -3035,7 +3035,7 @@ th[data-sort]:hover{color:var(--accent);}
 <!-- 工作人員 Modal -->
 <div id="staffModal" class="modal-overlay">
   <div class="modal">
-    <div class="modal-title">新增工作人員</div>
+    <div class="modal-title">編寫工作人員</div>
     <label>搜尋現有工作人員</label>
     <div style="position:relative;margin-bottom:14px">
       <input id="staffRunnerSearch" type="text" class="input" placeholder="輸入任意欄位資訊" oninput="searchStaffRunner()">
