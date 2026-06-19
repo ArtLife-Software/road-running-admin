@@ -497,19 +497,22 @@ function updateParentalBlock(){
   const group=document.getElementById('suGroup')?.value;
   const g=window._signupGroupMap?.[group];
   const block=document.getElementById('suParentalBlock');
-  console.log('[parental] group=',group,'g=',g,'block=',!!block,'_signupGroupMap=',window._signupGroupMap);
-  if(!block)return;
-  if(!g||!(g.parentalAge>0)){block.style.display='none';console.log('[parental] hidden: no group or parentalAge=0');return;}
+  const hint=document.getElementById('suGroupHint');
+  function dbg(msg){if(hint)hint.textContent='[debug] '+msg;}
+  if(!block){dbg('找不到 suParentalBlock');return;}
+  if(!window._signupGroupMap){dbg('_signupGroupMap 不存在');return;}
+  if(!g){dbg('找不到組別資料：'+group+'，可用組別：'+Object.keys(window._signupGroupMap).join(','));return;}
+  if(!(g.parentalAge>0)){dbg('此組別 parentalAge='+g.parentalAge+'（未設定）');block.style.display='none';return;}
   const birthday=document.getElementById('suBirthday')?.value.trim();
-  console.log('[parental] birthday=',birthday,'parentalAge=',g.parentalAge);
   if(birthday&&validateBirthday(birthday)){
     const evDate=curSignupEvent?.date||new Date().getFullYear()+'-01-01';
     const age=calcAgeRunner(birthday,evDate);
-    console.log('[parental] age=',age,'evDate=',evDate);
-    if(age!==null&&age>=g.parentalAge){block.style.display='none';console.log('[parental] hidden: age too old');return;}
+    dbg('年齡='+age+'，限制='+g.parentalAge+'歲以下，evDate='+evDate);
+    if(age!==null&&age>=g.parentalAge){block.style.display='none';return;}
+  }else{
+    dbg('生日未填或格式不對，parentalAge='+g.parentalAge+'，顯示block');
   }
   block.style.display='';
-  console.log('[parental] shown');
 }
 
 function calcAgeRunner(birthday,eventDate){
