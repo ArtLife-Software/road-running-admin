@@ -483,8 +483,13 @@ window.onSignupGroupChange=function(){
   hint.textContent=hints.length?'此組別限制：'+hints.join('、'):'';
   // 邀請碼
   if(inviteRow&&g.inviteCode?.trim())inviteRow.style.display='';
-  // 家長陪同（依生日即時判斷）
-  updateParentalBlock();
+  // 家長陪同：有生日才判斷，否則隱藏等待填生日
+  const birthday=document.getElementById('suBirthday')?.value.trim();
+  if(birthday&&validateBirthday(birthday)){
+    updateParentalBlock();
+  }else{
+    if(parentalBlock)parentalBlock.style.display='none';
+  }
 }
 
 // 依目前填寫的生日判斷是否需要顯示家長聲明區塊
@@ -495,11 +500,9 @@ function updateParentalBlock(){
   if(!block)return;
   if(!g||!(g.parentalAge>0)){block.style.display='none';return;}
   const birthday=document.getElementById('suBirthday')?.value.trim();
-  if(!birthday||!validateBirthday(birthday)){
-    // 生日未填或格式不對：若組別有家長陪同設定，先顯示 block 讓選手知道
-    block.style.display='';return;
-  }
-  // 有生日：用賽事日期計算（賽事無日期時用今年）
+  // 生日未填或格式不對：隱藏（不知道年齡就不顯示）
+  if(!birthday||!validateBirthday(birthday)){block.style.display='none';return;}
+  // 用賽事日期計算（無日期用今年）
   const evDate=curSignupEvent?.date||new Date().getFullYear()+'-01-01';
   const age=calcAgeRunner(birthday,evDate);
   block.style.display=(age!==null&&age<g.parentalAge)?'':'none';
@@ -1077,9 +1080,24 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   const r=rDocRef?rDocRef.data():{};
   const evDoc=await getDoc(doc(db,'events',eventId));
   const customFields=evDoc.data()?.customFields||[];
+  const evDate=evDoc.data()?.date||'';
   const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
-  const groups=gSnap.docs.map(d=>d.data().name);
+  const groupMap={};
+  gSnap.docs.forEach(d=>{groupMap[d.data().name]=d.data();});
+  const groups=Object.keys(groupMap);
   const customData=e.customData||{};
+  // 精簡版 groupMap 只保留 parentalAge，供 inline onchange 使用
+  const gMapJson=JSON.stringify(Object.fromEntries(Object.entries(groupMap).map(([k,v])=>[k,{parentalAge:v.parentalAge||0}])));
+
+  function needsParental(grpName,bday){
+    const g=groupMap[grpName];
+    if(!g||!(g.parentalAge>0))return false;
+    if(!bday||!validateBirthday(bday))return false;
+    const base=evDate||new Date().getFullYear()+'-01-01';
+    const age=calcAgeRunner(bday,base);
+    return age!==null&&age<g.parentalAge;
+  }
+  const showParental=needsParental(e.group||'',r.birthday||'');
 
   let html='<div class="card" style="background:var(--surface2)">';
   const canChangeBib=evDoc.data()?.allowBibChange&&isRunnerRegOpen(evDoc.data(),0);
@@ -1092,25 +1110,41 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
       +'<input id="'+cardId+'_eBib" type="text" class="input" value="'+esc(e.bibNumber||'')+'" oninput="applyHalf(this)" onblur="checkEditBibAvailable(\''+eventId+'\',\''+entryDocId+'\',\''+cardId+'\')">'
       +'<div id="'+cardId+'_eBibHint" style="font-size:.75rem;margin-top:4px;min-height:18px"></div>'
       +'</div>';
-    // 把範圍資料存在 dataset 供 checkEditBibAvailable 讀取
     html+='<input type="hidden" id="'+cardId+'_bibRange" data-min="'+rMin+'" data-max="'+rMax+'" data-pad="'+(evDoc.data()?.bibPadLength||3)+'">';
   }
   html+='<div class="input-group"><label>姓名</label><input id="'+cardId+'_eName" type="text" class="input" value="'+esc(r.name||'')+'"></div>';
   html+='<div class="input-group"><label>性別</label><select id="'+cardId+'_eGender" class="input"><option value="男"'+(r.gender==='男'?' selected':'')+'>男</option><option value="女"'+(r.gender==='女'?' selected':'')+'>女</option></select></div>';
+  const gMapEsc=gMapJson.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  const evDateEsc=evDate.replace(/'/g,"\\'");
   html+='<div class="input-group"><label>生日（yyyy/mm/dd）</label>'
     +'<div class="input-row">'
-    +'<input id="'+cardId+'_eBirthday" data-fmt="ymd" type="text" class="input" value="'+esc(r.birthday||'')+'" oninput="applyHalf(this)">'
+    +'<input id="'+cardId+'_eBirthday" data-fmt="ymd" type="text" class="input" value="'+esc(r.birthday||'')+'" oninput="applyHalf(this)" onblur="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\')">'
     +'<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\''+cardId+'_eBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>'
     +'<input type="date" id="'+cardId+'_eBirthdayPicker" style="display:none" '
-    +'onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\''+cardId+'_eBirthday\').value=y+\'/\'+m+\'/\'+d;this.value=\'\'}">'
+    +'onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\''+cardId+'_eBirthday\').value=y+\'/\'+m+\'/\'+d;updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\');this.value=\'\'}">'
     +'</div></div>';
   html+='<div class="input-group"><label>手機號碼</label><input id="'+cardId+'_ePhone" type="tel" class="input" value="'+esc(r.phone||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>E-Mail</label><input id="'+cardId+'_eEmail" type="email" class="input" value="'+esc(r.email||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>身分證字號</label><input id="'+cardId+'_eIdNumber" type="text" class="input" value="'+esc(r.idNumber||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_eNote" type="text" class="input" value="'+esc(r.note||'')+'"></div>';
-  html+='<div class="input-group"><label>組別</label><select id="'+cardId+'_eGroup" class="input">';
+  html+='<div class="input-group"><label>組別</label><select id="'+cardId+'_eGroup" class="input" onchange="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\')">';
   groups.forEach(g=>{html+='<option value="'+esc(g)+'"'+(g===e.group?' selected':'')+'>'+esc(g)+'</option>';});
   html+='</select></div>';
+  // 家長陪同欄位
+  html+='<div id="'+cardId+'_eParentalBlock" style="display:'+(showParental?'':'none')+'">'
+    +'<div style="padding:12px;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.3);border-radius:8px;margin-bottom:14px">'
+    +'<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:.85rem;line-height:1.5">'
+    +'<input type="checkbox" id="'+cardId+'_eParentalConsent" style="margin-top:3px;flex-shrink:0"'+(e.parentalConsentAgreed?' checked':'')+'>'
+    +'<span>本人（家長／監護人）已閱讀相關規定，同意全程陪同參賽者完成賽事，並承擔相關責任。</span>'
+    +'</label>'
+    +'<div class="input-group" style="margin-top:10px;margin-bottom:0">'
+    +'<label>緊急聯絡人姓名 *</label><input id="'+cardId+'_eParentName" type="text" class="input" value="'+esc(e.parentName||'')+'" placeholder="家長／監護人姓名">'
+    +'</div>'
+    +'<div class="input-group" style="margin-top:10px;margin-bottom:0">'
+    +'<label>緊急聯絡人手機 *</label><input id="'+cardId+'_eParentPhone" type="tel" class="input" value="'+esc(e.parentPhone||'')+'" placeholder="0912345678" oninput="applyHalf(this)">'
+    +'</div>'
+    +'</div>'
+    +'</div>';
   customFields.forEach(f=>{
     const fid=cardId+'_ecf_'+f.id;
     if(f.type==='select'){
@@ -1127,6 +1161,23 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   html+='</div>';
   box.innerHTML=html;
   box.dataset.customFields=JSON.stringify(customFields);
+}
+
+// 修改表單：依生日/組別更新家長陪同區塊顯示
+window.updateEditParentalBlock=function(cardId, gMapJson, evDate){
+  const block=document.getElementById(cardId+'_eParentalBlock');
+  if(!block)return;
+  try{
+    const gMap=JSON.parse(gMapJson);
+    const group=document.getElementById(cardId+'_eGroup')?.value;
+    const birthday=document.getElementById(cardId+'_eBirthday')?.value.trim();
+    const g=gMap[group];
+    if(!g||!(g.parentalAge>0)){block.style.display='none';return;}
+    if(!birthday||!validateBirthday(birthday)){block.style.display='none';return;}
+    const base=evDate||new Date().getFullYear()+'-01-01';
+    const age=calcAgeRunner(birthday,base);
+    block.style.display=(age!==null&&age<g.parentalAge)?'':'none';
+  }catch(e){block.style.display='none';}
 }
 
 window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
@@ -1176,11 +1227,24 @@ window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
     if(f.type==='checkbox')customData[f.id]=el.checked;
     else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
   }
+  // 家長陪同欄位（若 block 顯示中才驗證和儲存）
+  const parentalBlock=document.getElementById(cardId+'_eParentalBlock');
+  const parentalVisible=parentalBlock&&parentalBlock.style.display!=='none';
+  let parentalData={};
+  if(parentalVisible){
+    const consent=document.getElementById(cardId+'_eParentalConsent')?.checked||false;
+    const parentName=document.getElementById(cardId+'_eParentName')?.value.trim()||'';
+    const parentPhone=document.getElementById(cardId+'_eParentPhone')?.value.trim()||'';
+    if(!consent){showToast('請勾選家長陪同聲明','error');return;}
+    if(!parentName){showToast('請填寫緊急聯絡人姓名','error');return;}
+    if(!parentPhone||!validatePhone(parentPhone)){showToast('請填寫正確的緊急聯絡人手機','error');return;}
+    parentalData={parentalConsentAgreed:true,parentName,parentPhone};
+  }
   try{
     if(runnerDocId){
       await updateDoc(doc(db,'runners',runnerDocId),{name,gender,birthday,phone,email,idNumber,note,updatedAt:serverTimestamp()});
     }
-    const entryUpdate={group,customData,updatedAt:serverTimestamp()};
+    const entryUpdate={group,customData,...parentalData,updatedAt:serverTimestamp()};
     if(newBib)entryUpdate.bibNumber=newBib;
     await updateDoc(doc(db,'events',eventId,'runners',entryDocId),entryUpdate);
     showToast('已儲存修改');
