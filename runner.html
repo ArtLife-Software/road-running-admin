@@ -403,9 +403,9 @@ async function selectSignupEvent(eventId, keepWrapper){
   formHtml+='<div class="input-group"><label>姓名 *</label><input id="suName" type="text" class="input" placeholder="王小明"></div>';
   formHtml+='<div class="input-group"><label>性別 *</label><select id="suGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>';
   formHtml+='<div class="input-group"><label>生日（yyyy/mm/dd）*</label>';
-  formHtml+='<div class="input-row"><input id="suBirthday" data-fmt="ymd" type="text" class="input" placeholder="yyyy/mm/dd" onblur="setFieldError(\'suBirthday\',!validateBirthday(this.value.trim()));updateParentalBlock()">';
+  formHtml+='<div class="input-row"><input id="suBirthday" data-fmt="ymd" type="text" class="input" placeholder="yyyy/mm/dd" oninput="applyHalf(this);updateParentalBlock()" onblur="setFieldError(\'suBirthday\',!validateBirthday(this.value.trim()));updateParentalBlock()">';
   formHtml+='<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\'suBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>';
-  formHtml+='<input type="date" id="suBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'suBirthday\').value=y+\'/\'+m+\'/\'+d;setFieldError(\'suBirthday\',false);this.value=\'\'}"></div></div>';
+  formHtml+='<input type="date" id="suBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'suBirthday\').value=y+\'/\'+m+\'/\'+d;setFieldError(\'suBirthday\',false);updateParentalBlock();this.value=\'\'}"></div></div>';
   if(phoneShow) formHtml+='<div class="input-group"><label>手機號碼（09開頭10碼）'+(phoneReq?' *':'')+'</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="if(this.value.trim())setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
   if(emailShow) formHtml+='<div class="input-group"><label>E-Mail'+(emailReq?' *':'')+'</label><input id="suEmail" type="email" class="input" placeholder="example@email.com" onblur="setFieldError(\'suEmail\',!validateEmail(this.value.trim()))"></div>';
   if(idShow) formHtml+='<div class="input-group"><label>身分證字號（1英文+9數字）'+(idReq?' *':'')+'</label><input id="suIdNumber" type="text" class="input" placeholder="A123456789" onblur="setFieldError(\'suIdNumber\',!validateId(this.value.trim()))"></div>';
@@ -499,13 +499,15 @@ function updateParentalBlock(){
   const block=document.getElementById('suParentalBlock');
   if(!block)return;
   if(!g||!(g.parentalAge>0)){block.style.display='none';return;}
+  // 組別有家長陪同設定：預設顯示
+  // 只有在生日格式正確且年齡明確超過限制時才隱藏
   const birthday=document.getElementById('suBirthday')?.value.trim();
-  // 生日未填或格式不對：隱藏（不知道年齡就不顯示）
-  if(!birthday||!validateBirthday(birthday)){block.style.display='none';return;}
-  // 用賽事日期計算（無日期用今年）
-  const evDate=curSignupEvent?.date||new Date().getFullYear()+'-01-01';
-  const age=calcAgeRunner(birthday,evDate);
-  block.style.display=(age!==null&&age<g.parentalAge)?'':'none';
+  if(birthday&&validateBirthday(birthday)){
+    const evDate=curSignupEvent?.date||new Date().getFullYear()+'-01-01';
+    const age=calcAgeRunner(birthday,evDate);
+    if(age!==null&&age>=g.parentalAge){block.style.display='none';return;}
+  }
+  block.style.display='';
 }
 
 function calcAgeRunner(birthday,eventDate){
@@ -1092,10 +1094,13 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   function needsParental(grpName,bday){
     const g=groupMap[grpName];
     if(!g||!(g.parentalAge>0))return false;
-    if(!bday||!validateBirthday(bday))return false;
-    const base=evDate||new Date().getFullYear()+'-01-01';
-    const age=calcAgeRunner(bday,base);
-    return age!==null&&age<g.parentalAge;
+    // 預設顯示；只有生日確認超齡才回傳 false
+    if(bday&&validateBirthday(bday)){
+      const base=evDate||new Date().getFullYear()+'-01-01';
+      const age=calcAgeRunner(bday,base);
+      if(age!==null&&age>=g.parentalAge)return false;
+    }
+    return true;
   }
   const showParental=needsParental(e.group||'',r.birthday||'');
 
@@ -1118,7 +1123,7 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   const evDateEsc=evDate.replace(/'/g,"\\'");
   html+='<div class="input-group"><label>生日（yyyy/mm/dd）</label>'
     +'<div class="input-row">'
-    +'<input id="'+cardId+'_eBirthday" data-fmt="ymd" type="text" class="input" value="'+esc(r.birthday||'')+'" oninput="applyHalf(this)" onblur="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\')">'
+    +'<input id="'+cardId+'_eBirthday" data-fmt="ymd" type="text" class="input" value="'+esc(r.birthday||'')+'" oninput="applyHalf(this);updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\')" onblur="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\')">'
     +'<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\''+cardId+'_eBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>'
     +'<input type="date" id="'+cardId+'_eBirthdayPicker" style="display:none" '
     +'onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\''+cardId+'_eBirthday\').value=y+\'/\'+m+\'/\'+d;updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\');this.value=\'\'}">'
@@ -1173,10 +1178,14 @@ window.updateEditParentalBlock=function(cardId, gMapJson, evDate){
     const birthday=document.getElementById(cardId+'_eBirthday')?.value.trim();
     const g=gMap[group];
     if(!g||!(g.parentalAge>0)){block.style.display='none';return;}
-    if(!birthday||!validateBirthday(birthday)){block.style.display='none';return;}
-    const base=evDate||new Date().getFullYear()+'-01-01';
-    const age=calcAgeRunner(birthday,base);
-    block.style.display=(age!==null&&age<g.parentalAge)?'':'none';
+    // 組別有家長陪同設定：預設顯示
+    // 只有生日格式正確且年齡明確超過限制時才隱藏
+    if(birthday&&validateBirthday(birthday)){
+      const base=evDate||new Date().getFullYear()+'-01-01';
+      const age=calcAgeRunner(birthday,base);
+      if(age!==null&&age>=g.parentalAge){block.style.display='none';return;}
+    }
+    block.style.display='';
   }catch(e){block.style.display='none';}
 }
 
