@@ -493,7 +493,7 @@ window.onSignupGroupChange=function(){
 }
 
 // 依目前填寫的生日判斷是否需要顯示家長聲明區塊
-function updateParentalBlock(){
+window.updateParentalBlock=function updateParentalBlock(){
   const group=document.getElementById('suGroup')?.value;
   const g=window._signupGroupMap?.[group];
   const block=document.getElementById('suParentalBlock');
@@ -515,7 +515,7 @@ function updateParentalBlock(){
   block.style.display='';
 }
 
-function calcAgeRunner(birthday,eventDate){
+window.calcAgeRunner=function calcAgeRunner(birthday,eventDate){
   if(!birthday||!eventDate)return null;
   const [by,bm,bd]=birthday.split('/').map(Number);
   const [ey,em,ed]=eventDate.split('-').map(Number);
