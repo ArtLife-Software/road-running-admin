@@ -131,14 +131,14 @@ document.addEventListener('input', function(e) {
 
 // ── 格式驗證 ──
 function validateBirthday(v) {
-  if (!v) return true;
+  if (!v) return true; // 空值由呼叫端決定是否必填
   if (!/^\d{4}\/\d{2}\/\d{2}$/.test(v)) return false;
   const [y,m,d] = v.split('/').map(Number);
   const dt = new Date(y,m-1,d);
   if(dt.getFullYear()!==y||dt.getMonth()!==m-1||dt.getDate()!==d) return false;
+  if(y<1900) return false;
   const today=new Date(); today.setHours(0,0,0,0);
   if(dt>=today) return false;
-  if(y<1900) return false;
   return true;
 }
 function validatePhone(v) {
@@ -1131,6 +1131,10 @@ window.showAddEntry=async function(){
   document.getElementById('eNote').value='';
   document.getElementById('eInviteCode').value='';
   document.getElementById('eInviteCodeRow').style.display='none';
+  document.getElementById('eParentalBlock').style.display='none';
+  document.getElementById('eParentalConsent').checked=false;
+  document.getElementById('eParentName').value='';
+  document.getElementById('eParentPhone').value='';
   document.getElementById('eGroupHint').textContent='';
   ['eBib','eBirthday','ePhone','eEmail','eIdNumber'].forEach(id=>setFieldError(id,false));
   // 套用 fieldSettings
@@ -1218,9 +1222,9 @@ window.onEntryGroupChange=function(){
   const inviteRow=document.getElementById('eInviteCodeRow');
   const hint=document.getElementById('eGroupHint');
   document.getElementById('eInviteCode').value='';
-  if(!g){inviteRow.style.display='none';hint.textContent='';return;}
+  if(!g){inviteRow.style.display='none';hint.textContent='';updateAdminParentalBlock();return;}
   inviteRow.style.display=(g.inviteCode?.trim())?'':'none';
-  // 即時顯示限制摘要
+  // 限制摘要
   const hints=[];
   if(g.genderLimit) hints.push('限'+g.genderLimit+'性');
   if(g.ageMin>0) hints.push(g.ageMin+'歲以上');
@@ -1229,9 +1233,28 @@ window.onEntryGroupChange=function(){
   if(g.parentalAge>0) hints.push(g.parentalAge+'歲以下須家長陪同聲明');
   hint.textContent=hints.length?'此組別限制：'+hints.join('、'):'';
   hint.style.color='var(--muted)';
+  updateAdminParentalBlock();
 }
 
-// ── 套用 fieldSettings 到選手 Modal ──
+function updateAdminParentalBlock(){
+  const group=document.getElementById('eGroup').value;
+  const g=curEntryGroupMap[group];
+  const block=document.getElementById('eParentalBlock');
+  if(!block)return;
+  if(!g||!(g.parentalAge>0)){block.style.display='none';return;}
+  const birthday=document.getElementById('eBirthday').value.trim();
+  if(!birthday||!validateBirthday(birthday)){block.style.display='none';return;}
+  // 需要賽事日期計算年齡
+  getDoc(doc(db,'events',document.getElementById('entryEventSelect').value)).then(evDoc=>{
+    const evDate=evDoc.data()?.date||new Date().getFullYear()+'-01-01';
+    const [by,bm,bd]=birthday.split('/').map(Number);
+    const [ey,em,ed]=evDate.split('-').map(Number);
+    let age=ey-by;if(em<bm||(em===bm&&ed<bd))age--;
+    block.style.display=(age<g.parentalAge)?'':'none';
+  });
+}
+
+window.updateAdminParentalBlock=updateAdminParentalBlock;
 function applyEntryFieldSettings(fs){
   const fields=[
     {key:'phone', rowId:'ePhoneRow', labelId:'ePhoneLabel', defaultLabel:'手機號碼（09開頭10碼）'},
@@ -1335,6 +1358,10 @@ window.editEntry=async function(id){
   document.getElementById('eNote').value=r.note||'';
   document.getElementById('eInviteCode').value='';
   document.getElementById('eInviteCodeRow').style.display='none';
+  // 家長資料：讀入已存的值，顯示狀態由 onEntryGroupChange 決定
+  document.getElementById('eParentalConsent').checked=e.parentalConsentAgreed||false;
+  document.getElementById('eParentName').value=e.parentName||'';
+  document.getElementById('eParentPhone').value=e.parentPhone||'';
   document.getElementById('eGroupHint').textContent='';
   ['eBib','eBirthday','ePhone','eEmail','eIdNumber'].forEach(fid=>setFieldError(fid,false));
   // 套用 fieldSettings
@@ -1388,6 +1415,19 @@ window.saveEntry=async function(){
     document.getElementById('eGroupHint').textContent=groupErr;
     document.getElementById('eGroupHint').style.color='var(--red)';
     showToast(groupErr,'error');return;
+  }
+  // 家長陪同驗證（以 block 顯示狀態為準）
+  const parentalBlock=document.getElementById('eParentalBlock');
+  const parentalVisible=parentalBlock&&parentalBlock.style.display!=='none';
+  let parentalData={};
+  if(parentalVisible){
+    const consent=document.getElementById('eParentalConsent')?.checked||false;
+    const parentName=document.getElementById('eParentName')?.value.trim()||'';
+    const parentPhone=document.getElementById('eParentPhone')?.value.trim()||'';
+    if(!consent){showToast('請勾選家長陪同聲明','error');return;}
+    if(!parentName){showToast('請填寫緊急聯絡人姓名','error');return;}
+    if(!parentPhone||!validatePhone(parentPhone)){showToast('請填寫正確的緊急聯絡人手機','error');return;}
+    parentalData={parentalConsentAgreed:true,parentName,parentPhone};
   }
   // 自訂欄位必填驗證
   const missingLabel=validateEntryCustomFields();
@@ -1467,7 +1507,7 @@ window.saveEntry=async function(){
       await updateDoc(doc(db,'runners',rSnap.docs[0].id),{name,gender,birthday,phone,email,idNumber:idNum,note,updatedAt:serverTimestamp()});
     }
   }
-  const data={uniqueId,bibNumber,group,customData,updatedAt:serverTimestamp()};
+  const data={uniqueId,bibNumber,group,customData,...parentalData,updatedAt:serverTimestamp()};
   if(id){await updateDoc(doc(db,'events',eventId,'runners',id),data);showToast('已更新');}
   else{data.createdAt=serverTimestamp();await addDoc(collection(db,'events',eventId,'runners'),data);showToast('已新增');}
   closeModal('entryModal'); loadEntries();
@@ -3415,8 +3455,8 @@ th[data-sort]:hover{color:var(--accent);}
     <div class="input-group"><label>性別 *</label><select id="eGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>
     <div class="input-group"><label>生日（yyyy/mm/dd）</label>
       <div class="input-row">
-        <input id="eBirthday" data-fmt="ymd" type="text" class="input" placeholder="yyyy/mm/dd" onblur="validateEntryField('birthday')" oninput="applyHalf(this)">
-        <button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById('datePicker');_d.showPicker?_d.showPicker():_d.click()">📅</button><input type="date" id="datePicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('eBirthday').value=y+'/'+m+'/'+d;setFieldError('eBirthday',false);this.value=''}">
+        <input id="eBirthday" data-fmt="ymd" type="text" class="input" placeholder="yyyy/mm/dd" onblur="validateEntryField('birthday');updateAdminParentalBlock()" oninput="applyHalf(this);updateAdminParentalBlock()">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById('datePicker');_d.showPicker?_d.showPicker():_d.click()">📅</button><input type="date" id="datePicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('eBirthday').value=y+'/'+m+'/'+d;setFieldError('eBirthday',false);updateAdminParentalBlock();this.value=''}">
       </div>
     </div>
     <div class="input-group" id="ePhoneRow"><label id="ePhoneLabel">手機號碼（09開頭10碼）</label><input id="ePhone" type="tel" class="input" placeholder="0912345678" onblur="validateEntryField('phone')" oninput="applyHalf(this)"></div>
@@ -3424,6 +3464,20 @@ th[data-sort]:hover{color:var(--accent);}
     <div class="input-group" id="eIdNumberRow"><label id="eIdNumberLabel">身分證字號（1英文+9數字）</label><input id="eIdNumber" type="text" class="input" placeholder="A123456789" onblur="validateEntryField('idNumber')" oninput="applyHalf(this)"></div>
     <div class="input-group"><label>備註</label><input id="eNote" type="text" class="input"></div>
     <div class="input-group" id="eInviteCodeRow" style="display:none"><label>邀請碼 *</label><input id="eInviteCode" type="text" class="input" placeholder="輸入邀請碼"></div>
+    <div id="eParentalBlock" style="display:none">
+      <div style="padding:12px;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.3);border-radius:8px;margin-bottom:14px">
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:.85rem;line-height:1.5">
+          <input type="checkbox" id="eParentalConsent" style="margin-top:3px;flex-shrink:0">
+          <span>本人（家長／監護人）已閱讀相關規定，同意全程陪同參賽者完成賽事，並承擔相關責任。</span>
+        </label>
+        <div class="input-group" style="margin-top:10px;margin-bottom:0">
+          <label>緊急聯絡人姓名 *</label><input id="eParentName" type="text" class="input" placeholder="家長／監護人姓名">
+        </div>
+        <div class="input-group" style="margin-top:10px;margin-bottom:0">
+          <label>緊急聯絡人手機 *</label><input id="eParentPhone" type="tel" class="input" placeholder="0912345678" oninput="applyHalf(this)">
+        </div>
+      </div>
+    </div>
     <div id="entryCustomFieldsContainer"></div>
     <input type="hidden" id="entryDocId">
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('entryModal')">取消</button><button class="btn btn-primary" onclick="saveEntry()">儲存</button></div>

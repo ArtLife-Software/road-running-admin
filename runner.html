@@ -195,16 +195,17 @@ document.addEventListener('input', function(e) {
 }, true);
 
 function validateBirthday(v) {
-  if (!v) return true;
+  if (!v) return true; // 空值由呼叫端決定是否必填
   if (!/^\d{4}\/\d{2}\/\d{2}$/.test(v)) return false;
   const [y,m,d] = v.split('/').map(Number);
   const dt = new Date(y,m-1,d);
   if(dt.getFullYear()!==y||dt.getMonth()!==m-1||dt.getDate()!==d) return false;
+  if(y<1900) return false;
   const today=new Date(); today.setHours(0,0,0,0);
   if(dt>=today) return false; // 不能是今天或未來
-  if(y<1900) return false; // 不合理的年份
   return true;
 }
+window.validateBirthday=validateBirthday;
 function validatePhone(v) { return /^09\d{8}$/.test(v); }
 function validateEmail(v) {
   if (!v) return true;
@@ -612,10 +613,10 @@ window.submitSignup=async function(){
       }
     }
     if(g.inviteCode?.trim()&&inviteInput!==g.inviteCode.trim()){showToast('邀請碼不正確','error');return;}
-    // 家長陪同聲明
-    if(g.parentalAge>0&&birthday&&evDate){
-      const age=calcAgeRunner(birthday,evDate);
-      if(age!==null&&age<g.parentalAge){
+    // 家長陪同聲明：只要 block 顯示中就驗證，不依賴 evDate
+    if(g.parentalAge>0){
+      const parentalBlock=document.getElementById('suParentalBlock');
+      if(parentalBlock&&parentalBlock.style.display!=='none'){
         const consent=document.getElementById('suParentalConsent');
         const parentName=document.getElementById('suParentName')?.value.trim()||'';
         const parentPhone=document.getElementById('suParentPhone')?.value.trim()||'';
@@ -867,7 +868,6 @@ function showSignupSuccess(info){
 }
 
 // 把驗證函式掛到全域，供 inline onblur 使用
-window.validateBirthday=validateBirthday;
 window.validatePhone=validatePhone;
 window.validateEmail=validateEmail;
 window.validateId=validateId;
@@ -1228,7 +1228,7 @@ window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
     newBib=String(n).padStart(pad,'0');
   }
   if(!name){showToast('姓名為必填','error');return;}
-  if(birthday&&!validateBirthday(birthday)){showToast('生日格式錯誤','error');return;}
+  if(birthday&&!validateBirthday(birthday)){showToast('生日格式錯誤或不合理（不能是未來日期）','error');return;}
   if(phone&&!validatePhone(phone)){showToast('手機號碼格式錯誤','error');return;}
   if(email&&!validateEmail(email)){showToast('Email格式錯誤','error');return;}
   if(idNumber&&!validateId(idNumber)){showToast('身分證格式錯誤','error');return;}
