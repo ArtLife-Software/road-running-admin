@@ -509,10 +509,12 @@ window.updateParentalBlock=function updateParentalBlock(){
     const age=calcAgeRunner(birthday,evDate);
     dbg('年齡='+age+'，限制='+g.parentalAge+'歲以下，evDate='+evDate);
     if(age!==null&&age>=g.parentalAge){block.style.display='none';return;}
+    block.style.display='';
   }else{
-    dbg('生日未填或格式不對，parentalAge='+g.parentalAge+'，顯示block');
+    block.style.display='none';
+    if(birthday)dbg('生日格式不正確，隱藏');
+    else dbg('生日未填，隱藏');
   }
-  block.style.display='';
 }
 
 window.calcAgeRunner=function calcAgeRunner(birthday,eventDate){
@@ -1099,13 +1101,10 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   function needsParental(grpName,bday){
     const g=groupMap[grpName];
     if(!g||!(g.parentalAge>0))return false;
-    // 預設顯示；只有生日確認超齡才回傳 false
-    if(bday&&validateBirthday(bday)){
-      const base=evDate||new Date().getFullYear()+'-01-01';
-      const age=calcAgeRunner(bday,base);
-      if(age!==null&&age>=g.parentalAge)return false;
-    }
-    return true;
+    if(!bday||!validateBirthday(bday))return false;
+    const base=evDate||new Date().getFullYear()+'-01-01';
+    const age=calcAgeRunner(bday,base);
+    return age!==null&&age<g.parentalAge;
   }
   const showParental=needsParental(e.group||'',r.birthday||'');
 
@@ -1189,8 +1188,10 @@ window.updateEditParentalBlock=function(cardId, gMapJson, evDate){
       const base=evDate||new Date().getFullYear()+'-01-01';
       const age=calcAgeRunner(birthday,base);
       if(age!==null&&age>=g.parentalAge){block.style.display='none';return;}
+      block.style.display='';
+    }else{
+      block.style.display='none';
     }
-    block.style.display='';
   }catch(e){block.style.display='none';}
 }
 
