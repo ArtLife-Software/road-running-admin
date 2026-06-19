@@ -501,23 +501,16 @@ window.updateParentalBlock=function updateParentalBlock(){
   const group=document.getElementById('suGroup')?.value;
   const g=window._signupGroupMap?.[group];
   const block=document.getElementById('suParentalBlock');
-  const hint=document.getElementById('suGroupHint');
-  function dbg(msg){if(hint)hint.textContent='[debug] '+msg;}
-  if(!block){dbg('找不到 suParentalBlock');return;}
-  if(!window._signupGroupMap){dbg('_signupGroupMap 不存在');return;}
-  if(!g){dbg('找不到組別資料：'+group+'，可用組別：'+Object.keys(window._signupGroupMap).join(','));return;}
-  if(!(g.parentalAge>0)){dbg('此組別 parentalAge='+g.parentalAge+'（未設定）');block.style.display='none';return;}
+  if(!block)return;
+  if(!g||!(g.parentalAge>0)){block.style.display='none';return;}
   const birthday=document.getElementById('suBirthday')?.value.trim();
   if(birthday&&validateBirthday(birthday)){
     const evDate=curSignupEvent?.date||new Date().getFullYear()+'-01-01';
     const age=calcAgeRunner(birthday,evDate);
-    dbg('年齡='+age+'，限制='+g.parentalAge+'歲以下，evDate='+evDate);
     if(age!==null&&age>=g.parentalAge){block.style.display='none';return;}
     block.style.display='';
   }else{
     block.style.display='none';
-    if(birthday)dbg('生日格式不正確，隱藏');
-    else dbg('生日未填，隱藏');
   }
 }
 
@@ -582,7 +575,16 @@ window.submitSignup=async function(){
 
   if(!name){showToast('請填寫姓名','error');return;}
   if(!gender){showToast('請選擇性別','error');return;}
-  if(!birthday||!validateBirthday(birthday)){setFieldError('suBirthday',true);showToast('請填寫正確的生日格式','error');return;}
+  if(!birthday){setFieldError('suBirthday',true);showToast('請填寫生日','error');return;}
+  if(!/^\d{4}\/\d{2}\/\d{2}$/.test(birthday)){setFieldError('suBirthday',true);showToast('生日格式錯誤（yyyy/mm/dd）','error');return;}
+  {
+    const [by,bm,bd]=birthday.split('/').map(Number);
+    const dt=new Date(by,bm-1,bd);
+    const today=new Date();today.setHours(0,0,0,0);
+    if(dt.getFullYear()!==by||dt.getMonth()!==bm-1||dt.getDate()!==bd){setFieldError('suBirthday',true);showToast('生日日期不存在','error');return;}
+    if(dt>=today){setFieldError('suBirthday',true);showToast('生日不能是今天或未來日期','error');return;}
+    if(by<1900){setFieldError('suBirthday',true);showToast('生日年份不合理','error');return;}
+  }
   if(fs.phone?.show!==false){
     if(fs.phone?.required&&!phone){setFieldError('suPhone',true);showToast('請填寫手機號碼','error');return;}
     if(phone&&!validatePhone(phone)){setFieldError('suPhone',true);showToast('手機號碼格式錯誤（09開頭10碼）','error');return;}
