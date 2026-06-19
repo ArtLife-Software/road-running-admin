@@ -1242,6 +1242,7 @@ function applyEntryFieldSettings(fs){
 }
 
 // ── 自動編號按鈕 ──
+window.autoFillBib=async function(){
   const eventId=document.getElementById('entryEventSelect').value;
   if(!eventId)return;
   const next=await getNextBibNumber(eventId);
