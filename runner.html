@@ -199,7 +199,11 @@ function validateBirthday(v) {
   if (!/^\d{4}\/\d{2}\/\d{2}$/.test(v)) return false;
   const [y,m,d] = v.split('/').map(Number);
   const dt = new Date(y,m-1,d);
-  return dt.getFullYear()===y && dt.getMonth()===m-1 && dt.getDate()===d;
+  if(dt.getFullYear()!==y||dt.getMonth()!==m-1||dt.getDate()!==d) return false;
+  const today=new Date(); today.setHours(0,0,0,0);
+  if(dt>=today) return false; // 不能是今天或未來
+  if(y<1900) return false; // 不合理的年份
+  return true;
 }
 function validatePhone(v) { return /^09\d{8}$/.test(v); }
 function validateEmail(v) {

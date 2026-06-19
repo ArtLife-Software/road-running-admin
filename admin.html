@@ -135,7 +135,11 @@ function validateBirthday(v) {
   if (!/^\d{4}\/\d{2}\/\d{2}$/.test(v)) return false;
   const [y,m,d] = v.split('/').map(Number);
   const dt = new Date(y,m-1,d);
-  return dt.getFullYear()===y && dt.getMonth()===m-1 && dt.getDate()===d;
+  if(dt.getFullYear()!==y||dt.getMonth()!==m-1||dt.getDate()!==d) return false;
+  const today=new Date(); today.setHours(0,0,0,0);
+  if(dt>=today) return false;
+  if(y<1900) return false;
+  return true;
 }
 function validatePhone(v) {
   if (!v) return true;
@@ -802,8 +806,8 @@ window.loadEntries=async function(){
   refreshSearchFieldOptions('entrySearchField',curEntryCustomFields);
   // 更新表頭
   const thead=document.getElementById('entriesTableHead');
-  const baseHeads=['編號','組別','ID','姓名','性別','生日','手機','Email','身分證','備註','報到'];
-  const baseSortKeys=['bibNumber','group','uniqueId','name','runnerData.gender','runnerData.birthday','','','runnerData.idNumber','runnerData.note','checkin.checkedInAt'];
+  const baseHeads=['編號','組別','ID','姓名','性別','生日','手機','Email','身分證','備註','家長聲明','聯絡人','聯絡人手機','報到'];
+  const baseSortKeys=['bibNumber','group','uniqueId','name','runnerData.gender','runnerData.birthday','','','runnerData.idNumber','runnerData.note','','','','checkin.checkedInAt'];
   thead.innerHTML='<th style="width:36px"><input type="checkbox" id="entriesSelectAll" onchange="toggleSelectAll(\'entriesTableBody\',\'entriesSelectAll\',\'entriesBatchDeleteBtn\',\'entriesBatchRejectBtn\')"></th>'
     +baseHeads.map((h,i)=>baseSortKeys[i]
       ?'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'entriesTableBody\',\''+baseSortKeys[i]+'\')">'+h+'<span class="sort-icon"> ⇅</span></th>'
@@ -824,7 +828,7 @@ window.loadEntries=async function(){
 }
 function renderEntries(list){
   const tbody=document.getElementById('entriesTableBody');
-  const totalCols=13+curEntryCustomFields.length;
+  const totalCols=16+curEntryCustomFields.length;
   if(!list.length){tbody.innerHTML='<tr><td colspan="'+totalCols+'" class="loading-cell">尚無報名資料</td></tr>';return;}
   const eventId=document.getElementById('entryEventSelect').value;
   tbody.innerHTML=list.map(e=>{
@@ -855,6 +859,9 @@ function renderEntries(list){
       +'<td style="font-size:.78rem">'+esc(r.email||'-')+'</td>'
       +'<td><span class="mono" style="font-size:.75rem">'+esc(r.idNumber||'-')+'</span></td>'
       +'<td>'+esc(r.note||'-')+'</td>'
+      +'<td>'+(e.parentalConsentAgreed?'✅ 已同意':'-')+'</td>'
+      +'<td>'+esc(e.parentName||'-')+'</td>'
+      +'<td>'+esc(e.parentPhone||'-')+'</td>'
       +checkinCell
       +customCells
       +'<td style="white-space:nowrap">'
@@ -1034,12 +1041,13 @@ window.exportEntries=async function(){
   const evDate=evDoc.data()?.date||'';
   const customFields=evDoc.data()?.customFields||[];
   const sorted=getSorted('entriesTableBody',allEntries);
-  let csv='編號,組別,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註'+customFields.map(f=>','+f.label).join('')+'\n';
+  let csv='編號,組別,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註,家長陪同聲明,緊急聯絡人,緊急聯絡人手機'+customFields.map(f=>','+f.label).join('')+'\n';
   sorted.forEach(e=>{
     const r=e.runnerData||{}; const cd=e.customData||{};
     csv+='"'+(e.bibNumber||'')+'","'+(e.group||'')+'","'+(e.name||r.name||'')+'","'
       +(r.gender||'')+'","'+(r.birthday||'')+'","'+(r.phone||'')+'","'
-      +(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'"';
+      +(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'","'
+      +(e.parentalConsentAgreed?'已同意':'')+'","'+(e.parentName||'')+'","'+(e.parentPhone||'')+'"';
     customFields.forEach(f=>{
       let v=cd[f.id];
       if(f.type==='checkbox') v=v?'是':'否';
