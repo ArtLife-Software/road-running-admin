@@ -246,8 +246,14 @@ async function selectSignupEvent(eventId,keepWrapper){
   formHtml+='<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\'suBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>';
   formHtml+='<input type="date" id="suBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'suBirthday\').value=y+\'/\'+m+\'/\'+d;setFieldError(\'suBirthday\',false);this.value=\'\'}"></div></div>';
   formHtml+='<div class="input-group"><label>身分證字號（1英文+9數字）*</label><input id="suIdNumber" type="text" class="input" placeholder="A123456789" onblur="setFieldError(\'suIdNumber\',!validateId(this.value.trim()))"></div>';
-  formHtml+='<div class="input-group"><label>手機號碼</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="if(this.value.trim())setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
-  formHtml+='<div class="input-group"><label>E-Mail</label><input id="suEmail" type="email" class="input" placeholder="example@email.com" onblur="if(this.value.trim())setFieldError(\'suEmail\',!validateEmail(this.value.trim()))"></div>';
+  // staffFieldSettings 控制手機和 Email 的顯示與必填
+  const sfs=curSignupEvent.staffFieldSettings||{};
+  const sPhoneShow=sfs.phone?.show!==false;
+  const sPhoneReq=sfs.phone?.required===true;
+  const sEmailShow=sfs.email?.show!==false;
+  const sEmailReq=sfs.email?.required===true;
+  if(sPhoneShow) formHtml+='<div class="input-group"><label>手機號碼'+(sPhoneReq?' *':'')+'</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="if(this.value.trim())setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
+  if(sEmailShow) formHtml+='<div class="input-group"><label>E-Mail'+(sEmailReq?' *':'')+'</label><input id="suEmail" type="email" class="input" placeholder="example@email.com" onblur="if(this.value.trim())setFieldError(\'suEmail\',!validateEmail(this.value.trim()))"></div>';
   formHtml+='<div class="input-group"><label>備註</label><input id="suNote" type="text" class="input"></div>';
   // 自訂欄位
   curSignupCustomFields.forEach(f=>{
@@ -269,19 +275,30 @@ async function selectSignupEvent(eventId,keepWrapper){
 
 window.submitSignup=async function(){
   const eventId=curSignupEvent.id;
+  const sfs=curSignupEvent.staffFieldSettings||{};
+  const sPhoneShow=sfs.phone?.show!==false;
+  const sPhoneReq=sfs.phone?.required===true;
+  const sEmailShow=sfs.email?.show!==false;
+  const sEmailReq=sfs.email?.required===true;
   const name=document.getElementById('suName').value.trim();
   const gender=document.getElementById('suGender').value;
   const birthday=document.getElementById('suBirthday').value.trim();
   const idNumber=document.getElementById('suIdNumber').value.trim();
-  const phone=document.getElementById('suPhone').value.trim();
-  const email=document.getElementById('suEmail').value.trim();
+  const phone=sPhoneShow?(document.getElementById('suPhone')?.value.trim()||''):'';
+  const email=sEmailShow?(document.getElementById('suEmail')?.value.trim()||''):'';
   const note=document.getElementById('suNote').value.trim();
   if(!name){showToast('請填寫姓名','error');return;}
   if(!gender){showToast('請選擇性別','error');return;}
   if(!birthday||!validateBirthday(birthday)){setFieldError('suBirthday',true);showToast('請填寫正確的生日格式','error');return;}
   if(!idNumber||!validateId(idNumber)){setFieldError('suIdNumber',true);showToast('請填寫正確的身分證字號','error');return;}
-  if(phone&&!validatePhone(phone)){setFieldError('suPhone',true);showToast('手機號碼格式錯誤','error');return;}
-  if(email&&!validateEmail(email)){setFieldError('suEmail',true);showToast('Email格式錯誤','error');return;}
+  if(sPhoneShow){
+    if(sPhoneReq&&!phone){setFieldError('suPhone',true);showToast('請填寫手機號碼','error');return;}
+    if(phone&&!validatePhone(phone)){setFieldError('suPhone',true);showToast('手機號碼格式錯誤','error');return;}
+  }
+  if(sEmailShow){
+    if(sEmailReq&&!email){setFieldError('suEmail',true);showToast('請填寫 E-Mail','error');return;}
+    if(email&&!validateEmail(email)){setFieldError('suEmail',true);showToast('Email格式錯誤','error');return;}
+  }
   // 自訂欄位
   const customData={};
   for(const f of curSignupCustomFields){

@@ -380,8 +380,26 @@ async function selectSignupEvent(eventId, keepWrapper){
     formHtml+='<option value="未分組">未分組</option>';
   }
   formHtml+='</select></div>';
-  // 允許自選號碼時才顯示號碼欄位
-  if(curSignupEvent.allowCustomBib){
+
+  // 固定欄位的顯示/必填由 fieldSettings 決定
+  const fs=curSignupEvent.fieldSettings||{};
+  const phoneShow=fs.phone?.show!==false;
+  const phoneReq=fs.phone?.required===true;
+  const emailShow=fs.email?.show!==false;
+  const emailReq=fs.email?.required===true;
+  const idShow=fs.idNumber?.show!==false;
+  const idReq=fs.idNumber?.required===true;
+
+  formHtml+='<div class="input-group"><label>姓名 *</label><input id="suName" type="text" class="input" placeholder="王小明"></div>';
+  formHtml+='<div class="input-group"><label>性別 *</label><select id="suGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>';
+  formHtml+='<div class="input-group"><label>生日（yyyy/mm/dd）*</label>';
+  formHtml+='<div class="input-row"><input id="suBirthday" data-fmt="ymd" type="text" class="input" placeholder="yyyy/mm/dd" onblur="setFieldError(\'suBirthday\',!validateBirthday(this.value.trim()))">';
+  formHtml+='<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\'suBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>';
+  formHtml+='<input type="date" id="suBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'suBirthday\').value=y+\'/\'+m+\'/\'+d;setFieldError(\'suBirthday\',false);this.value=\'\'}"></div></div>';
+  if(phoneShow) formHtml+='<div class="input-group"><label>手機號碼（09開頭10碼）'+(phoneReq?' *':'')+'</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="if(this.value.trim())setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
+  if(emailShow) formHtml+='<div class="input-group"><label>E-Mail'+(emailReq?' *':'')+'</label><input id="suEmail" type="email" class="input" placeholder="example@email.com" onblur="setFieldError(\'suEmail\',!validateEmail(this.value.trim()))"></div>';
+  if(idShow) formHtml+='<div class="input-group"><label>身分證字號（1英文+9數字）'+(idReq?' *':'')+'</label><input id="suIdNumber" type="text" class="input" placeholder="A123456789" onblur="setFieldError(\'suIdNumber\',!validateId(this.value.trim()))"></div>';
+  formHtml+='<div class="input-group"><label>備註</label><input id="suNote" type="text" class="input"></div>';
     const rMin=curSignupEvent.bibRangeMin||0;
     const rMax=curSignupEvent.bibRangeMax||0;
     const pad=curSignupEvent.bibPadLength||3;
@@ -392,16 +410,6 @@ async function selectSignupEvent(eventId, keepWrapper){
       +'<div id="suBibHint" style="font-size:.75rem;margin-top:4px;min-height:18px"></div>'
       +'</div>';
   }
-  formHtml+='<div class="input-group"><label>姓名 *</label><input id="suName" type="text" class="input" placeholder="王小明"></div>';
-  formHtml+='<div class="input-group"><label>性別 *</label><select id="suGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>';
-  formHtml+='<div class="input-group"><label>生日（yyyy/mm/dd）*</label>';
-  formHtml+='<div class="input-row"><input id="suBirthday" data-fmt="ymd" type="text" class="input" placeholder="yyyy/mm/dd" onblur="setFieldError(\'suBirthday\',!validateBirthday(this.value.trim()))">';
-  formHtml+='<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\'suBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>';
-  formHtml+='<input type="date" id="suBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'suBirthday\').value=y+\'/\'+m+\'/\'+d;setFieldError(\'suBirthday\',false);this.value=\'\'}"></div></div>';
-  formHtml+='<div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="if(this.value.trim())setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
-  formHtml+='<div class="input-group"><label>E-Mail</label><input id="suEmail" type="email" class="input" placeholder="example@email.com" onblur="setFieldError(\'suEmail\',!validateEmail(this.value.trim()))"></div>';
-  formHtml+='<div class="input-group"><label>身分證字號（1英文+9數字）</label><input id="suIdNumber" type="text" class="input" placeholder="A123456789" onblur="setFieldError(\'suIdNumber\',!validateId(this.value.trim()))"></div>';
-  formHtml+='<div class="input-group"><label>備註</label><input id="suNote" type="text" class="input"></div>';
 
   // 自訂欄位
   curSignupCustomFields.forEach(f=>{
@@ -471,17 +479,27 @@ window.submitSignup=async function(){
   const name=document.getElementById('suName').value.trim();
   const gender=document.getElementById('suGender').value;
   const birthday=document.getElementById('suBirthday').value.trim();
-  const phone=document.getElementById('suPhone').value.trim();
-  const email=document.getElementById('suEmail').value.trim();
-  const idNumber=document.getElementById('suIdNumber').value.trim();
+  const fs=curSignupEvent.fieldSettings||{};
+  const phone=(fs.phone?.show!==false)?document.getElementById('suPhone')?.value.trim()||''  :'';
+  const email=(fs.email?.show!==false)?document.getElementById('suEmail')?.value.trim()||''  :'';
+  const idNumber=(fs.idNumber?.show!==false)?document.getElementById('suIdNumber')?.value.trim()||'':'';
   const note=document.getElementById('suNote').value.trim();
 
   if(!name){showToast('請填寫姓名','error');return;}
   if(!gender){showToast('請選擇性別','error');return;}
   if(!birthday||!validateBirthday(birthday)){setFieldError('suBirthday',true);showToast('請填寫正確的生日格式','error');return;}
-  if(!validatePhone(phone)&&phone){setFieldError('suPhone',true);showToast('手機號碼格式錯誤（09開頭10碼）','error');return;}
-  if(!validateEmail(email)){setFieldError('suEmail',true);showToast('請填寫正確的Email格式','error');return;}
-  if(!validateId(idNumber)){setFieldError('suIdNumber',true);showToast('請填寫正確的身分證字號格式','error');return;}
+  if(fs.phone?.show!==false){
+    if(fs.phone?.required&&!phone){setFieldError('suPhone',true);showToast('請填寫手機號碼','error');return;}
+    if(phone&&!validatePhone(phone)){setFieldError('suPhone',true);showToast('手機號碼格式錯誤（09開頭10碼）','error');return;}
+  }
+  if(fs.email?.show!==false){
+    if(fs.email?.required&&!email){setFieldError('suEmail',true);showToast('請填寫 E-Mail','error');return;}
+    if(!validateEmail(email)){setFieldError('suEmail',true);showToast('請填寫正確的Email格式','error');return;}
+  }
+  if(fs.idNumber?.show!==false){
+    if(fs.idNumber?.required&&!idNumber){setFieldError('suIdNumber',true);showToast('請填寫身分證字號','error');return;}
+    if(!validateId(idNumber)){setFieldError('suIdNumber',true);showToast('請填寫正確的身分證字號格式','error');return;}
+  }
 
   // 自訂欄位必填驗證 + 收集
   const customData={};

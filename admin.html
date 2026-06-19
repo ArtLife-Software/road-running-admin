@@ -397,6 +397,17 @@ window.showAddEvent = function() {
   document.getElementById('evAllowBibChange').value='0';
   document.getElementById('evBibRangeMin').value='';
   document.getElementById('evBibRangeMax').value='';
+  // 重設欄位設定為預設值（全部顯示、全部選填）
+  ['phone','email','idNumber'].forEach(f=>{
+    document.getElementById('evFS_runner_'+f+'_show').checked=true;
+    document.getElementById('evFS_runner_'+f+'_req').checked=false;
+    document.getElementById('evFS_runner_'+f+'_req').disabled=false;
+  });
+  ['phone','email'].forEach(f=>{
+    document.getElementById('evFS_staff_'+f+'_show').checked=true;
+    document.getElementById('evFS_staff_'+f+'_req').checked=false;
+    document.getElementById('evFS_staff_'+f+'_req').disabled=false;
+  });
   document.getElementById('eventModal').style.display='flex';
 }
 window.editEvent = async function(id) {
@@ -428,6 +439,23 @@ window.editEvent = async function(id) {
   document.getElementById('evAllowBibChange').value=ev.allowBibChange?'1':'0';
   document.getElementById('evBibRangeMin').value=ev.bibRangeMin||'';
   document.getElementById('evBibRangeMax').value=ev.bibRangeMax||'';
+  // 欄位設定
+  const fs=ev.fieldSettings||{};
+  const sfs=ev.staffFieldSettings||{};
+  ['phone','email','idNumber'].forEach(f=>{
+    const show=fs[f]?.show!==false;
+    const req=fs[f]?.required===true;
+    document.getElementById('evFS_runner_'+f+'_show').checked=show;
+    document.getElementById('evFS_runner_'+f+'_req').checked=req;
+    document.getElementById('evFS_runner_'+f+'_req').disabled=!show;
+  });
+  ['phone','email'].forEach(f=>{
+    const show=sfs[f]?.show!==false;
+    const req=sfs[f]?.required===true;
+    document.getElementById('evFS_staff_'+f+'_show').checked=show;
+    document.getElementById('evFS_staff_'+f+'_req').checked=req;
+    document.getElementById('evFS_staff_'+f+'_req').disabled=!show;
+  });
   document.getElementById('eventModal').style.display='flex';
 }
 // 輔助：把 Timestamp 拆填入 日期文字框（yyyy/mm/dd）+ 時間欄位（type=time）
@@ -500,6 +528,21 @@ window.saveEvent = async function() {
   if(bibRangeMin>0&&bibRangeMax>0&&bibRangeMin>bibRangeMax){
     showToast('號碼最小值不能大於最大值','error'); return;
   }
+  // 欄位設定
+  const fieldSettings={};
+  ['phone','email','idNumber'].forEach(f=>{
+    fieldSettings[f]={
+      show:document.getElementById('evFS_runner_'+f+'_show').checked,
+      required:document.getElementById('evFS_runner_'+f+'_req').checked
+    };
+  });
+  const staffFieldSettings={};
+  ['phone','email'].forEach(f=>{
+    staffFieldSettings[f]={
+      show:document.getElementById('evFS_staff_'+f+'_show').checked,
+      required:document.getElementById('evFS_staff_'+f+'_req').checked
+    };
+  });
   const data = {
     name:document.getElementById('evName').value.trim(),
     date:document.getElementById('evDate').value,
@@ -510,6 +553,7 @@ window.saveEvent = async function() {
     staffRegistrationStartAt: dtFieldsToTs('evStaffRegStart'),
     staffRegistrationEndAt:   dtFieldsToTs('evStaffRegEnd'),
     bibPadLength, statsBasis, allowCustomBib, allowBibChange, bibRangeMin, bibRangeMax,
+    fieldSettings, staffFieldSettings,
     updatedAt:serverTimestamp()
   };
   if (!data.name) { showToast('賽事名稱為必填','error'); return; }
@@ -2505,6 +2549,13 @@ window.batchDeleteRecords=async function(){
 
 // ── Modal & Toast ──
 window.closeModal=function(id){document.getElementById(id).style.display='none';}
+// 欄位設定：隱藏時自動取消必填並 disable 必填 checkbox
+window.onFsShowChange=function(type,field){
+  const show=document.getElementById('evFS_'+type+'_'+field+'_show').checked;
+  const reqEl=document.getElementById('evFS_'+type+'_'+field+'_req');
+  if(!show){reqEl.checked=false;reqEl.disabled=true;}
+  else{reqEl.disabled=false;}
+}
 function showToast(msg,type='success'){
   const t=document.getElementById('toast');
   t.textContent=msg; t.className='toast show '+type;
@@ -3026,6 +3077,26 @@ th[data-sort]:hover{color:var(--accent);}
               <input id="evBibRangeMax" type="number" min="1" class="input" placeholder="例：200">
             </div>
           </div>
+        </div>
+        <!-- 報名表單欄位設定 -->
+        <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:.75rem;font-weight:700;color:var(--muted);margin-bottom:10px;letter-spacing:.04em">🏃 選手報名欄位</div>
+          <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 12px;align-items:center;font-size:.78rem">
+            <div style="color:var(--muted)">欄位</div><div style="color:var(--muted);text-align:center">顯示</div><div style="color:var(--muted);text-align:center">必填</div>
+            ${['phone:手機號碼','email:E-Mail','idNumber:身分證字號'].map(f=>{const[k,label]=f.split(':');return`
+            <div style="color:var(--text)">${label}</div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_runner_${k}_show" onchange="onFsShowChange('runner','${k}')" checked></div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_runner_${k}_req"></div>`;}).join('')}
+          </div>
+          <div style="font-size:.75rem;font-weight:700;color:var(--muted);margin-top:14px;margin-bottom:10px;letter-spacing:.04em">🦺 工作人員報名欄位</div>
+          <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 12px;align-items:center;font-size:.78rem">
+            <div style="color:var(--muted)">欄位</div><div style="color:var(--muted);text-align:center">顯示</div><div style="color:var(--muted);text-align:center">必填</div>
+            ${['phone:手機號碼','email:E-Mail'].map(f=>{const[k,label]=f.split(':');return`
+            <div style="color:var(--text)">${label}</div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_staff_${k}_show" onchange="onFsShowChange('staff','${k}')" checked></div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_staff_${k}_req"></div>`;}).join('')}
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:8px">隱藏時欄位不顯示也不驗證；顯示時可選必填或選填。</div>
         </div>
       </div>
       <!-- 宣傳圖片設定 -->
