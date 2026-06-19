@@ -393,6 +393,10 @@ window.showAddEvent = function() {
   document.getElementById('evRegCapacity').value='';
   document.getElementById('evBibPadLength').value='3';
   document.getElementById('evStatsBasis').value='registered';
+  document.getElementById('evAllowCustomBib').value='0';
+  document.getElementById('evAllowBibChange').value='0';
+  document.getElementById('evBibRangeMin').value='';
+  document.getElementById('evBibRangeMax').value='';
   document.getElementById('eventModal').style.display='flex';
 }
 window.editEvent = async function(id) {
@@ -420,6 +424,10 @@ window.editEvent = async function(id) {
   setDateTimeFields('evStaffRegEnd', ev.staffRegistrationEndAt);
   document.getElementById('evBibPadLength').value=ev.bibPadLength||3;
   document.getElementById('evStatsBasis').value=ev.statsBasis||'registered';
+  document.getElementById('evAllowCustomBib').value=ev.allowCustomBib?'1':'0';
+  document.getElementById('evAllowBibChange').value=ev.allowBibChange?'1':'0';
+  document.getElementById('evBibRangeMin').value=ev.bibRangeMin||'';
+  document.getElementById('evBibRangeMax').value=ev.bibRangeMax||'';
   document.getElementById('eventModal').style.display='flex';
 }
 // 輔助：把 Timestamp 拆填入 日期文字框（yyyy/mm/dd）+ 時間欄位（type=time）
@@ -483,6 +491,15 @@ window.saveEvent = async function() {
   const regCapacity=regCapRaw===''||parseInt(regCapRaw)===0?0:parseInt(regCapRaw)||0;
   const bibPadLength=parseInt(document.getElementById('evBibPadLength').value)||3;
   const statsBasis=document.getElementById('evStatsBasis').value||'registered';
+  const allowCustomBib=document.getElementById('evAllowCustomBib').value==='1';
+  const allowBibChange=document.getElementById('evAllowBibChange').value==='1';
+  const bibRangeMinRaw=document.getElementById('evBibRangeMin').value.trim();
+  const bibRangeMaxRaw=document.getElementById('evBibRangeMax').value.trim();
+  const bibRangeMin=bibRangeMinRaw===''?0:parseInt(bibRangeMinRaw)||0;
+  const bibRangeMax=bibRangeMaxRaw===''?0:parseInt(bibRangeMaxRaw)||0;
+  if(bibRangeMin>0&&bibRangeMax>0&&bibRangeMin>bibRangeMax){
+    showToast('號碼最小值不能大於最大值','error'); return;
+  }
   const data = {
     name:document.getElementById('evName').value.trim(),
     date:document.getElementById('evDate').value,
@@ -492,7 +509,7 @@ window.saveEvent = async function() {
     registrationCapacity: regCapacity,
     staffRegistrationStartAt: dtFieldsToTs('evStaffRegStart'),
     staffRegistrationEndAt:   dtFieldsToTs('evStaffRegEnd'),
-    bibPadLength, statsBasis,
+    bibPadLength, statsBasis, allowCustomBib, allowBibChange, bibRangeMin, bibRangeMax,
     updatedAt:serverTimestamp()
   };
   if (!data.name) { showToast('賽事名稱為必填','error'); return; }
@@ -684,6 +701,7 @@ window.deleteCustomField=async function(i){
 // ════════════════════════════
 let allEntries=[];
 let curBibPadLength=3; // 由賽事設定 bibPadLength 決定，預設3位
+let curBibRange={min:0,max:0}; // 0=不限制
 async function loadEntriesSection() { await loadLockedEntryEventSelect(); }
 async function loadLockedEntryEventSelect() {
   const select=document.getElementById('entryEventSelect'); if(!select)return;
@@ -714,6 +732,7 @@ window.loadEntries=async function(){
   const evDoc=await getDoc(doc(db,'events',eventId));
   curEntryCustomFields=evDoc.data()?.customFields||[];
   curBibPadLength=evDoc.data()?.bibPadLength||3;
+  curBibRange={min:evDoc.data()?.bibRangeMin||0, max:evDoc.data()?.bibRangeMax||0};
   refreshSearchFieldOptions('entrySearchField',curEntryCustomFields);
   // 更新表頭
   const thead=document.getElementById('entriesTableHead');
@@ -810,13 +829,21 @@ window.doEntrySearch=function(){
   renderEntries(getSorted('entriesTableBody',filtered));
 }
 
-// 取得下一個未使用編號
+// 取得下一個未使用編號（先在範圍內找，範圍滿了往外配）
 async function getNextBibNumber(eventId) {
   const snap=await getDocs(collection(db,'events',eventId,'runners'));
   const bibs=snap.docs.map(d=>parseInt(d.data().bibNumber)||0);
-  let next=1;
-  while(bibs.includes(next)) next++;
-  return String(next).padStart(curBibPadLength,'0');
+  const pad=curBibPadLength;
+  const {min,max}=curBibRange;
+  const hasRange=min>0&&max>0;
+  // 先在範圍內找
+  if(hasRange){
+    for(let n=min;n<=max;n++){if(!bibs.includes(n))return String(n).padStart(pad,'0');}
+  }
+  // 範圍外（或無範圍）：從1開始，跳過範圍內的號碼
+  let next=hasRange?max+1:1;
+  while(bibs.includes(next)||(hasRange&&next>=min&&next<=max))next++;
+  return String(next).padStart(pad,'0');
 }
 
 // 匯入CSV：0.編號 1.組別 2.姓名 3.性別 4.生日 5.手機 6.Email 7.身分證 8.備註
@@ -894,10 +921,24 @@ window.handleEntryCSV=async function(e){
       continue;
     }
 
-    // 比對編號：重複則取下一個未使用編號
+    // 比對編號：重複則取下一個未使用編號（先在範圍內找，範圍滿了往外配）
     let finalBib=bibNumber;
     if(!finalBib||usedBibs.has(finalBib)){
-      let n=1; while(usedBibs.has(String(n).padStart(curBibPadLength,'0')))n++;
+      const {min:rMin,max:rMax}=curBibRange;
+      const hasRange=rMin>0&&rMax>0;
+      let n;
+      if(hasRange){
+        // 先掃範圍內
+        let found=false;
+        for(let i=rMin;i<=rMax;i++){
+          if(!usedBibs.has(String(i).padStart(curBibPadLength,'0'))){n=i;found=true;break;}
+        }
+        if(!found)n=rMax+1; // 範圍滿，從範圍外開始
+      }else{
+        n=1;
+      }
+      if(n===undefined)n=1;
+      while(usedBibs.has(String(n).padStart(curBibPadLength,'0')))n++;
       finalBib=String(n).padStart(curBibPadLength,'0'); fixedBibs++;
     }
     usedBibs.add(finalBib);
@@ -2954,6 +2995,33 @@ th[data-sort]:hover{color:var(--accent);}
               <option value="registered" selected>報名人數</option>
               <option value="checkin">報到人數</option>
             </select>
+          </div>
+          <div class="input-group" style="margin:0">
+            <label>允許選手自選號碼</label>
+            <select id="evAllowCustomBib" class="input">
+              <option value="0" selected>否（系統自動配號）</option>
+              <option value="1">是（選手可自填號碼）</option>
+            </select>
+          </div>
+          <div class="input-group" style="margin:0">
+            <label>允許選手修改號碼</label>
+            <select id="evAllowBibChange" class="input">
+              <option value="0" selected>否</option>
+              <option value="1">是（報名期間內可修改）</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <div style="font-size:.75rem;color:var(--muted);margin-bottom:6px">號碼範圍限制（留空＝不限制）：自動配號優先在範圍內分配，範圍滿後繼續往外配；選手自選號碼若超出範圍會被擋下。</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="input-group" style="margin:0">
+              <label>號碼最小值</label>
+              <input id="evBibRangeMin" type="number" min="1" class="input" placeholder="例：1">
+            </div>
+            <div class="input-group" style="margin:0">
+              <label>號碼最大值</label>
+              <input id="evBibRangeMax" type="number" min="1" class="input" placeholder="例：200">
+            </div>
           </div>
         </div>
       </div>

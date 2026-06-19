@@ -376,6 +376,16 @@ async function selectSignupEvent(eventId, keepWrapper){
     formHtml+='<option value="未分組">未分組</option>';
   }
   formHtml+='</select></div>';
+  // 允許自選號碼時才顯示號碼欄位
+  if(curSignupEvent.allowCustomBib){
+    const rMin=curSignupEvent.bibRangeMin||0;
+    const rMax=curSignupEvent.bibRangeMax||0;
+    const rangeHint=(rMin>0&&rMax>0)?'號碼須在 '+rMin+'～'+rMax+' 之間，留空系統自動配號':'留空系統自動配號';
+    formHtml+='<div class="input-group"><label>選手號碼（選填，'+rangeHint+'）</label>'
+      +'<input id="suBib" type="text" class="input" placeholder="'+(rMin>0&&rMax>0?'例：'+rMin+'～'+rMax:'例：42')+'" oninput="applyHalf(this)" onblur="checkBibAvailable()">'
+      +'<div id="suBibHint" style="font-size:.75rem;margin-top:4px;min-height:18px"></div>'
+      +'</div>';
+  }
   formHtml+='<div class="input-group"><label>姓名 *</label><input id="suName" type="text" class="input" placeholder="王小明"></div>';
   formHtml+='<div class="input-group"><label>性別 *</label><select id="suGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>';
   formHtml+='<div class="input-group"><label>生日（yyyy/mm/dd）*</label>';
@@ -412,6 +422,43 @@ async function selectSignupEvent(eventId, keepWrapper){
   }
 }
 
+// ── 即時號碼重複檢查（自選號碼用）──
+window.checkBibAvailable=async function(){
+  const el=document.getElementById('suBib');
+  const hint=document.getElementById('suBibHint');
+  if(!el||!hint)return;
+  const bib=el.value.trim();
+  if(!bib){hint.textContent='';el.style.borderColor='';return;}
+  const n=parseInt(bib);
+  if(isNaN(n)||String(n)!==bib.replace(/^0+/,'')||n<1){
+    el.style.borderColor='var(--red)';
+    hint.innerHTML='<span style="color:var(--red)">❌ 請輸入正整數</span>';
+    return;
+  }
+  // 範圍檢查
+  if(curSignupEvent){
+    const rMin=curSignupEvent.bibRangeMin||0;
+    const rMax=curSignupEvent.bibRangeMax||0;
+    if(rMin>0&&rMax>0&&(n<rMin||n>rMax)){
+      el.style.borderColor='var(--red)';
+      hint.innerHTML='<span style="color:var(--red)">❌ 號碼須在 '+rMin+'～'+rMax+' 之間</span>';
+      return;
+    }
+  }
+  if(!curSignupEvent){return;}
+  const snap=await getDocs(collection(db,'events',curSignupEvent.id,'runners'));
+  const pad=curSignupEvent.bibPadLength||3;
+  const padded=String(n).padStart(pad,'0');
+  const dup=snap.docs.some(d=>d.data().bibNumber===padded);
+  if(dup){
+    el.style.borderColor='var(--red)';
+    hint.innerHTML='<span style="color:var(--red)">❌ 此號碼已被使用，請換一個</span>';
+  }else{
+    el.style.borderColor='var(--green)';
+    hint.innerHTML='<span style="color:var(--green)">✅ 號碼 '+padded+' 可使用</span>';
+  }
+}
+
 window.submitSignup=async function(){
   const eventId=curSignupEvent.id;
   const group=document.getElementById('suGroup').value;
@@ -444,6 +491,33 @@ window.submitSignup=async function(){
   }
 
   const runnerData={name,gender,birthday,phone,email,idNumber,note};
+
+  // 自選號碼（若開放且有填）
+  const customBibEl=document.getElementById('suBib');
+  const customBibRaw=customBibEl?customBibEl.value.trim():'';
+  let customBib='';
+  if(customBibRaw){
+    const n=parseInt(customBibRaw);
+    if(isNaN(n)||n<1){showToast('號碼請輸入正整數','error');return;}
+    const rMin=curSignupEvent.bibRangeMin||0;
+    const rMax=curSignupEvent.bibRangeMax||0;
+    if(rMin>0&&rMax>0&&(n<rMin||n>rMax)){
+      showToast('號碼須在 '+rMin+'～'+rMax+' 之間','error');
+      if(customBibEl)customBibEl.style.borderColor='var(--red)';
+      return;
+    }
+    const pad=curSignupEvent.bibPadLength||3;
+    customBib=String(n).padStart(pad,'0');
+  }
+  // 若填了號碼，先做最終重複確認
+  if(customBib){
+    const dupSnap=await getDocs(collection(db,'events',curSignupEvent.id,'runners'));
+    if(dupSnap.docs.some(d=>d.data().bibNumber===customBib)){
+      showToast('號碼 '+customBib+' 已被使用，請重新填寫','error');
+      if(customBibEl){customBibEl.style.borderColor='var(--red)';}
+      return;
+    }
+  }
 
   const btn=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
   btn.textContent='送出中...'; btn.disabled=true;
@@ -522,17 +596,17 @@ window.submitSignup=async function(){
         });
         if(result==='refill') return;
         if(result==='new'){
-          await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,null);
+          await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,null,customBib);
           return;
         }
-        await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match);
+        await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match,customBib);
         return;
       }
       // 完全相同，直接沿用
-      await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match);
+      await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match,customBib);
       return;
     }
-    await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,null);
+    await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,null,customBib);
   }catch(e){
     showToast('報名失敗：'+e.message,'error');
     const b=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
@@ -540,7 +614,7 @@ window.submitSignup=async function(){
   }
 }
 
-async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match){
+async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match,customBib){
   const btn=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
   if(btn){btn.textContent='送出中...';btn.disabled=true;}
   try{
@@ -575,14 +649,35 @@ async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,
     } else {
       let maxId=0;
       existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
-      uniqueId='R'+String(maxId+1).padStart(6,'0');
+      uniqueId='R'+String(maxId+1).padStart(4,'0');
       batch.set(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
     }
-    // 分配編號
+    // 分配編號：有自選號碼優先用，否則系統自動配（先在範圍內找，範圍滿後往外配）
     const entryAllSnap=await getDocs(collection(db,'events',eventId,'runners'));
     const usedBibs=new Set(entryAllSnap.docs.map(d=>d.data().bibNumber));
-    let n=1; while(usedBibs.has(String(n).padStart(3,'0')))n++;
-    const bibNumber=String(n).padStart(3,'0');
+    let bibNumber;
+    if(customBib){
+      if(usedBibs.has(customBib)){showToast('號碼 '+customBib+' 剛被別人用走了，已自動配號','error');}
+      else{bibNumber=customBib;}
+    }
+    if(!bibNumber){
+      const pad=curSignupEvent?.bibPadLength||3;
+      const rMin=curSignupEvent?.bibRangeMin||0;
+      const rMax=curSignupEvent?.bibRangeMax||0;
+      const hasRange=rMin>0&&rMax>0;
+      let n;
+      if(hasRange){
+        let found=false;
+        for(let i=rMin;i<=rMax;i++){
+          if(!usedBibs.has(String(i).padStart(pad,'0'))){n=i;found=true;break;}
+        }
+        if(!found)n=rMax+1;
+      }else{
+        n=1;
+      }
+      while(usedBibs.has(String(n).padStart(pad,'0')))n++;
+      bibNumber=String(n).padStart(pad,'0');
+    }
     batch.set(doc(collection(db,'events',eventId,'runners')),{uniqueId,bibNumber,group,customData,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
     await batch.commit();
     showSignupSuccess({uniqueId,name,gender,group,bibNumber,eventName:curSignupEvent.name,eventDate:curSignupEvent.date});
@@ -729,6 +824,41 @@ window.requestCancelEntry=async function(eventId, entryDocId, cardId){
   }
 }
 
+// ── 修改號碼時的即時重複檢查 ──
+window.checkEditBibAvailable=async function(eventId, entryDocId, cardId){
+  const el=document.getElementById(cardId+'_eBib');
+  const hint=document.getElementById(cardId+'_eBibHint');
+  if(!el||!hint)return;
+  const bib=el.value.trim();
+  if(!bib){hint.textContent='';el.style.borderColor='';return;}
+  const n=parseInt(bib);
+  if(isNaN(n)||n<1){
+    el.style.borderColor='var(--red)';
+    hint.innerHTML='<span style="color:var(--red)">❌ 請輸入正整數</span>';
+    return;
+  }
+  // 範圍檢查（從 hidden input 讀取）
+  const rangeEl=document.getElementById(cardId+'_bibRange');
+  const rMin=rangeEl?parseInt(rangeEl.dataset.min)||0:0;
+  const rMax=rangeEl?parseInt(rangeEl.dataset.max)||0:0;
+  const pad=rangeEl?parseInt(rangeEl.dataset.pad)||3:3;
+  if(rMin>0&&rMax>0&&(n<rMin||n>rMax)){
+    el.style.borderColor='var(--red)';
+    hint.innerHTML='<span style="color:var(--red)">❌ 號碼須在 '+rMin+'～'+rMax+' 之間</span>';
+    return;
+  }
+  const padded=String(n).padStart(pad,'0');
+  const snap=await getDocs(collection(db,'events',eventId,'runners'));
+  const dup=snap.docs.some(d=>d.id!==entryDocId&&d.data().bibNumber===padded);
+  if(dup){
+    el.style.borderColor='var(--red)';
+    hint.innerHTML='<span style="color:var(--red)">❌ 此號碼已被使用</span>';
+  }else{
+    el.style.borderColor='var(--green)';
+    hint.innerHTML='<span style="color:var(--green)">✅ 號碼 '+padded+' 可使用</span>';
+  }
+}
+
 // ── 修改報名資料：直接展開（查詢時已驗證身份）──
 window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   const box=document.getElementById(cardId+'_edit');
@@ -746,7 +876,19 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   const customData=e.customData||{};
 
   let html='<div class="card" style="background:var(--surface2)">';
-  html+='<div class="csv-hint">可修改以下資料，ID 與編號無法變更。</div>';
+  const canChangeBib=evDoc.data()?.allowBibChange&&isRunnerRegOpen(evDoc.data(),0);
+  html+='<div class="csv-hint">'+(canChangeBib?'可修改以下資料，包含選手號碼。':'可修改以下資料，ID 與編號無法變更。')+'</div>';
+  if(canChangeBib){
+    const rMin=evDoc.data()?.bibRangeMin||0;
+    const rMax=evDoc.data()?.bibRangeMax||0;
+    const rangeLabel=(rMin>0&&rMax>0)?'（號碼須在 '+rMin+'～'+rMax+' 之間）':'';
+    html+='<div class="input-group"><label>選手號碼'+rangeLabel+'</label>'
+      +'<input id="'+cardId+'_eBib" type="text" class="input" value="'+esc(e.bibNumber||'')+'" oninput="applyHalf(this)" onblur="checkEditBibAvailable(\''+eventId+'\',\''+entryDocId+'\',\''+cardId+'\')">'
+      +'<div id="'+cardId+'_eBibHint" style="font-size:.75rem;margin-top:4px;min-height:18px"></div>'
+      +'</div>';
+    // 把範圍資料存在 dataset 供 checkEditBibAvailable 讀取
+    html+='<input type="hidden" id="'+cardId+'_bibRange" data-min="'+rMin+'" data-max="'+rMax+'" data-pad="'+(evDoc.data()?.bibPadLength||3)+'">';
+  }
   html+='<div class="input-group"><label>姓名</label><input id="'+cardId+'_eName" type="text" class="input" value="'+esc(r.name||'')+'"></div>';
   html+='<div class="input-group"><label>性別</label><select id="'+cardId+'_eGender" class="input"><option value="男"'+(r.gender==='男'?' selected':'')+'>男</option><option value="女"'+(r.gender==='女'?' selected':'')+'>女</option></select></div>';
   html+='<div class="input-group"><label>生日（yyyy/mm/dd）</label>'
@@ -790,11 +932,37 @@ window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
   const idNumber=document.getElementById(cardId+'_eIdNumber').value.trim();
   const note=document.getElementById(cardId+'_eNote').value.trim();
   const group=document.getElementById(cardId+'_eGroup').value;
+  const bibEl=document.getElementById(cardId+'_eBib');
+  const rangeEl=document.getElementById(cardId+'_bibRange');
+  const newBibRaw=bibEl?bibEl.value.trim():'';
+  let newBib='';
+  if(newBibRaw){
+    const n=parseInt(newBibRaw);
+    if(isNaN(n)||n<1){showToast('號碼請輸入正整數','error');return;}
+    const rMin=rangeEl?parseInt(rangeEl.dataset.min)||0:0;
+    const rMax=rangeEl?parseInt(rangeEl.dataset.max)||0:0;
+    const pad=rangeEl?parseInt(rangeEl.dataset.pad)||3:3;
+    if(rMin>0&&rMax>0&&(n<rMin||n>rMax)){
+      showToast('號碼須在 '+rMin+'～'+rMax+' 之間','error');
+      if(bibEl)bibEl.style.borderColor='var(--red)';
+      return;
+    }
+    newBib=String(n).padStart(pad,'0');
+  }
   if(!name){showToast('姓名為必填','error');return;}
   if(birthday&&!validateBirthday(birthday)){showToast('生日格式錯誤','error');return;}
   if(phone&&!validatePhone(phone)){showToast('手機號碼格式錯誤','error');return;}
   if(email&&!validateEmail(email)){showToast('Email格式錯誤','error');return;}
   if(idNumber&&!validateId(idNumber)){showToast('身分證格式錯誤','error');return;}
+  // 若有填新號碼，最終重複確認
+  if(newBib){
+    const dupSnap=await getDocs(collection(db,'events',eventId,'runners'));
+    if(dupSnap.docs.some(d=>d.id!==entryDocId&&d.data().bibNumber===newBib)){
+      showToast('號碼 '+newBib+' 已被使用，請重新填寫','error');
+      if(bibEl)bibEl.style.borderColor='var(--red)';
+      return;
+    }
+  }
   const customFields=JSON.parse(document.getElementById(cardId+'_edit').dataset.customFields||'[]');
   const customData={};
   for(const f of customFields){
@@ -806,7 +974,9 @@ window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
     if(runnerDocId){
       await updateDoc(doc(db,'runners',runnerDocId),{name,gender,birthday,phone,email,idNumber,note,updatedAt:serverTimestamp()});
     }
-    await updateDoc(doc(db,'events',eventId,'runners',entryDocId),{group,customData,updatedAt:serverTimestamp()});
+    const entryUpdate={group,customData,updatedAt:serverTimestamp()};
+    if(newBib)entryUpdate.bibNumber=newBib;
+    await updateDoc(doc(db,'events',eventId,'runners',entryDocId),entryUpdate);
     showToast('已儲存修改');
     document.getElementById(cardId+'_edit').innerHTML='<div class="csv-hint">✅ 修改已儲存</div>';
   }catch(err){
