@@ -497,17 +497,19 @@ function updateParentalBlock(){
   const group=document.getElementById('suGroup')?.value;
   const g=window._signupGroupMap?.[group];
   const block=document.getElementById('suParentalBlock');
+  console.log('[parental] group=',group,'g=',g,'block=',!!block,'_signupGroupMap=',window._signupGroupMap);
   if(!block)return;
-  if(!g||!(g.parentalAge>0)){block.style.display='none';return;}
-  // 組別有家長陪同設定：預設顯示
-  // 只有在生日格式正確且年齡明確超過限制時才隱藏
+  if(!g||!(g.parentalAge>0)){block.style.display='none';console.log('[parental] hidden: no group or parentalAge=0');return;}
   const birthday=document.getElementById('suBirthday')?.value.trim();
+  console.log('[parental] birthday=',birthday,'parentalAge=',g.parentalAge);
   if(birthday&&validateBirthday(birthday)){
     const evDate=curSignupEvent?.date||new Date().getFullYear()+'-01-01';
     const age=calcAgeRunner(birthday,evDate);
-    if(age!==null&&age>=g.parentalAge){block.style.display='none';return;}
+    console.log('[parental] age=',age,'evDate=',evDate);
+    if(age!==null&&age>=g.parentalAge){block.style.display='none';console.log('[parental] hidden: age too old');return;}
   }
   block.style.display='';
+  console.log('[parental] shown');
 }
 
 function calcAgeRunner(birthday,eventDate){
