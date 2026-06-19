@@ -733,6 +733,9 @@ window.loadEntries=async function(){
   curEntryCustomFields=evDoc.data()?.customFields||[];
   curBibPadLength=evDoc.data()?.bibPadLength||3;
   curBibRange={min:evDoc.data()?.bibRangeMin||0, max:evDoc.data()?.bibRangeMax||0};
+  // 動態更新編號欄位的 placeholder
+  const bibEl=document.getElementById('eBib');
+  if(bibEl) bibEl.placeholder=String(1).padStart(curBibPadLength,'0');
   refreshSearchFieldOptions('entrySearchField',curEntryCustomFields);
   // 更新表頭
   const thead=document.getElementById('entriesTableHead');

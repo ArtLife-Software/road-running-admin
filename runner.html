@@ -74,13 +74,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 
   <!-- ════════ 查詢報名結果 ════════ -->
   <div id="page-status" class="page">
-    <div class="card">
-      <div class="csv-hint">輸入編號、姓名、性別、生日查詢報名記錄，開放報名期間可修改資料。</div>
-      <div class="input-group"><label>編號</label><input id="statusBib" type="text" class="input" placeholder="001" oninput="applyHalf(this)"></div>
-      <div class="input-group"><label>姓名</label><input id="statusName" type="text" class="input" placeholder="王小明"></div>
-      <div class="input-group"><label>性別</label><select id="statusGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>
-      <div class="input-group"><label>生日（yyyy/mm/dd）</label><div class="input-row"><input id="statusBirthday" data-fmt="ymd" type="text" class="input" placeholder="1990/01/01" oninput="applyHalf(this)"><button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById('statusBirthdayPicker');_d.showPicker?_d.showPicker():_d.click()">📅</button><input type="date" id="statusBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('statusBirthday').value=y+'/'+m+'/'+d;this.value=''}"></div></div>
-      <button class="btn btn-primary btn-full" onclick="doStatusQuery()">🔍 查詢報名</button>
+    <div id="statusContent">
+      <div class="loading-cell">載入中...</div>
     </div>
     <div id="statusResult"></div>
   </div>
@@ -268,6 +263,7 @@ window.showPage=function(id){
   document.querySelector('.tab[data-page="'+id+'"]').classList.add('active');
   if(id==='lookup') initLookupPage();
   if(id==='signup') initSignupPage();
+  if(id==='status') initStatusPage();
 }
 
 // ════════════════════════════
@@ -380,9 +376,11 @@ async function selectSignupEvent(eventId, keepWrapper){
   if(curSignupEvent.allowCustomBib){
     const rMin=curSignupEvent.bibRangeMin||0;
     const rMax=curSignupEvent.bibRangeMax||0;
+    const pad=curSignupEvent.bibPadLength||3;
     const rangeHint=(rMin>0&&rMax>0)?'號碼須在 '+rMin+'～'+rMax+' 之間，留空系統自動配號':'留空系統自動配號';
+    const bibPlaceholder=(rMin>0&&rMax>0)?String(rMin).padStart(pad,'0')+'～'+String(rMax).padStart(pad,'0'):String(1).padStart(pad,'0');
     formHtml+='<div class="input-group"><label>選手號碼（選填，'+rangeHint+'）</label>'
-      +'<input id="suBib" type="text" class="input" placeholder="'+(rMin>0&&rMax>0?'例：'+rMin+'～'+rMax:'例：42')+'" oninput="applyHalf(this)" onblur="checkBibAvailable()">'
+      +'<input id="suBib" type="text" class="input" placeholder="例：'+bibPlaceholder+'" oninput="applyHalf(this)" onblur="checkBibAvailable()">'
       +'<div id="suBibHint" style="font-size:.75rem;margin-top:4px;min-height:18px"></div>'
       +'</div>';
   }
@@ -716,7 +714,71 @@ window.setFieldError=setFieldError;
 // ════════════════════════════
 // 查詢報名結果
 // ════════════════════════════
+let allStatusEvents=[];
+let curStatusEvent=null;
+let statusInited=false;
+
+async function initStatusPage(){
+  if(statusInited)return; statusInited=true;
+  const content=document.getElementById('statusContent');
+  content.innerHTML='<div class="card"><div class="loading-cell">載入中...</div></div>';
+  const snap=await getDocs(query(collection(db,'events'),orderBy('createdAt','desc')));
+  allStatusEvents=snap.docs.map(d=>({id:d.id,...d.data()}));
+  if(!allStatusEvents.length){
+    content.innerHTML='<div class="card"><div class="loading-cell">目前沒有賽事資料</div></div>';
+    return;
+  }
+  if(allStatusEvents.length===1){
+    await selectStatusEvent(allStatusEvents[0].id);
+  } else {
+    let html='<div class="card"><div class="input-group"><label>選擇賽事</label>'
+      +'<select id="statusEventSelect" class="input" onchange="onStatusEventSelect()">'
+      +'<option value="">請選擇...</option>';
+    allStatusEvents.forEach(ev=>{html+='<option value="'+ev.id+'">'+esc(ev.name)+(ev.date?'（'+esc(ev.date)+'）':'')+'</option>';});
+    html+='</select></div></div><div id="statusForm"></div>';
+    content.innerHTML=html;
+  }
+}
+
+window.onStatusEventSelect=async function(){
+  const id=document.getElementById('statusEventSelect').value;
+  document.getElementById('statusResult').innerHTML='';
+  if(!id){document.getElementById('statusForm').innerHTML='';curStatusEvent=null;return;}
+  await selectStatusEvent(id, true);
+}
+
+async function selectStatusEvent(eventId, keepWrapper){
+  curStatusEvent=allStatusEvents.find(e=>e.id===eventId);
+  const pad=curStatusEvent.bibPadLength||3;
+  const bibPlaceholder=String(1).padStart(pad,'0');
+  document.getElementById('statusResult').innerHTML='';
+
+  const formHtml='<div class="card">'
+    +'<div class="csv-hint">輸入編號、姓名、性別、生日查詢報名記錄，開放報名期間可修改資料。</div>'
+    +'<div class="input-group"><label>編號</label>'
+    +'<input id="statusBib" type="text" class="input" placeholder="例：'+bibPlaceholder+'" oninput="applyHalf(this)"></div>'
+    +'<div class="input-group"><label>姓名</label>'
+    +'<input id="statusName" type="text" class="input" placeholder="王小明"></div>'
+    +'<div class="input-group"><label>性別</label>'
+    +'<select id="statusGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>'
+    +'<div class="input-group"><label>生日（yyyy/mm/dd）</label>'
+    +'<div class="input-row">'
+    +'<input id="statusBirthday" data-fmt="ymd" type="text" class="input" placeholder="1990/01/01" oninput="applyHalf(this)">'
+    +'<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\'statusBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>'
+    +'<input type="date" id="statusBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'statusBirthday\').value=y+\'/\'+m+\'/\'+d;this.value=\'\'}">'
+    +'</div></div>'
+    +'<button class="btn btn-primary btn-full" onclick="doStatusQuery()">🔍 查詢報名</button>'
+    +'</div>';
+
+  if(keepWrapper){
+    document.getElementById('statusForm').innerHTML=formHtml;
+  }else{
+    document.getElementById('statusContent').innerHTML=formHtml;
+  }
+}
+
 window.doStatusQuery=async function(){
+  if(!curStatusEvent){showToast('請先選擇賽事','error');return;}
   const bib=document.getElementById('statusBib').value.trim();
   const name=document.getElementById('statusName').value.trim();
   const gender=document.getElementById('statusGender').value;
@@ -725,66 +787,59 @@ window.doStatusQuery=async function(){
   if(!bib||!name||!gender||!birthday){showToast('請填寫全部四個欄位','error');return;}
   result.innerHTML='<div class="card"><div class="loading-cell">查詢中...</div></div>';
 
-  const evSnap=await getDocs(query(collection(db,'events'),orderBy('date','desc')));
-  // 平行查詢每場賽事「此編號」的報名記錄，取代序列逐場查詢
-  const perEventEntries=await Promise.all(evSnap.docs.map(evDoc=>
-    getDocs(query(collection(db,'events',evDoc.id,'runners'),where('bibNumber','==',bib)))
-      .then(entrySnap=>({evDoc, ev:evDoc.data(), entries:entrySnap.docs}))
-  ));
-  // 只查詢牽涉到的uniqueId，取代整個runners集合全表掃描
-  const allUids=perEventEntries.flatMap(({entries})=>entries.map(d=>d.data().uniqueId));
+  const eventId=curStatusEvent.id;
+  const ev=curStatusEvent;
+  // 只查此賽事裡符合編號的報名記錄
+  const entrySnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('bibNumber','==',bib)));
+  const allUids=entrySnap.docs.map(d=>d.data().uniqueId);
   const rMap=await fetchRunnersByUniqueIds(allUids);
 
   let html=''; let found=false;
-  const matched=[]; // 緩存符合條件的結果，產生 QR Code 時直接重複使用，不再重新查一次
-  for(const {evDoc, ev, entries} of perEventEntries){
-    for(const eDoc of entries){
-      const e=eDoc.data();
-      const r=rMap[e.uniqueId]||{};
-      const entryName=r.name||'';
-      // 四項全部驗證
-      if(entryName!==name)continue;
-      if((r.gender||'')!==gender)continue;
-      if((r.birthday||'')!==birthday)continue;
-      found=true;
-      matched.push({evDoc, eDoc, e});
-      const cardId='statusCard_'+evDoc.id+'_'+eDoc.id;
-      html+='<div class="card" id="'+cardId+'">';
-      html+='<div style="font-size:.78rem;color:var(--muted);margin-bottom:8px">'+esc(ev.name)+(ev.date?'　'+esc(ev.date):'')+'</div>';
-      html+='<div class="runner-card-header">';
-      html+='<strong style="font-size:1.05rem">'+esc(entryName)+'</strong>';
-      html+='<span class="badge">'+esc(e.group||'-')+'</span>';
-      html+='<span class="badge">編號 '+esc(e.bibNumber||'-')+'</span>';
-      html+='<span class="mono" style="font-size:.78rem;color:var(--accent)">'+esc(e.uniqueId)+'</span>';
-      html+='</div>';
-      html+='<div id="statusQR_'+evDoc.id+'_'+eDoc.id+'" class="qr-box"></div>';
-      if(isRunnerRegOpen(ev, 0)){
-        if(e.cancelRequested){
-          html+='<div id="'+cardId+'_actions">';
-          html+='<div style="padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:.82rem;color:var(--muted);margin-bottom:8px">⏳ 已送出取消申請，請等待主辦方確認</div>';
-          html+='<button class="btn btn-ghost btn-full" onclick="withdrawCancelRequest(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+escJs(e.uniqueId)+'\',\''+cardId+'\')">↩️ 撤銷取消申請</button>';
-          html+='</div>';
-        } else {
-          html+='<div id="'+cardId+'_actions">';
-          html+='<div id="'+cardId+'_edit" style="margin-top:12px"></div>';
-          html+='<div style="display:flex;gap:8px;margin-top:8px">';
-          html+='<button class="btn btn-ghost btn-full" onclick="showEditForm(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+escJs(e.uniqueId)+'\',\''+cardId+'\')">✏️ 修改報名資料</button>';
-          html+='<button class="btn btn-danger btn-sm" onclick="requestCancelEntry(\''+evDoc.id+'\',\''+eDoc.id+'\',\''+cardId+'\')">🗑️ 申請取消報名</button>';
-          html+='</div>';
-          html+='</div>';
-        }
+  const matched=[];
+  for(const eDoc of entrySnap.docs){
+    const e=eDoc.data();
+    const r=rMap[e.uniqueId]||{};
+    const entryName=r.name||'';
+    if(entryName!==name)continue;
+    if((r.gender||'')!==gender)continue;
+    if((r.birthday||'')!==birthday)continue;
+    found=true;
+    matched.push({eDoc, e});
+    const cardId='statusCard_'+eventId+'_'+eDoc.id;
+    html+='<div class="card" id="'+cardId+'">';
+    html+='<div style="font-size:.78rem;color:var(--muted);margin-bottom:8px">'+esc(ev.name)+(ev.date?'　'+esc(ev.date):'')+'</div>';
+    html+='<div class="runner-card-header">';
+    html+='<strong style="font-size:1.05rem">'+esc(entryName)+'</strong>';
+    html+='<span class="badge">'+esc(e.group||'-')+'</span>';
+    html+='<span class="badge">編號 '+esc(e.bibNumber||'-')+'</span>';
+    html+='<span class="mono" style="font-size:.78rem;color:var(--accent)">'+esc(e.uniqueId)+'</span>';
+    html+='</div>';
+    html+='<div id="statusQR_'+eventId+'_'+eDoc.id+'" class="qr-box"></div>';
+    if(isRunnerRegOpen(ev, 0)){
+      if(e.cancelRequested){
+        html+='<div id="'+cardId+'_actions">';
+        html+='<div style="padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:.82rem;color:var(--muted);margin-bottom:8px">⏳ 已送出取消申請，請等待主辦方確認</div>';
+        html+='<button class="btn btn-ghost btn-full" onclick="withdrawCancelRequest(\''+eventId+'\',\''+eDoc.id+'\',\''+escJs(e.uniqueId)+'\',\''+cardId+'\')">↩️ 撤銷取消申請</button>';
+        html+='</div>';
+      } else {
+        html+='<div id="'+cardId+'_actions">';
+        html+='<div id="'+cardId+'_edit" style="margin-top:12px"></div>';
+        html+='<div style="display:flex;gap:8px;margin-top:8px">';
+        html+='<button class="btn btn-ghost btn-full" onclick="showEditForm(\''+eventId+'\',\''+eDoc.id+'\',\''+escJs(e.uniqueId)+'\',\''+cardId+'\')">✏️ 修改報名資料</button>';
+        html+='<button class="btn btn-danger btn-sm" onclick="requestCancelEntry(\''+eventId+'\',\''+eDoc.id+'\',\''+cardId+'\')">🗑️ 申請取消報名</button>';
+        html+='</div>';
+        html+='</div>';
       }
-      html+='</div>';
     }
+    html+='</div>';
   }
   if(!found){
     result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查無資料，請確認四項資料是否正確</div></div>';
     return;
   }
   result.innerHTML=html;
-  // 產生 QR Code：直接重複利用上面已查到並驗證過的 matched 清單，不再重新查詢一次
-  for(const {evDoc, eDoc, e} of matched){
-    const el=document.getElementById('statusQR_'+evDoc.id+'_'+eDoc.id);
+  for(const {eDoc, e} of matched){
+    const el=document.getElementById('statusQR_'+eventId+'_'+eDoc.id);
     if(!el)continue;
     makeQRCode(el, [e.uniqueId,e.bibNumber||''].join('|'), 180);
   }
