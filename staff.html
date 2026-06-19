@@ -64,10 +64,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 
   <!-- 查詢／修改 -->
   <div id="page-status" class="page">
-    <div class="card">
-      <div class="csv-hint">輸入身分證字號查詢報名記錄，開放報名期間可修改資料。</div>
-      <div class="input-group"><label>身分證字號</label><input id="statusIdNum" type="text" class="input" placeholder="A123456789" oninput="applyHalf(this)"></div>
-      <button class="btn btn-primary btn-full" onclick="doStatusQuery()">🔍 查詢報名</button>
+    <div id="statusContent">
+      <div class="loading-cell">載入中...</div>
     </div>
     <div id="statusResult"></div>
   </div>
@@ -160,6 +158,7 @@ window.showPage=function(id){
   document.getElementById('page-'+id).classList.add('active');
   document.querySelector('.tab[data-page="'+id+'"]').classList.add('active');
   if(id==='signup') initSignupPage();
+  if(id==='status') initStatusPage();
 }
 
 // ════════════════════════════
@@ -168,6 +167,7 @@ window.showPage=function(id){
 let signupEvents=[];
 let curSignupEvent=null;
 let curSignupCustomFields=[];
+let lastSignupEventId=null;
 
 // 判斷工作人員報名是否開放（OR 邏輯）
 function isStaffRegOpen(ev) {
@@ -207,9 +207,15 @@ async function initSignupPage(){
   else{
     let html='<div class="card"><div class="input-group"><label>選擇賽事</label><select id="signupEventSelect" class="input" onchange="onSignupEventSelect()">';
     html+='<option value="">請選擇...</option>';
-    signupEvents.forEach(ev=>{html+='<option value="'+ev.id+'">'+esc(ev.name)+(ev.date?'（'+esc(ev.date)+'）':'')+'</option>';});
+    signupEvents.forEach(ev=>{
+      const selected=(lastSignupEventId&&ev.id===lastSignupEventId)?' selected':'';
+      html+='<option value="'+ev.id+'"'+selected+'>'+esc(ev.name)+(ev.date?'（'+esc(ev.date)+'）':'')+'</option>';
+    });
     html+='</select></div></div><div id="signupForm"></div>';
     content.innerHTML=html;
+    if(lastSignupEventId&&signupEvents.find(e=>e.id===lastSignupEventId)){
+      await selectSignupEvent(lastSignupEventId, true);
+    }
   }
 }
 window.onSignupEventSelect=async function(){
@@ -219,6 +225,7 @@ window.onSignupEventSelect=async function(){
 }
 async function selectSignupEvent(eventId,keepWrapper){
   curSignupEvent=signupEvents.find(e=>e.id===eventId);
+  lastSignupEventId=eventId;
   curSignupCustomFields=curSignupEvent.staffCustomFields||[];
   let formHtml='';
   // 圖片永遠顯示在最上方
@@ -321,52 +328,102 @@ window.submitSignup=async function(){
 // ════════════════════════════
 // 查詢／修改
 // ════════════════════════════
+let allStatusEvents=[];
+let curStatusEvent=null;
+let lastStatusEventId=null;
+
+async function initStatusPage(){
+  const content=document.getElementById('statusContent');
+  content.innerHTML='<div class="card"><div class="loading-cell">載入中...</div></div>';
+  const snap=await getDocs(query(collection(db,'events'),orderBy('createdAt','desc')));
+  allStatusEvents=snap.docs.map(d=>({id:d.id,...d.data()}));
+  if(!allStatusEvents.length){
+    content.innerHTML='<div class="card"><div class="loading-cell">目前沒有賽事資料</div></div>';
+    return;
+  }
+  if(allStatusEvents.length===1){
+    await selectStatusEvent(allStatusEvents[0].id);
+  } else {
+    let html='<div class="card"><div class="input-group"><label>選擇賽事</label>'
+      +'<select id="statusEventSelect" class="input" onchange="onStatusEventSelect()">'
+      +'<option value="">請選擇...</option>';
+    allStatusEvents.forEach(ev=>{
+      const selected=(lastStatusEventId&&ev.id===lastStatusEventId)?' selected':'';
+      html+='<option value="'+ev.id+'"'+selected+'>'+esc(ev.name)+(ev.date?'（'+esc(ev.date)+'）':'')+'</option>';
+    });
+    html+='</select></div></div><div id="statusForm"></div>';
+    content.innerHTML=html;
+    if(lastStatusEventId&&allStatusEvents.find(e=>e.id===lastStatusEventId)){
+      await selectStatusEvent(lastStatusEventId, true);
+    }
+  }
+}
+
+window.onStatusEventSelect=async function(){
+  const id=document.getElementById('statusEventSelect').value;
+  document.getElementById('statusResult').innerHTML='';
+  if(!id){document.getElementById('statusForm').innerHTML='';curStatusEvent=null;lastStatusEventId=null;return;}
+  await selectStatusEvent(id, true);
+}
+
+async function selectStatusEvent(eventId, keepWrapper){
+  curStatusEvent=allStatusEvents.find(e=>e.id===eventId);
+  lastStatusEventId=eventId;
+  document.getElementById('statusResult').innerHTML='';
+  const formHtml='<div class="card">'
+    +'<div class="csv-hint">輸入身分證字號查詢報名記錄，開放報名期間可修改資料。</div>'
+    +'<div class="input-group"><label>身分證字號</label>'
+    +'<input id="statusIdNum" type="text" class="input" placeholder="A123456789" oninput="applyHalf(this)"></div>'
+    +'<button class="btn btn-primary btn-full" onclick="doStatusQuery()">🔍 查詢報名</button>'
+    +'</div>';
+  if(keepWrapper){
+    document.getElementById('statusForm').innerHTML=formHtml;
+  } else {
+    document.getElementById('statusContent').innerHTML=formHtml;
+  }
+}
+
 window.doStatusQuery=async function(){
+  if(!curStatusEvent){showToast('請先選擇賽事','error');return;}
   const idNum=document.getElementById('statusIdNum').value.trim();
   const result=document.getElementById('statusResult');
   if(!idNum){showToast('請輸入身分證字號','error');return;}
   if(!validateId(idNum)){showToast('身分證字號格式錯誤','error');return;}
   result.innerHTML='<div class="card"><div class="loading-cell">查詢中...</div></div>';
-  // 查詢所有賽事的工作人員報名記錄（平行查詢，取代序列逐場查詢）
-  const evSnap=await getDocs(query(collection(db,'events'),orderBy('date','desc')));
-  const perEventStaff=await Promise.all(evSnap.docs.map(evDoc=>
-    getDocs(query(collection(db,'events',evDoc.id,'staff'),where('idNumber','==',idNum)))
-      .then(staffSnap=>({evDoc, ev:evDoc.data(), staffDocs:staffSnap.docs}))
-  ));
-  let html=''; let found=false;
-  for(const {evDoc, ev, staffDocs} of perEventStaff){
-    if(!staffDocs.length)continue;
-    found=true;
-    for(const eDocRef of staffDocs){
-      const e=eDocRef.data();
-      const cardId='sCard_'+evDoc.id+'_'+eDocRef.id;
-      html+='<div class="card" id="'+cardId+'">';
-      html+='<div style="font-size:.78rem;color:var(--muted);margin-bottom:8px">'+esc(ev.name)+(ev.date?'　'+esc(ev.date):'')+'</div>';
-      html+='<div style="font-size:1rem;font-weight:700;margin-bottom:4px">'+esc(e.name)+'</div>';
-      html+='<div style="font-size:.82rem;color:var(--muted)">'+esc(e.gender)+'　'+esc(e.birthday)+(e.phone?'　'+esc(e.phone):'')+'</div>';
-      if(isStaffRegOpen(ev)){
-        if(e.cancelRequested){
-          html+='<div id="'+cardId+'_actions">';
-          html+='<div style="padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:.82rem;color:var(--muted);margin-bottom:8px">⏳ 已送出取消申請，請等待主辦方確認</div>';
-          html+='<button class="btn btn-ghost btn-full" onclick="withdrawStaffCancelRequest(\''+evDoc.id+'\',\''+eDocRef.id+'\',\''+cardId+'\')">↩️ 撤銷取消申請</button>';
-          html+='</div>';
-        } else {
-          html+='<div id="'+cardId+'_actions">';
-          html+='<div style="display:flex;gap:8px;margin-top:12px">';
-          html+='<button class="btn btn-ghost btn-sm" onclick="showEditForm(\''+evDoc.id+'\',\''+eDocRef.id+'\',\''+cardId+'\')">✏️ 修改資料</button>';
-          html+='<button class="btn btn-danger btn-sm" onclick="requestCancelStaffEntry(\''+evDoc.id+'\',\''+eDocRef.id+'\',\''+cardId+'\')">🗑️ 申請取消報名</button>';
-          html+='</div>';
-          html+='<div id="'+cardId+'_edit"></div>';
-          html+='</div>';
-        }
+
+  const eventId=curStatusEvent.id;
+  const ev=curStatusEvent;
+  const staffSnap=await getDocs(query(collection(db,'events',eventId,'staff'),where('idNumber','==',idNum)));
+  if(staffSnap.empty){result.innerHTML='<div class="card"><div class="loading-cell">查無報名記錄</div></div>';return;}
+
+  let html='';
+  for(const eDocRef of staffSnap.docs){
+    const e=eDocRef.data();
+    const cardId='sCard_'+eventId+'_'+eDocRef.id;
+    html+='<div class="card" id="'+cardId+'">';
+    html+='<div style="font-size:.78rem;color:var(--muted);margin-bottom:8px">'+esc(ev.name)+(ev.date?'　'+esc(ev.date):'')+'</div>';
+    html+='<div style="font-size:1rem;font-weight:700;margin-bottom:4px">'+esc(e.name)+'</div>';
+    html+='<div style="font-size:.82rem;color:var(--muted)">'+esc(e.gender)+'　'+esc(e.birthday)+(e.phone?'　'+esc(e.phone):'')+'</div>';
+    if(isStaffRegOpen(ev)){
+      if(e.cancelRequested){
+        html+='<div id="'+cardId+'_actions">';
+        html+='<div style="padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:.82rem;color:var(--muted);margin-bottom:8px">⏳ 已送出取消申請，請等待主辦方確認</div>';
+        html+='<button class="btn btn-ghost btn-full" onclick="withdrawStaffCancelRequest(\''+eventId+'\',\''+eDocRef.id+'\',\''+cardId+'\')">↩️ 撤銷取消申請</button>';
+        html+='</div>';
+      } else {
+        html+='<div id="'+cardId+'_actions">';
+        html+='<div style="display:flex;gap:8px;margin-top:12px">';
+        html+='<button class="btn btn-ghost btn-sm" onclick="showEditForm(\''+eventId+'\',\''+eDocRef.id+'\',\''+cardId+'\')">✏️ 修改資料</button>';
+        html+='<button class="btn btn-danger btn-sm" onclick="requestCancelStaffEntry(\''+eventId+'\',\''+eDocRef.id+'\',\''+cardId+'\')">🗑️ 申請取消報名</button>';
+        html+='</div>';
+        html+='<div id="'+cardId+'_edit"></div>';
+        html+='</div>';
       }
-      html+='</div>';
     }
+    html+='</div>';
   }
-  if(!found){result.innerHTML='<div class="card"><div class="loading-cell">查無報名記錄</div></div>';return;}
   result.innerHTML=html;
 }
-
 // ── 撤銷取消申請 ──
 window.withdrawStaffCancelRequest=async function(eventId, staffDocId, cardId){
   try{
