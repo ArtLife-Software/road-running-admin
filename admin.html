@@ -391,6 +391,8 @@ window.showAddEvent = function() {
   ['evRegStartDate','evRegEndDate','evStaffRegStartDate','evStaffRegEndDate'].forEach(id=>{const el=document.getElementById(id);el.value='';el.style.borderColor='';});
   ['evRegStartTime','evRegEndTime','evStaffRegStartTime','evStaffRegEndTime'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('evRegCapacity').value='';
+  document.getElementById('evBibPadLength').value='3';
+  document.getElementById('evStatsBasis').value='registered';
   document.getElementById('eventModal').style.display='flex';
 }
 window.editEvent = async function(id) {
@@ -416,6 +418,8 @@ window.editEvent = async function(id) {
   document.getElementById('evRegCapacity').value=ev.registrationCapacity||'';
   setDateTimeFields('evStaffRegStart', ev.staffRegistrationStartAt);
   setDateTimeFields('evStaffRegEnd', ev.staffRegistrationEndAt);
+  document.getElementById('evBibPadLength').value=ev.bibPadLength||3;
+  document.getElementById('evStatsBasis').value=ev.statsBasis||'registered';
   document.getElementById('eventModal').style.display='flex';
 }
 // 輔助：把 Timestamp 拆填入 日期文字框（yyyy/mm/dd）+ 時間欄位（type=time）
@@ -477,6 +481,8 @@ window.saveEvent = async function() {
   const staffBannerUrl=document.getElementById('evStaffBannerUrl').value.trim();
   const regCapRaw=document.getElementById('evRegCapacity').value.trim();
   const regCapacity=regCapRaw===''||parseInt(regCapRaw)===0?0:parseInt(regCapRaw)||0;
+  const bibPadLength=parseInt(document.getElementById('evBibPadLength').value)||3;
+  const statsBasis=document.getElementById('evStatsBasis').value||'registered';
   const data = {
     name:document.getElementById('evName').value.trim(),
     date:document.getElementById('evDate').value,
@@ -486,6 +492,7 @@ window.saveEvent = async function() {
     registrationCapacity: regCapacity,
     staffRegistrationStartAt: dtFieldsToTs('evStaffRegStart'),
     staffRegistrationEndAt:   dtFieldsToTs('evStaffRegEnd'),
+    bibPadLength, statsBasis,
     updatedAt:serverTimestamp()
   };
   if (!data.name) { showToast('賽事名稱為必填','error'); return; }
@@ -676,6 +683,7 @@ window.deleteCustomField=async function(i){
 // 報名管理
 // ════════════════════════════
 let allEntries=[];
+let curBibPadLength=3; // 由賽事設定 bibPadLength 決定，預設3位
 async function loadEntriesSection() { await loadLockedEntryEventSelect(); }
 async function loadLockedEntryEventSelect() {
   const select=document.getElementById('entryEventSelect'); if(!select)return;
@@ -705,6 +713,7 @@ window.loadEntries=async function(){
   tbody.innerHTML='<tr><td colspan="'+baseCols+'" class="loading-cell">載入中...</td></tr>';
   const evDoc=await getDoc(doc(db,'events',eventId));
   curEntryCustomFields=evDoc.data()?.customFields||[];
+  curBibPadLength=evDoc.data()?.bibPadLength||3;
   refreshSearchFieldOptions('entrySearchField',curEntryCustomFields);
   // 更新表頭
   const thead=document.getElementById('entriesTableHead');
@@ -807,7 +816,7 @@ async function getNextBibNumber(eventId) {
   const bibs=snap.docs.map(d=>parseInt(d.data().bibNumber)||0);
   let next=1;
   while(bibs.includes(next)) next++;
-  return String(next).padStart(3,'0');
+  return String(next).padStart(curBibPadLength,'0');
 }
 
 // 匯入CSV：0.編號 1.組別 2.姓名 3.性別 4.生日 5.手機 6.Email 7.身分證 8.備註
@@ -864,7 +873,7 @@ window.handleEntryCSV=async function(e){
       uniqueId=match.uniqueId;
     } else {
       maxId++;
-      uniqueId='R'+String(maxId).padStart(6,'0');
+      uniqueId='R'+String(maxId).padStart(4,'0');
       const ref=doc(collection(db,'runners'));
       batch.set(ref,{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
       existingRunners.push({docId:ref.id,...runnerData,uniqueId});
@@ -888,8 +897,8 @@ window.handleEntryCSV=async function(e){
     // 比對編號：重複則取下一個未使用編號
     let finalBib=bibNumber;
     if(!finalBib||usedBibs.has(finalBib)){
-      let n=1; while(usedBibs.has(String(n).padStart(3,'0')))n++;
-      finalBib=String(n).padStart(3,'0'); fixedBibs++;
+      let n=1; while(usedBibs.has(String(n).padStart(curBibPadLength,'0')))n++;
+      finalBib=String(n).padStart(curBibPadLength,'0'); fixedBibs++;
     }
     usedBibs.add(finalBib);
 
@@ -1171,7 +1180,7 @@ window.saveEntry=async function(){
           // 非同一人：建立新選手
           let maxId=0;
           existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
-          uniqueId='R'+String(maxId+1).padStart(6,'0');
+          uniqueId='R'+String(maxId+1).padStart(4,'0');
           await setDoc(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
         }
       } else {
@@ -1182,7 +1191,7 @@ window.saveEntry=async function(){
       // 無比對結果，建立新選手
       let maxId=0;
       existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
-      uniqueId='R'+String(maxId+1).padStart(6,'0');
+      uniqueId='R'+String(maxId+1).padStart(4,'0');
       await setDoc(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
     }
   }
@@ -1697,35 +1706,38 @@ window.loadStats=async function(){
 }
 // 載入賽事的報名/組別/選手名單（即時模式下只在切換賽事時呼叫一次，不隨每次打卡重新整個下載）
 async function loadStatsRoster(eventId){
-  const [entrySnap, gSnap]=await Promise.all([
+  const [entrySnap, gSnap, evDoc]=await Promise.all([
     getDocs(collection(db,'events',eventId,'runners')),
-    getDocs(collection(db,'events',eventId,'groups'))
+    getDocs(collection(db,'events',eventId,'groups')),
+    getDoc(doc(db,'events',eventId))
   ]);
   const entries=entrySnap.docs.map(d=>d.data());
   const groups=gSnap.docs.map(d=>d.data());
+  const statsBasis=evDoc.data()?.statsBasis||'registered';
   const rMap=await fetchRunnersByUniqueIds(entries.map(e=>e.uniqueId));
-  return {entries, groups, rMap};
+  return {entries, groups, rMap, statsBasis};
 }
 // 用既有名單(roster) + 最新的打卡記錄/報到記錄畫面統計畫面
 function renderStatsContent(roster, records, checkinIds){
   const content=document.getElementById('statsContent');
-  const {entries, groups, rMap}=roster;
+  const {entries, groups, rMap, statsBasis}=roster;
 
   // 建立組別名稱 → 站點陣列的對照表
   const groupStationsMap={};
   groups.forEach(g=>{groupStationsMap[g.name]=g.stations||[];});
 
-  // 計算進度：每位選手只用「自己所屬組別」的站點數當分母，不可用全賽事聯集站點數
-  // 進度 = 目前掃描次數總和 / 全部應掃描次數總和（所有人的所有掃描動作權重相同）
+  // 計算進度：排除第一站（起跑站），只計算第2站之後
+  // 分母依 statsBasis 決定：'checkin'=報到人數，否則=報名人數
   function calcProgress(ents, recs){
     if(!ents.length)return 0;
     let scannedCount=0, expectedCount=0;
     ents.forEach(e=>{
       const stations=groupStationsMap[e.group]||[];
-      if(!stations.length)return; // 該組別沒有設站點，不列入計算
+      if(stations.length<2)return; // 只有起跑站或無站點，不列入計算
+      const progressStations=stations.slice(1); // 排除第一站
       const myRecs=recs.filter(r=>r.uniqueId===e.uniqueId);
-      expectedCount+=stations.length;
-      stations.forEach(s=>{if(myRecs.find(r=>r.station===s))scannedCount++;});
+      expectedCount+=progressStations.length;
+      progressStations.forEach(s=>{if(myRecs.find(r=>r.station===s))scannedCount++;});
     });
     return expectedCount?Math.round(scannedCount/expectedCount*100):0;
   }
@@ -1740,6 +1752,7 @@ function renderStatsContent(roster, records, checkinIds){
   const maleCount=entries.filter(e=>(rMap[e.uniqueId]?.gender)==='男').length;
   const femaleCount=entries.filter(e=>(rMap[e.uniqueId]?.gender)==='女').length;
   const totalCheckin=entries.filter(e=>checkinIds.has(e.uniqueId)).length;
+  const progressBaseCount=statsBasis==='checkin'?totalCheckin:entries.length;
 
   let html='<div class="stats-grid" style="margin-bottom:24px">'
     +'<div class="stat-card large"><div class="stat-num">'+entries.length+'</div><div class="stat-label">報名總人數</div></div>'
@@ -1747,7 +1760,7 @@ function renderStatsContent(roster, records, checkinIds){
     +'<div class="stat-card large"><div class="stat-num">'+femaleCount+'</div><div class="stat-label">女生人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+totalCheckin+'</div><div class="stat-label">報到總人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+totalFinishers+'</div><div class="stat-label">抵達終點總人數</div></div>'
-    +'<div class="stat-card large"><div class="stat-num">'+overallProgress+'%</div><div class="stat-label">進度總百分比</div></div>'
+    +'<div class="stat-card large"><div class="stat-num">'+overallProgress+'%</div><div class="stat-label">進度總百分比<br><span style="font-size:.65rem;font-weight:400">（'+(statsBasis==='checkin'?'報到':'報名')+'人數，不含起跑站）</span></div></div>'
     +'</div>';
 
   // 繪製一個組別統計卡的函式
@@ -1759,6 +1772,8 @@ function renderStatsContent(roster, records, checkinIds){
     const gMale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='男').length;
     const gFemale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='女').length;
     const gCheckin=ents.filter(e=>checkinIds.has(e.uniqueId)).length;
+    // 統計基準：報到人數 or 報名人數
+    const baseCount=statsBasis==='checkin'?gCheckin:ents.length;
     let card='<div class="runner-card" style="margin-bottom:16px">'
       +'<div class="runner-card-header"><strong>'+esc(label)+'</strong>'
       +' <span class="badge">報名'+ents.length+'人</span>'
@@ -1769,12 +1784,13 @@ function renderStatsContent(roster, records, checkinIds){
       +'<div style="margin-top:6px;margin-bottom:8px">'
       +' <span class="badge badge-green">抵達終點'+finishers+'人</span>'
       +' <span class="badge" style="background:rgba(249,115,22,.1);color:var(--accent);border-color:rgba(249,115,22,.3)">進度：'+progress+'%</span>'
+      +' <span style="font-size:.72rem;color:var(--muted);margin-left:4px">（基準：'+(statsBasis==='checkin'?'報到人數':'報名人數')+'，不含起跑站）</span>'
       +'</div>'
       +'<div class="station-stats">';
     gStations.forEach((s,i)=>{
       const cnt=new Set(recs.filter(r=>r.station===s&&ents.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size;
-      const pct=ents.length>0?Math.round(cnt/ents.length*100):0;
-      card+='<div class="station-stat-row"><div class="station-stat-label"><span class="station-num">'+(i+1)+'</span><span>'+esc(s)+'</span></div><div class="station-stat-bar"><div class="station-stat-fill" style="width:'+pct+'%"></div></div><div class="station-stat-count">'+cnt+'人</div></div>';
+      const pct=baseCount>0?Math.round(cnt/baseCount*100):0;
+      card+='<div class="station-stat-row"><div class="station-stat-label"><span class="station-num">'+(i+1)+'</span><span>'+esc(s)+(i===0?' <span style="font-size:.68rem;color:var(--muted)">(起跑站)</span>':'')+'</span></div><div class="station-stat-bar"><div class="station-stat-fill" style="width:'+pct+'%"></div></div><div class="station-stat-count">'+cnt+'人</div></div>';
     });
     card+='</div></div>';
     return card;
@@ -2918,6 +2934,27 @@ th[data-sort]:hover{color:var(--accent);}
             </div>
           </div>
           <div class="input-group" style="margin:0"><label>結束時間（hh:mm）</label><input id="evStaffRegEndTime" type="time" class="input"></div>
+        </div>
+      </div>
+      <!-- 賽事設定 -->
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+        <div style="font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:12px;letter-spacing:.05em">⚙️ 賽事設定</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="input-group" style="margin:0">
+            <label>選手編號位數</label>
+            <select id="evBibPadLength" class="input">
+              <option value="2">2 位（01）</option>
+              <option value="3" selected>3 位（001）</option>
+              <option value="4">4 位（0001）</option>
+            </select>
+          </div>
+          <div class="input-group" style="margin:0">
+            <label>統計百分比基準</label>
+            <select id="evStatsBasis" class="input">
+              <option value="registered" selected>報名人數</option>
+              <option value="checkin">報到人數</option>
+            </select>
+          </div>
         </div>
       </div>
       <!-- 宣傳圖片設定 -->
