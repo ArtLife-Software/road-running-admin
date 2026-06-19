@@ -495,8 +495,12 @@ function updateParentalBlock(){
   if(!block)return;
   if(!g||!(g.parentalAge>0)){block.style.display='none';return;}
   const birthday=document.getElementById('suBirthday')?.value.trim();
-  const evDate=curSignupEvent?.date||'';
-  if(!birthday||!evDate){block.style.display='none';return;}
+  if(!birthday||!validateBirthday(birthday)){
+    // 生日未填或格式不對：若組別有家長陪同設定，先顯示 block 讓選手知道
+    block.style.display='';return;
+  }
+  // 有生日：用賽事日期計算（賽事無日期時用今年）
+  const evDate=curSignupEvent?.date||new Date().getFullYear()+'-01-01';
   const age=calcAgeRunner(birthday,evDate);
   block.style.display=(age!==null&&age<g.parentalAge)?'':'none';
 }
