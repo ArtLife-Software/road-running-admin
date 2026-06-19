@@ -586,6 +586,12 @@ window.showAddGroup=function(){
   document.getElementById('groupFormTitle').textContent='新增組別';
   document.getElementById('groupDocId').value=''; document.getElementById('gName').value='';
   document.getElementById('gStationList').innerHTML=''; addGStation();
+  document.getElementById('gGenderLimit').value='';
+  document.getElementById('gGroupCapacity').value='0';
+  document.getElementById('gAgeMin').value='0';
+  document.getElementById('gAgeMax').value='0';
+  document.getElementById('gParentalAge').value='0';
+  document.getElementById('gInviteCode').value='';
   document.getElementById('groupForm').style.display='block';
 }
 window.editGroup=async function(id){
@@ -595,6 +601,12 @@ window.editGroup=async function(id){
   document.getElementById('groupDocId').value=id; document.getElementById('gName').value=g.name||'';
   document.getElementById('gStationList').innerHTML='';
   (g.stations||[]).forEach(s=>addGStation(s));
+  document.getElementById('gGenderLimit').value=g.genderLimit||'';
+  document.getElementById('gGroupCapacity').value=g.groupCapacity||0;
+  document.getElementById('gAgeMin').value=g.ageMin||0;
+  document.getElementById('gAgeMax').value=g.ageMax||0;
+  document.getElementById('gParentalAge').value=g.parentalAge||0;
+  document.getElementById('gInviteCode').value=g.inviteCode||'';
   document.getElementById('groupForm').style.display='block';
 }
 window.addGStation=function(val=''){
@@ -608,7 +620,14 @@ window.saveGroup=async function(){
   const stations=Array.from(document.querySelectorAll('.g-station-input')).map(i=>i.value.trim()).filter(Boolean);
   if(!name){showToast('組別名稱為必填','error');return;}
   if(!stations.length){showToast('請至少新增一個站點','error');return;}
-  const data={name,stations,updatedAt:serverTimestamp()};
+  const genderLimit=document.getElementById('gGenderLimit').value;
+  const groupCapacity=parseInt(document.getElementById('gGroupCapacity').value)||0;
+  const ageMin=parseInt(document.getElementById('gAgeMin').value)||0;
+  const ageMax=parseInt(document.getElementById('gAgeMax').value)||0;
+  const parentalAge=parseInt(document.getElementById('gParentalAge').value)||0;
+  const inviteCode=document.getElementById('gInviteCode').value.trim();
+  if(ageMin>0&&ageMax>0&&ageMin>ageMax){showToast('年齡下限不能大於上限','error');return;}
+  const data={name,stations,genderLimit,groupCapacity,ageMin,ageMax,parentalAge,inviteCode,updatedAt:serverTimestamp()};
   if(id){await updateDoc(doc(db,'events',curGEvId,'groups',id),data);}
   else{data.createdAt=serverTimestamp();await addDoc(collection(db,'events',curGEvId,'groups'),data);}
   const gSnap=await getDocs(collection(db,'events',curGEvId,'groups'));
@@ -1084,7 +1103,7 @@ window.manualCheckin=async function(eventId,uniqueId){
 }
 
 // 手動新增報名
-window.showAddEntry=function(){
+window.showAddEntry=async function(){
   const eventId=document.getElementById('entryEventSelect').value;
   if(!eventId){showToast('請先選擇賽事','error');return;}
   document.getElementById('entryModalTitle').textContent='新增選手';
@@ -1102,28 +1121,127 @@ window.showAddEntry=function(){
   document.getElementById('eEmail').value='';
   document.getElementById('eIdNumber').value='';
   document.getElementById('eNote').value='';
-  // 清除錯誤樣式
+  document.getElementById('eInviteCode').value='';
+  document.getElementById('eInviteCodeRow').style.display='none';
+  document.getElementById('eGroupHint').textContent='';
   ['eBib','eBirthday','ePhone','eEmail','eIdNumber'].forEach(id=>setFieldError(id,false));
+  // 套用 fieldSettings
+  const evDoc=await getDoc(doc(db,'events',eventId));
+  applyEntryFieldSettings(evDoc.data()?.fieldSettings||{});
   loadEntryGroupOptions('');
   renderEntryCustomFields({});
   document.getElementById('entryModal').style.display='flex';
 }
+let curEntryGroupMap={}; // groupName -> group data (含限制)
 async function loadEntryGroupOptions(selected){
   const eventId=document.getElementById('entryEventSelect').value;
   const sel=document.getElementById('eGroup'); sel.innerHTML='';
+  curEntryGroupMap={};
   if(!eventId)return;
   const snap=await getDocs(collection(db,'events',eventId,'groups'));
   snap.docs.forEach(d=>{
+    const g=d.data();
+    curEntryGroupMap[g.name]=g;
     const o=document.createElement('option');
-    o.value=d.data().name; o.textContent=d.data().name;
-    if(d.data().name===selected)o.selected=true;
+    o.value=g.name;
+    // 限制摘要
+    const hints=[];
+    if(g.genderLimit) hints.push(g.genderLimit+'性');
+    if(g.ageMin>0) hints.push(g.ageMin+'歲以上');
+    if(g.ageMax>0) hints.push(g.ageMax+'歲以下');
+    if(g.groupCapacity>0) hints.push('限'+g.groupCapacity+'人');
+    if(g.inviteCode) hints.push('需邀請碼');
+    o.textContent=g.name+(hints.length?' ('+hints.join('、')+')':'');
+    if(g.name===selected)o.selected=true;
     sel.appendChild(o);
   });
   if(!snap.size)sel.innerHTML='<option value="未分組">未分組</option>';
 }
 
-// 自動編號按鈕
-window.autoFillBib=async function(){
+// ── 年齡計算（以賽事日期為基準）──
+function calcAge(birthday, eventDate){
+  if(!birthday||!eventDate)return null;
+  const [by,bm,bd]=birthday.split('/').map(Number);
+  const [ey,em,ed]=eventDate.split('-').map(Number);
+  if(!by||!ey)return null;
+  let age=ey-by;
+  if(em<bm||(em===bm&&ed<bd))age--;
+  return age;
+}
+
+// ── 組別限制驗證（admin 手動新增用）──
+// 回傳 null=通過，字串=錯誤訊息
+async function validateGroupLimits(group, gender, birthday, inviteInput){
+  const g=curEntryGroupMap[group];
+  if(!g)return null;
+  const eventId=document.getElementById('entryEventSelect').value;
+  const evDoc=await getDoc(doc(db,'events',eventId));
+  const evDate=evDoc.data()?.date||'';
+  // 性別
+  if(g.genderLimit&&gender&&g.genderLimit!==gender)
+    return '此組別限'+g.genderLimit+'性報名';
+  // 年齡
+  if(birthday&&evDate){
+    const age=calcAge(birthday,evDate);
+    if(age!==null){
+      if(g.ageMin>0&&age<g.ageMin) return '此組別年齡限制 '+g.ageMin+' 歲以上（您的年齡：'+age+'歲）';
+      if(g.ageMax>0&&age>g.ageMax) return '此組別年齡限制 '+g.ageMax+' 歲以下（您的年齡：'+age+'歲）';
+    }
+  }
+  // 邀請碼
+  if(g.inviteCode&&g.inviteCode.trim()){
+    if((inviteInput||'').trim()!==g.inviteCode.trim())
+      return '邀請碼不正確';
+  }
+  // 組別名額
+  if(g.groupCapacity>0){
+    const entrySnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('group','==',group)));
+    const docId=document.getElementById('entryDocId').value;
+    const count=entrySnap.docs.filter(d=>d.id!==docId).length;
+    if(count>=g.groupCapacity) return '此組別已額滿（'+g.groupCapacity+'人）';
+  }
+  return null;
+}
+
+// ── 組別切換時更新邀請碼欄位顯示 ──
+window.onEntryGroupChange=function(){
+  const group=document.getElementById('eGroup').value;
+  const g=curEntryGroupMap[group];
+  const inviteRow=document.getElementById('eInviteCodeRow');
+  const hint=document.getElementById('eGroupHint');
+  document.getElementById('eInviteCode').value='';
+  if(!g){inviteRow.style.display='none';hint.textContent='';return;}
+  inviteRow.style.display=(g.inviteCode?.trim())?'':'none';
+  // 即時顯示限制摘要
+  const hints=[];
+  if(g.genderLimit) hints.push('限'+g.genderLimit+'性');
+  if(g.ageMin>0) hints.push(g.ageMin+'歲以上');
+  if(g.ageMax>0) hints.push(g.ageMax+'歲以下');
+  if(g.groupCapacity>0) hints.push('限'+g.groupCapacity+'人');
+  if(g.parentalAge>0) hints.push(g.parentalAge+'歲以下須家長陪同聲明');
+  hint.textContent=hints.length?'此組別限制：'+hints.join('、'):'';
+  hint.style.color='var(--muted)';
+}
+
+// ── 套用 fieldSettings 到選手 Modal ──
+function applyEntryFieldSettings(fs){
+  const fields=[
+    {key:'phone', rowId:'ePhoneRow', labelId:'ePhoneLabel', defaultLabel:'手機號碼（09開頭10碼）'},
+    {key:'email', rowId:'eEmailRow', labelId:'eEmailLabel', defaultLabel:'E-Mail'},
+    {key:'idNumber', rowId:'eIdNumberRow', labelId:'eIdNumberLabel', defaultLabel:'身分證字號（1英文+9數字）'},
+  ];
+  fields.forEach(({key,rowId,labelId,defaultLabel})=>{
+    const row=document.getElementById(rowId);
+    const label=document.getElementById(labelId);
+    if(!row)return;
+    const show=fs[key]?.show!==false;
+    const req=fs[key]?.required===true;
+    row.style.display=show?'':'none';
+    if(label)label.textContent=defaultLabel+(req?' *':'');
+  });
+}
+
+// ── 自動編號按鈕 ──
   const eventId=document.getElementById('entryEventSelect').value;
   if(!eventId)return;
   const next=await getNextBibNumber(eventId);
@@ -1206,7 +1324,13 @@ window.editEntry=async function(id){
   document.getElementById('eEmail').value=r.email||'';
   document.getElementById('eIdNumber').value=r.idNumber||'';
   document.getElementById('eNote').value=r.note||'';
+  document.getElementById('eInviteCode').value='';
+  document.getElementById('eInviteCodeRow').style.display='none';
+  document.getElementById('eGroupHint').textContent='';
   ['eBib','eBirthday','ePhone','eEmail','eIdNumber'].forEach(fid=>setFieldError(fid,false));
+  // 套用 fieldSettings
+  const evDoc2=await getDoc(doc(db,'events',eventId));
+  applyEntryFieldSettings(evDoc2.data()?.fieldSettings||{});
   renderEntryCustomFields(e.customData||{});
   document.getElementById('entryModal').style.display='flex';
 }
@@ -1219,20 +1343,43 @@ window.saveEntry=async function(){
   const name=document.getElementById('eName').value.trim();
   const gender=document.getElementById('eGender').value;
   const birthday=document.getElementById('eBirthday').value.trim();
-  const phone=document.getElementById('ePhone').value.trim();
-  const email=document.getElementById('eEmail').value.trim();
-  const idNum=document.getElementById('eIdNumber').value.trim();
+  // fieldSettings 控制顯示/必填
+  const evDoc=await getDoc(doc(db,'events',eventId));
+  const fs=evDoc.data()?.fieldSettings||{};
+  const phone=(fs.phone?.show!==false)?document.getElementById('ePhone').value.trim():'';
+  const email=(fs.email?.show!==false)?document.getElementById('eEmail').value.trim():'';
+  const idNum=(fs.idNumber?.show!==false)?document.getElementById('eIdNumber').value.trim():'';
   const note=document.getElementById('eNote').value.trim();
+  const inviteInput=document.getElementById('eInviteCode').value.trim();
   if(!name){showToast('姓名為必填','error');return;}
   if(!gender){showToast('性別為必選','error');return;}
   if(!bibNumber){showToast('編號為必填','error');return;}
   // 格式驗證
   let hasErr=false;
   if(!validateBirthday(birthday)){setFieldError('eBirthday',true);hasErr=true;}else setFieldError('eBirthday',false);
-  if(!validatePhone(phone)){setFieldError('ePhone',true);hasErr=true;}else setFieldError('ePhone',false);
-  if(!validateEmail(email)){setFieldError('eEmail',true);hasErr=true;}else setFieldError('eEmail',false);
-  if(!validateId(idNum)){setFieldError('eIdNumber',true);hasErr=true;}else setFieldError('eIdNumber',false);
+  if(fs.phone?.show!==false){
+    if(fs.phone?.required&&!phone){setFieldError('ePhone',true);hasErr=true;}
+    else if(phone&&!validatePhone(phone)){setFieldError('ePhone',true);hasErr=true;}
+    else setFieldError('ePhone',false);
+  }
+  if(fs.email?.show!==false){
+    if(fs.email?.required&&!email){setFieldError('eEmail',true);hasErr=true;}
+    else if(!validateEmail(email)){setFieldError('eEmail',true);hasErr=true;}
+    else setFieldError('eEmail',false);
+  }
+  if(fs.idNumber?.show!==false){
+    if(fs.idNumber?.required&&!idNum){setFieldError('eIdNumber',true);hasErr=true;}
+    else if(!validateId(idNum)){setFieldError('eIdNumber',true);hasErr=true;}
+    else setFieldError('eIdNumber',false);
+  }
   if(hasErr){showToast('請修正格式錯誤','error');return;}
+  // 組別限制驗證
+  const groupErr=await validateGroupLimits(group,gender,birthday,inviteInput);
+  if(groupErr){
+    document.getElementById('eGroupHint').textContent=groupErr;
+    document.getElementById('eGroupHint').style.color='var(--red)';
+    showToast(groupErr,'error');return;
+  }
   // 自訂欄位必填驗證
   const missingLabel=validateEntryCustomFields();
   if(missingLabel){showToast('「'+missingLabel+'」為必填','error');return;}
@@ -2146,7 +2293,7 @@ window.doStaffSearch=function(){
   });
   renderStaff(getSorted('staffTableBody',filtered));
 }
-window.showAddStaff=function(){
+window.showAddStaff=async function(){
   const eventId=document.getElementById('staffEventSelect').value;
   if(!eventId){showToast('請先選擇賽事','error');return;}
   document.getElementById('staffDocId').value='';
@@ -2156,6 +2303,8 @@ window.showAddStaff=function(){
   ['sName','sBirthday','sPhone','sEmail','sIdNumber','sNote'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   document.getElementById('sGender').value='';
   ['sBirthday','sPhone','sEmail','sIdNumber'].forEach(id=>setFieldError(id,false));
+  const evDoc=await getDoc(doc(db,'events',eventId));
+  applyStaffFieldSettings(evDoc.data()?.staffFieldSettings||{});
   renderStaffCustomFields({});
   document.getElementById('staffModal').style.display='flex';
 }
@@ -2173,6 +2322,9 @@ window.editStaff=async function(docId){
   document.getElementById('sIdNumber').value=eDoc.idNumber||'';
   document.getElementById('sNote').value=eDoc.note||'';
   ['sBirthday','sPhone','sEmail','sIdNumber'].forEach(id=>setFieldError(id,false));
+  const eventId=document.getElementById('staffEventSelect').value;
+  const evDoc=await getDoc(doc(db,'events',eventId));
+  applyStaffFieldSettings(evDoc.data()?.staffFieldSettings||{});
   renderStaffCustomFields(eDoc.customData||{});
   document.getElementById('staffModal').style.display='flex';
 }
@@ -2235,6 +2387,21 @@ window.selectStaffRunner=function(name,gender,birthday,phone,email,idNumber,note
   document.getElementById('sIdNumber').value=idNumber;
   document.getElementById('sNote').value=note;
 }
+function applyStaffFieldSettings(sfs){
+  const fields=[
+    {key:'phone', rowId:'sPhoneRow', labelId:'sPhoneLabel', defaultLabel:'手機號碼'},
+    {key:'email', rowId:'sEmailRow', labelId:'sEmailLabel', defaultLabel:'E-Mail'},
+  ];
+  fields.forEach(({key,rowId,labelId,defaultLabel})=>{
+    const row=document.getElementById(rowId);
+    const label=document.getElementById(labelId);
+    if(!row)return;
+    const show=sfs[key]?.show!==false;
+    const req=sfs[key]?.required===true;
+    row.style.display=show?'':'none';
+    if(label)label.textContent=defaultLabel+(req?' *':'');
+  });
+}
 window.saveStaff=async function(){
   const eventId=document.getElementById('staffEventSelect').value;
   const docId=document.getElementById('staffDocId').value;
@@ -2242,16 +2409,27 @@ window.saveStaff=async function(){
   const name=document.getElementById('sName').value.trim();
   const gender=document.getElementById('sGender').value;
   const birthday=document.getElementById('sBirthday').value.trim();
-  const phone=document.getElementById('sPhone').value.trim();
-  const email=document.getElementById('sEmail').value.trim();
   const idNumber=document.getElementById('sIdNumber').value.trim();
   const note=document.getElementById('sNote').value.trim();
+  // staffFieldSettings
+  const evDoc=await getDoc(doc(db,'events',eventId));
+  const sfs=evDoc.data()?.staffFieldSettings||{};
+  const phone=(sfs.phone?.show!==false)?document.getElementById('sPhone').value.trim():'';
+  const email=(sfs.email?.show!==false)?document.getElementById('sEmail').value.trim():'';
   if(!name){showToast('姓名為必填','error');return;}
   if(!gender){showToast('性別為必選','error');return;}
   if(!birthday||!validateBirthday(birthday)){setFieldError('sBirthday',true);showToast('生日為必填','error');return;}
   if(!idNumber||!validateId(idNumber)){setFieldError('sIdNumber',true);showToast('身分證字號為必填','error');return;}
-  if(phone&&!validatePhone(phone)){setFieldError('sPhone',true);showToast('手機號碼格式錯誤','error');return;}
-  if(email&&!validateEmail(email)){setFieldError('sEmail',true);showToast('Email格式錯誤','error');return;}
+  if(sfs.phone?.show!==false){
+    if(sfs.phone?.required&&!phone){setFieldError('sPhone',true);showToast('請填寫手機號碼','error');return;}
+    if(phone&&!validatePhone(phone)){setFieldError('sPhone',true);showToast('手機號碼格式錯誤','error');return;}
+    else setFieldError('sPhone',false);
+  }
+  if(sfs.email?.show!==false){
+    if(sfs.email?.required&&!email){setFieldError('sEmail',true);showToast('請填寫 E-Mail','error');return;}
+    if(email&&!validateEmail(email)){setFieldError('sEmail',true);showToast('Email格式錯誤','error');return;}
+    else setFieldError('sEmail',false);
+  }
   // 自訂欄位
   const customData={};
   for(const f of curStaffCustomFields){
@@ -3133,6 +3311,41 @@ th[data-sort]:hover{color:var(--accent);}
         <div id="gStationList"></div>
         <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addGStation()">＋ 新增站點</button>
       </div>
+      <!-- 組別限制 -->
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:.78rem;font-weight:700;color:var(--accent);margin-bottom:10px">⚙️ 組別限制</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="input-group" style="margin:0">
+            <label>性別限制</label>
+            <select id="gGenderLimit" class="input">
+              <option value="">不限</option>
+              <option value="男">限男性</option>
+              <option value="女">限女性</option>
+            </select>
+          </div>
+          <div class="input-group" style="margin:0">
+            <label>組別名額（0＝不限）</label>
+            <input id="gGroupCapacity" type="number" min="0" class="input" placeholder="0">
+          </div>
+          <div class="input-group" style="margin:0">
+            <label>年齡下限（歲，0＝不限）</label>
+            <input id="gAgeMin" type="number" min="0" class="input" placeholder="0">
+          </div>
+          <div class="input-group" style="margin:0">
+            <label>年齡上限（歲，0＝不限）</label>
+            <input id="gAgeMax" type="number" min="0" class="input" placeholder="0">
+          </div>
+          <div class="input-group" style="margin:0">
+            <label>家長陪同（幾歲以下，0＝不需要）</label>
+            <input id="gParentalAge" type="number" min="0" class="input" placeholder="0">
+          </div>
+          <div class="input-group" style="margin:0">
+            <label>邀請碼（空白＝不需要）</label>
+            <input id="gInviteCode" type="text" class="input" placeholder="例：VIP2026">
+          </div>
+        </div>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:8px">年齡以賽事日期為基準計算。</div>
+      </div>
       <div class="modal-actions" style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="cancelGroupForm()">取消</button><button class="btn btn-primary btn-sm" onclick="saveGroup()">儲存組別</button></div>
     </div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('groupModal')">關閉</button></div>
@@ -3186,7 +3399,9 @@ th[data-sort]:hover{color:var(--accent);}
         <button type="button" class="btn btn-ghost btn-sm" onclick="autoFillBib()">自動編號</button>
       </div>
     </div>
-    <div class="input-group"><label>組別 *</label><select id="eGroup" class="input"></select></div>
+    <div class="input-group"><label>組別 *</label><select id="eGroup" class="input" onchange="onEntryGroupChange()"></select>
+      <div id="eGroupHint" style="font-size:.75rem;margin-top:4px;min-height:16px;color:var(--red)"></div>
+    </div>
     <div class="input-group"><label>姓名 *</label><input id="eName" type="text" class="input" placeholder="王小明"></div>
     <div class="input-group"><label>性別 *</label><select id="eGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>
     <div class="input-group"><label>生日（yyyy/mm/dd）</label>
@@ -3195,10 +3410,11 @@ th[data-sort]:hover{color:var(--accent);}
         <button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById('datePicker');_d.showPicker?_d.showPicker():_d.click()">📅</button><input type="date" id="datePicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('eBirthday').value=y+'/'+m+'/'+d;setFieldError('eBirthday',false);this.value=''}">
       </div>
     </div>
-    <div class="input-group"><label>手機號碼（09開頭10碼）</label><input id="ePhone" type="tel" class="input" placeholder="0912345678" onblur="validateEntryField('phone')" oninput="applyHalf(this)"></div>
-    <div class="input-group"><label>E-Mail</label><input id="eEmail" type="email" class="input" placeholder="example@email.com" onblur="validateEntryField('email')" oninput="applyHalf(this)"></div>
-    <div class="input-group"><label>身分證字號（1英文+9數字）</label><input id="eIdNumber" type="text" class="input" placeholder="A123456789" onblur="validateEntryField('idNumber')" oninput="applyHalf(this)"></div>
+    <div class="input-group" id="ePhoneRow"><label id="ePhoneLabel">手機號碼（09開頭10碼）</label><input id="ePhone" type="tel" class="input" placeholder="0912345678" onblur="validateEntryField('phone')" oninput="applyHalf(this)"></div>
+    <div class="input-group" id="eEmailRow"><label id="eEmailLabel">E-Mail</label><input id="eEmail" type="email" class="input" placeholder="example@email.com" onblur="validateEntryField('email')" oninput="applyHalf(this)"></div>
+    <div class="input-group" id="eIdNumberRow"><label id="eIdNumberLabel">身分證字號（1英文+9數字）</label><input id="eIdNumber" type="text" class="input" placeholder="A123456789" onblur="validateEntryField('idNumber')" oninput="applyHalf(this)"></div>
     <div class="input-group"><label>備註</label><input id="eNote" type="text" class="input"></div>
+    <div class="input-group" id="eInviteCodeRow" style="display:none"><label>邀請碼 *</label><input id="eInviteCode" type="text" class="input" placeholder="輸入邀請碼"></div>
     <div id="entryCustomFieldsContainer"></div>
     <input type="hidden" id="entryDocId">
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('entryModal')">取消</button><button class="btn btn-primary" onclick="saveEntry()">儲存</button></div>
@@ -3238,8 +3454,8 @@ th[data-sort]:hover{color:var(--accent);}
       </div>
     </div>
     <div class="input-group"><label>身分證字號 *</label><input id="sIdNumber" type="text" class="input" placeholder="A123456789" oninput="applyHalf(this);setFieldError('sIdNumber',this.value&&!validateId(this.value))"></div>
-    <div class="input-group"><label>手機號碼</label><input id="sPhone" type="tel" class="input" placeholder="0912345678" oninput="applyHalf(this);setFieldError('sPhone',this.value&&!validatePhone(this.value))"></div>
-    <div class="input-group"><label>E-Mail</label><input id="sEmail" type="email" class="input" oninput="applyHalf(this);setFieldError('sEmail',this.value&&!validateEmail(this.value))"></div>
+    <div class="input-group" id="sPhoneRow"><label id="sPhoneLabel">手機號碼</label><input id="sPhone" type="tel" class="input" placeholder="0912345678" oninput="applyHalf(this);setFieldError('sPhone',this.value&&!validatePhone(this.value))"></div>
+    <div class="input-group" id="sEmailRow"><label id="sEmailLabel">E-Mail</label><input id="sEmail" type="email" class="input" oninput="applyHalf(this);setFieldError('sEmail',this.value&&!validateEmail(this.value))"></div>
     <div class="input-group"><label>備註</label><input id="sNote" type="text" class="input"></div>
     <div id="staffCustomFieldsContainer"></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('staffModal')">取消</button><button class="btn btn-primary" onclick="saveStaff()">儲存</button></div>
