@@ -90,7 +90,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
     <div class="card">
       <div class="csv-hint">ID 和身分證字號填寫其中一項即可，兩項都填寫時，符合任一項即可查詢。</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px">
-        <div class="input-group" style="margin:0"><label>ID</label><input id="lookupId" type="text" class="input" placeholder="R000001" oninput="applyHalf(this)"></div>
+        <div class="input-group" style="margin:0"><label>ID</label><input id="lookupId" type="text" class="input" placeholder="R0001" oninput="applyHalf(this)"></div>
         <div class="input-group" style="margin:0"><label>身分證字號</label><input id="lookupIdNum" type="text" class="input" placeholder="A123456789" oninput="applyHalf(this)"></div>
       </div>
       <div class="input-group"><label>生日（yyyy/mm/dd）*</label><div class="input-row"><input id="lookupBirthday" data-fmt="ymd" type="text" class="input" placeholder="1990/01/01" oninput="applyHalf(this)"><button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById('lookupBirthdayPicker');_d.showPicker?_d.showPicker():_d.click()">📅</button><input type="date" id="lookupBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split('-');document.getElementById('lookupBirthday').value=y+'/'+m+'/'+d;this.value=''}"></div></div>
