@@ -400,6 +400,8 @@ async function selectSignupEvent(eventId, keepWrapper){
   if(emailShow) formHtml+='<div class="input-group"><label>E-Mail'+(emailReq?' *':'')+'</label><input id="suEmail" type="email" class="input" placeholder="example@email.com" onblur="setFieldError(\'suEmail\',!validateEmail(this.value.trim()))"></div>';
   if(idShow) formHtml+='<div class="input-group"><label>身分證字號（1英文+9數字）'+(idReq?' *':'')+'</label><input id="suIdNumber" type="text" class="input" placeholder="A123456789" onblur="setFieldError(\'suIdNumber\',!validateId(this.value.trim()))"></div>';
   formHtml+='<div class="input-group"><label>備註</label><input id="suNote" type="text" class="input"></div>';
+  // 允許自選號碼時才顯示號碼欄位
+  if(curSignupEvent.allowCustomBib){
     const rMin=curSignupEvent.bibRangeMin||0;
     const rMax=curSignupEvent.bibRangeMax||0;
     const pad=curSignupEvent.bibPadLength||3;

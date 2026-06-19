@@ -3083,18 +3083,25 @@ th[data-sort]:hover{color:var(--accent);}
           <div style="font-size:.75rem;font-weight:700;color:var(--muted);margin-bottom:10px;letter-spacing:.04em">🏃 選手報名欄位</div>
           <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 12px;align-items:center;font-size:.78rem">
             <div style="color:var(--muted)">欄位</div><div style="color:var(--muted);text-align:center">顯示</div><div style="color:var(--muted);text-align:center">必填</div>
-            ${['phone:手機號碼','email:E-Mail','idNumber:身分證字號'].map(f=>{const[k,label]=f.split(':');return`
-            <div style="color:var(--text)">${label}</div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_runner_${k}_show" onchange="onFsShowChange('runner','${k}')" checked></div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_runner_${k}_req"></div>`;}).join('')}
+            <div style="color:var(--text)">手機號碼</div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_runner_phone_show" onchange="onFsShowChange('runner','phone')" checked></div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_runner_phone_req"></div>
+            <div style="color:var(--text)">E-Mail</div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_runner_email_show" onchange="onFsShowChange('runner','email')" checked></div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_runner_email_req"></div>
+            <div style="color:var(--text)">身分證字號</div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_runner_idNumber_show" onchange="onFsShowChange('runner','idNumber')" checked></div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_runner_idNumber_req"></div>
           </div>
           <div style="font-size:.75rem;font-weight:700;color:var(--muted);margin-top:14px;margin-bottom:10px;letter-spacing:.04em">🦺 工作人員報名欄位</div>
           <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 12px;align-items:center;font-size:.78rem">
             <div style="color:var(--muted)">欄位</div><div style="color:var(--muted);text-align:center">顯示</div><div style="color:var(--muted);text-align:center">必填</div>
-            ${['phone:手機號碼','email:E-Mail'].map(f=>{const[k,label]=f.split(':');return`
-            <div style="color:var(--text)">${label}</div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_staff_${k}_show" onchange="onFsShowChange('staff','${k}')" checked></div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_staff_${k}_req"></div>`;}).join('')}
+            <div style="color:var(--text)">手機號碼</div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_staff_phone_show" onchange="onFsShowChange('staff','phone')" checked></div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_staff_phone_req"></div>
+            <div style="color:var(--text)">E-Mail</div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_staff_email_show" onchange="onFsShowChange('staff','email')" checked></div>
+            <div style="text-align:center"><input type="checkbox" id="evFS_staff_email_req"></div>
           </div>
           <div style="font-size:.72rem;color:var(--muted);margin-top:8px">隱藏時欄位不顯示也不驗證；顯示時可選必填或選填。</div>
         </div>
