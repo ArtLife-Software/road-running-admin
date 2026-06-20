@@ -170,11 +170,20 @@ function autoSlashDate(el) {
   const isDelete = el._lastLen !== undefined && el.value.length < el._lastLen;
   el._lastLen = el.value.length;
   if (isDelete) return;
-  let digits = el.value.replace(/\D/g, '').slice(0, 8);
+  const pos = el.selectionStart;
+  const raw = el.value;
+  const digits = raw.replace(/\D/g, '').slice(0, 8);
   let out = digits;
   if (digits.length > 4) out = digits.slice(0,4) + '/' + digits.slice(4);
   if (digits.length > 6) out = digits.slice(0,4) + '/' + digits.slice(4,6) + '/' + digits.slice(6);
-  if (out !== el.value) { el.value = out; el._lastLen = out.length; }
+  if (out !== raw) {
+    const slashesBeforeInRaw = (raw.slice(0, pos).match(/\//g) || []).length;
+    const slashesBeforeInOut = (out.slice(0, pos).match(/\//g) || []).length;
+    const newPos = Math.min(pos + (slashesBeforeInOut - slashesBeforeInRaw), out.length);
+    el.value = out;
+    el._lastLen = out.length;
+    try { el.setSelectionRange(newPos, newPos); } catch(e) {}
+  }
 }
 window.autoSlashDate = autoSlashDate;
 
