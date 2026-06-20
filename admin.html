@@ -1049,9 +1049,9 @@ window.exportEntries=async function(){
   const evDate=evDoc.data()?.date||'';
   const customFields=evDoc.data()?.customFields||[];
   const sorted=getSorted('entriesTableBody',allEntries);
-  let csv='編號,組別,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註,家長陪同聲明,緊急聯絡人,緊急聯絡人手機'+customFields.map(f=>','+f.label).join('')+'\n';
+  let csv='編號,組別,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註,家長陪同聲明,緊急聯絡人,緊急聯絡人手機'+customFields.map(f=>','+f.label).join('')+',報到,報到時間\n';
   sorted.forEach(e=>{
-    const r=e.runnerData||{}; const cd=e.customData||{};
+    const r=e.runnerData||{}; const cd=e.customData||{}; const ci=e.checkin;
     csv+='"'+(e.bibNumber||'')+'","'+(e.group||'')+'","'+(e.name||r.name||'')+'","'
       +(r.gender||'')+'","'+(r.birthday||'')+'","'+(r.phone||'')+'","'
       +(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'","'
@@ -1061,6 +1061,7 @@ window.exportEntries=async function(){
       if(f.type==='checkbox') v=v?'是':'否';
       csv+=',"'+(v!==undefined?v:'')+'"';
     });
+    csv+=',"'+(ci?'已報到':'未報到')+'","'+(ci?.checkedInAt?.toDate?ci.checkedInAt.toDate().toLocaleString('zh-TW'):'')+'"';
     csv+='\n';
   });
   downloadCSV(csv,evFileName(evName,evDate)+'_報名資料_'+fmtFileDateTime()+'.csv');
@@ -1840,11 +1841,15 @@ window.doSearch=async function(){
     const gStations=groupStations[gName]||[];
     const gEntries=targetEntries.filter(([,e])=>e.group===gName);
 
-    // 表頭：第1站只有「到達」，其餘站有「到達/區段/累積/名次」
+    // 表頭：第1站只有「到達」；第2站有「到達/累積/名次」（區段=累積，省略）；第3站以後有「到達/區段/累積/名次」
     let thead='<tr><th>編號</th><th>ID</th><th>姓名</th>';
     gStations.forEach((s,i)=>{
       if(i===0){
         thead+='<th>'+esc(s)+'<br><small style="font-weight:400;color:var(--muted)">到達</small></th>';
+      } else if(i===1){
+        thead+='<th>'+esc(s)+'<br><small style="font-weight:400;color:var(--muted)">到達</small></th>'
+          +'<th>'+esc(s)+'<br><small style="font-weight:400;color:var(--muted)">累積</small></th>'
+          +'<th>'+esc(s)+'<br><small style="font-weight:400;color:var(--muted)">名次</small></th>';
       } else {
         thead+='<th>'+esc(s)+'<br><small style="font-weight:400;color:var(--muted)">到達</small></th>'
           +'<th>'+esc(s)+'<br><small style="font-weight:400;color:var(--muted)">區段</small></th>'
@@ -1866,12 +1871,19 @@ window.doSearch=async function(){
       gStations.forEach((s,i)=>{
         const rec=myRecs.find(x=>x.station===s);
         if(!rec){
-          row+=i===0?'<td style="color:var(--muted)">未到</td>':'<td colspan="4" style="color:var(--muted);text-align:center">未到</td>';
+          if(i===0) row+='<td style="color:var(--muted)">未到</td>';
+          else if(i===1) row+='<td colspan="3" style="color:var(--muted);text-align:center">未到</td>';
+          else row+='<td colspan="4" style="color:var(--muted);text-align:center">未到</td>';
           return;
         }
         if(!firstRec)firstRec=rec;
         if(i===0){
           row+='<td>'+fmt(rec.scanTime)+'</td>';
+        } else if(i===1){
+          // 第二站：區段 = 累積，省略區段欄
+          const total=firstRec&&rec!==firstRec?diffHMS(rec.scanTime,firstRec.scanTime):'-';
+          const sRank=groupRankMap[uid+'_'+s]||'-';
+          row+='<td>'+fmt(rec.scanTime)+'</td><td>'+total+'</td><td>'+(sRank!=='-'?'第'+sRank+'名':'-')+'</td>';
         } else {
           const recIdx=myRecs.indexOf(rec);
           const prevRec=myRecs[recIdx-1];
@@ -1907,10 +1919,11 @@ window.exportSearchCSV=function(){
     const gStations=groupStations[gName]||[];
     const gEntries=targetEntries.filter(([,e])=>e.group===gName);
     if(!gEntries.length)continue;
-    // 表頭
+    // 表頭（第二站省略區段欄）
     let csv='編號,ID,姓名,'+gStations[0]+'到達';
     for(let i=1;i<gStations.length;i++){
-      csv+=','+gStations[i]+'到達,'+gStations[i]+'區段,'+gStations[i]+'累積,'+gStations[i]+'名次';
+      if(i===1) csv+=','+gStations[i]+'到達,'+gStations[i]+'累積,'+gStations[i]+'名次';
+      else csv+=','+gStations[i]+'到達,'+gStations[i]+'區段,'+gStations[i]+'累積,'+gStations[i]+'名次';
     }
     csv+=',終點排名\n';
     for(const [uid,e] of gEntries){
@@ -1920,10 +1933,19 @@ window.exportSearchCSV=function(){
       csv+='"'+(e.bibNumber||'')+'","'+uid+'","'+(e.name||r.name||'')+'"';
       gStations.forEach((s,i)=>{
         const rec=myRecs.find(x=>x.station===s);
-        if(!rec){csv+=i===0?',未到':',未到,,,';return;}
+        if(!rec){
+          if(i===0) csv+=',未到';
+          else if(i===1) csv+=',未到,,';
+          else csv+=',未到,,,';
+          return;
+        }
         if(!firstRec)firstRec=rec;
         if(i===0){
           csv+=',"'+fmt(rec.scanTime)+'"';
+        } else if(i===1){
+          const total=firstRec&&rec!==firstRec?diffHMS(rec.scanTime,firstRec.scanTime):'-';
+          const sRank=groupRankMap[uid+'_'+s]||'-';
+          csv+=',"'+fmt(rec.scanTime)+'","'+total+'",'+(sRank!=='-'?'第'+sRank+'名':'-');
         } else {
           const recIdx=myRecs.indexOf(rec);
           const prevRec=myRecs[recIdx-1];

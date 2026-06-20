@@ -1395,16 +1395,21 @@ async function buildLookupCard(e, eventId, rMap, evData){
   if(!allRecs.length){html+='<p style="color:var(--muted);font-size:.85rem;margin-top:8px">尚無打卡記錄</p></div>';return html;}
   html+='<div class="station-stats" style="margin-top:10px">';
   const firstRec=allRecs[0];
+  let prevRec=null;
   stations.forEach((s,i)=>{
     const rec=allRecs.find(x=>x.station===s);
     const arrived=!!rec;
     const total=arrived&&i>0?diffHMS(rec.scanTime,firstRec.scanTime):null;
+    // 第二站（i===1）區段時間 = 累積時間，省略不顯示；第三站以後才顯示區段時間
+    const seg=arrived&&i>1&&prevRec?diffHMS(rec.scanTime,prevRec.scanTime):null;
+    if(arrived) prevRec=rec;
     html+='<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">'
       +'<span class="station-num" style="background:'+(arrived?'var(--green)':'var(--surface2)')+';color:'+(arrived?'#fff':'var(--muted)')+';">'+(i+1)+'</span>'
       +'<span style="flex:1;font-size:.88rem">'+esc(s)+'</span>'
       +(arrived
         ?'<span style="font-family:var(--mono);font-size:.82rem">'+fmt(rec.scanTime)+'</span>'
-          +(total?'<span style="font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-left:8px">'+total+'</span>':'')
+          +(total?'<span style="font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-left:8px">累積 '+total+'</span>':'')
+          +(seg?'<span style="font-family:var(--mono);font-size:.78rem;color:var(--accent);margin-left:6px">區段 '+seg+'</span>':'')
         :'<span style="color:var(--muted);font-size:.82rem">未到</span>')
       +'</div>';
   });
