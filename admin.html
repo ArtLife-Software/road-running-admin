@@ -813,14 +813,15 @@ window.loadEntries=async function(){
   refreshSearchFieldOptions('entrySearchField',curEntryCustomFields);
   // 更新表頭
   const thead=document.getElementById('entriesTableHead');
-  const baseHeads=['編號','組別','ID','姓名','性別','生日','手機','Email','身分證','備註','家長聲明','聯絡人','聯絡人手機','報到'];
-  const baseSortKeys=['bibNumber','group','uniqueId','name','runnerData.gender','runnerData.birthday','','','runnerData.idNumber','runnerData.note','','','','checkin.checkedInAt'];
+  const baseHeads=['編號','組別','ID','姓名','性別','生日','手機','Email','身分證','備註','家長聲明','聯絡人','聯絡人手機'];
+  const baseSortKeys=['bibNumber','group','uniqueId','name','runnerData.gender','runnerData.birthday','','','runnerData.idNumber','runnerData.note','','',''];
   thead.innerHTML='<th style="width:36px"><input type="checkbox" id="entriesSelectAll" onchange="toggleSelectAll(\'entriesTableBody\',\'entriesSelectAll\',\'entriesBatchDeleteBtn\',\'entriesBatchRejectBtn\')"></th>'
     +baseHeads.map((h,i)=>baseSortKeys[i]
       ?'<th data-sort="'+baseSortKeys[i]+'" onclick="sortTable(\'entriesTableBody\',\''+baseSortKeys[i]+'\')">'+h+'<span class="sort-icon"> ⇅</span></th>'
       :'<th>'+h+'</th>'
     ).join('')
     +curEntryCustomFields.map(f=>'<th data-sort="customData.'+f.id+'" onclick="sortTable(\'entriesTableBody\',\'customData.'+f.id+'\')">'+esc(f.label)+'<span class="sort-icon"> ⇅</span></th>').join('')
+    +'<th data-sort="checkin.checkedInAt" onclick="sortTable(\'entriesTableBody\',\'checkin.checkedInAt\')">報到<span class="sort-icon"> ⇅</span></th>'
     +'<th>操作</th>';
   const snap=await getDocs(collection(db,'events',eventId,'runners'));
   const uniqueIds=snap.docs.map(d=>d.data().uniqueId);
@@ -869,8 +870,8 @@ function renderEntries(list){
       +'<td>'+(e.parentalConsentAgreed?'✅ 已同意':'-')+'</td>'
       +'<td>'+esc(e.parentName||'-')+'</td>'
       +'<td>'+esc(e.parentPhone||'-')+'</td>'
-      +checkinCell
       +customCells
+      +checkinCell
       +'<td style="white-space:nowrap">'
       +rejectBtn
       +'<button class="btn btn-sm btn-ghost" onclick="editEntry(\''+e.id+'\')">編輯</button> '
