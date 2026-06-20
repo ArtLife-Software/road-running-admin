@@ -1160,13 +1160,7 @@ async function loadEntryGroupOptions(selected){
     const o=document.createElement('option');
     o.value=g.name;
     // 限制摘要
-    const hints=[];
-    if(g.genderLimit) hints.push(g.genderLimit+'性');
-    if(g.ageMin>0) hints.push(g.ageMin+'歲以上');
-    if(g.ageMax>0) hints.push(g.ageMax+'歲以下');
-    if(g.groupCapacity>0) hints.push('限'+g.groupCapacity+'人');
-    if(g.inviteCode) hints.push('需邀請碼');
-    o.textContent=g.name+(hints.length?' ('+hints.join('、')+')':'');
+    o.textContent=g.name;
     if(g.name===selected)o.selected=true;
     sel.appendChild(o);
   });
@@ -2845,7 +2839,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .stat-num{font-size:1.8rem;font-weight:900;font-family:var(--mono);color:var(--text);}
 .stat-label{font-size:.75rem;color:var(--muted);margin-top:4px;}
 .table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:auto;}
-table{width:100%;border-collapse:collapse;min-width:480px;}
+table{width:max-content;min-width:100%;border-collapse:collapse;}
 th{background:var(--surface2);padding:10px 14px;text-align:left;font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600;white-space:nowrap;}
 td{padding:10px 14px;border-top:1px solid var(--border);font-size:.85rem;}
 tr:hover td{background:rgba(255,255,255,.02);}
