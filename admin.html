@@ -800,6 +800,7 @@ window.loadEntries=async function(){
   curEntryCustomFields=evDoc.data()?.customFields||[];
   curBibPadLength=evDoc.data()?.bibPadLength||3;
   curBibRange={min:evDoc.data()?.bibRangeMin||0, max:evDoc.data()?.bibRangeMax||0};
+  curEntryEventDate=evDoc.data()?.date||'';
   // 動態更新編號欄位的 placeholder
   const bibEl=document.getElementById('eBib');
   if(bibEl) bibEl.placeholder=String(1).padStart(curBibPadLength,'0');
@@ -1145,6 +1146,8 @@ window.showAddEntry=async function(){
   document.getElementById('entryModal').style.display='flex';
 }
 let curEntryGroupMap={}; // groupName -> group data (含限制)
+let curEntryEventDate=''; // 目前選取賽事的日期，供家長年齡判斷用
+let curAdminNeedsParental=false; // 是否需要顯示家長陪同區塊（單一事實來源）
 async function loadEntryGroupOptions(selected){
   const eventId=document.getElementById('entryEventSelect').value;
   const sel=document.getElementById('eGroup'); sel.innerHTML='';
@@ -1241,17 +1244,14 @@ function updateAdminParentalBlock(){
   const g=curEntryGroupMap[group];
   const block=document.getElementById('eParentalBlock');
   if(!block)return;
-  if(!g||!(g.parentalAge>0)){block.style.display='none';return;}
+  if(!g||!(g.parentalAge>0)){curAdminNeedsParental=false;block.style.display='none';return;}
   const birthday=document.getElementById('eBirthday').value.trim();
-  if(!birthday||!validateBirthday(birthday)){block.style.display='none';return;}
-  // 需要賽事日期計算年齡
-  getDoc(doc(db,'events',document.getElementById('entryEventSelect').value)).then(evDoc=>{
-    const evDate=evDoc.data()?.date||new Date().getFullYear()+'-01-01';
-    const [by,bm,bd]=birthday.split('/').map(Number);
-    const [ey,em,ed]=evDate.split('-').map(Number);
-    let age=ey-by;if(em<bm||(em===bm&&ed<bd))age--;
-    block.style.display=(age<g.parentalAge)?'':'none';
-  });
+  if(!birthday||!validateBirthday(birthday)){curAdminNeedsParental=false;block.style.display='none';return;}
+  // 直接用已載入的 curEntryEventDate，不需要再非同步讀 Firestore
+  const evDate=curEntryEventDate||new Date().getFullYear()+'-01-01';
+  const age=calcAge(birthday,evDate);
+  if(age!==null&&age<g.parentalAge){curAdminNeedsParental=true;block.style.display='';}
+  else{curAdminNeedsParental=false;block.style.display='none';}
 }
 
 window.updateAdminParentalBlock=updateAdminParentalBlock;
@@ -1368,6 +1368,8 @@ window.editEntry=async function(id){
   const evDoc2=await getDoc(doc(db,'events',eventId));
   applyEntryFieldSettings(evDoc2.data()?.fieldSettings||{});
   renderEntryCustomFields(e.customData||{});
+  // 家長陪同初始狀態：以已載入的 curAdminNeedsParental 為準（由 loadEntryGroupOptions 觸發的 onEntryGroupChange 設定）
+  // 此時 onEntryGroupChange 已因 loadEntryGroupOptions 完成而執行，curAdminNeedsParental 已是正確值
   document.getElementById('entryModal').style.display='flex';
 }
 window.saveEntry=async function(){
@@ -1416,11 +1418,9 @@ window.saveEntry=async function(){
     document.getElementById('eGroupHint').style.color='var(--red)';
     showToast(groupErr,'error');return;
   }
-  // 家長陪同驗證（以 block 顯示狀態為準）
-  const parentalBlock=document.getElementById('eParentalBlock');
-  const parentalVisible=parentalBlock&&parentalBlock.style.display!=='none';
+  // 家長陪同驗證：以 curAdminNeedsParental 為判斷依據
   let parentalData={};
-  if(parentalVisible){
+  if(curAdminNeedsParental){
     const consent=document.getElementById('eParentalConsent')?.checked||false;
     const parentName=document.getElementById('eParentName')?.value.trim()||'';
     const parentPhone=document.getElementById('eParentPhone')?.value.trim()||'';
@@ -1428,6 +1428,8 @@ window.saveEntry=async function(){
     if(!parentName){showToast('請填寫緊急聯絡人姓名','error');return;}
     if(!parentPhone||!validatePhone(parentPhone)){showToast('請填寫正確的緊急聯絡人手機','error');return;}
     parentalData={parentalConsentAgreed:true,parentName,parentPhone};
+  }else{
+    parentalData={parentalConsentAgreed:deleteField(),parentName:deleteField(),parentPhone:deleteField()};
   }
   // 自訂欄位必填驗證
   const missingLabel=validateEntryCustomFields();

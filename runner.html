@@ -278,6 +278,7 @@ let signupEvents=[]; // 開放報名的賽事清單
 let curSignupEvent=null;
 let curSignupCustomFields=[];
 let lastSignupEventId=null; // 記住上次選的賽事
+let curSignupNeedsParental=false; // 是否需要顯示家長陪同區塊（單一事實來源）
 
 // 判斷選手報名是否開放（OR 邏輯：任一條件符合即開放）
 function isRunnerRegOpen(ev, entryCount) {
@@ -497,21 +498,21 @@ window.onSignupGroupChange=function(){
   }
 }
 
-// 依目前填寫的生日判斷是否需要顯示家長聲明區塊
+// 依目前填寫的生日判斷是否需要顯示家長聲明區塊，並更新模組變數 curSignupNeedsParental
 window.updateParentalBlock=function updateParentalBlock(){
   const group=document.getElementById('suGroup')?.value;
   const g=window._signupGroupMap?.[group];
   const block=document.getElementById('suParentalBlock');
   if(!block)return;
-  if(!g||!(g.parentalAge>0)){block.style.display='none';return;}
+  if(!g||!(g.parentalAge>0)){curSignupNeedsParental=false;block.style.display='none';return;}
   const birthday=document.getElementById('suBirthday')?.value.trim();
   if(birthday&&validateBirthday(birthday)){
     const evDate=curSignupEvent?.date||new Date().getFullYear()+'-01-01';
     const age=calcAgeRunner(birthday,evDate);
-    if(age!==null&&age>=g.parentalAge){block.style.display='none';return;}
-    block.style.display='';
+    if(age!==null&&age>=g.parentalAge){curSignupNeedsParental=false;block.style.display='none';return;}
+    curSignupNeedsParental=true;block.style.display='';
   }else{
-    block.style.display='none';
+    curSignupNeedsParental=false;block.style.display='none';
   }
 }
 
@@ -613,17 +614,14 @@ window.submitSignup=async function(){
       }
     }
     if(g.inviteCode?.trim()&&inviteInput!==g.inviteCode.trim()){showToast('邀請碼不正確','error');return;}
-    // 家長陪同聲明：只要 block 顯示中就驗證，不依賴 evDate
-    if(g.parentalAge>0){
-      const parentalBlock=document.getElementById('suParentalBlock');
-      if(parentalBlock&&parentalBlock.style.display!=='none'){
-        const consent=document.getElementById('suParentalConsent');
-        const parentName=document.getElementById('suParentName')?.value.trim()||'';
-        const parentPhone=document.getElementById('suParentPhone')?.value.trim()||'';
-        if(!consent?.checked){showToast('請勾選家長陪同聲明','error');return;}
-        if(!parentName){showToast('請填寫緊急聯絡人姓名','error');return;}
-        if(!parentPhone||!validatePhone(parentPhone)){showToast('請填寫正確的緊急聯絡人手機','error');return;}
-      }
+    // 家長陪同聲明：以 curSignupNeedsParental 為判斷依據
+    if(curSignupNeedsParental){
+      const consent=document.getElementById('suParentalConsent');
+      const parentName=document.getElementById('suParentName')?.value.trim()||'';
+      const parentPhone=document.getElementById('suParentPhone')?.value.trim()||'';
+      if(!consent?.checked){showToast('請勾選家長陪同聲明','error');return;}
+      if(!parentName){showToast('請填寫緊急聯絡人姓名','error');return;}
+      if(!parentPhone||!validatePhone(parentPhone)){showToast('請填寫正確的緊急聯絡人手機','error');return;}
     }
     // 組別名額
     if(g.groupCapacity>0){
@@ -647,11 +645,18 @@ window.submitSignup=async function(){
 
   const runnerData={name,gender,birthday,phone,email,idNumber,note};
 
-  // 收集家長陪同資料（如有）
-  const parentalConsentAgreed=document.getElementById('suParentalConsent')?.checked||false;
-  const parentName=document.getElementById('suParentName')?.value.trim()||'';
-  const parentPhone=document.getElementById('suParentPhone')?.value.trim()||'';
-  const parentalData=parentalConsentAgreed?{parentalConsentAgreed,parentName,parentPhone}:{};
+  // 收集家長陪同資料：curSignupNeedsParental 是單一事實來源
+  // set 用版（不含 deleteField，用於 batch.set 新報名）
+  const parentalDataForSet=(()=>{
+    if(!curSignupNeedsParental)return{};
+    const agreed=document.getElementById('suParentalConsent')?.checked||false;
+    if(!agreed)return{};
+    return{parentalConsentAgreed:true,parentName:document.getElementById('suParentName')?.value.trim()||'',parentPhone:document.getElementById('suParentPhone')?.value.trim()||''};
+  })();
+  // update 用版（隱藏時帶 deleteField，用於 updateDoc 已報名更新）
+  const parentalDataForUpdate=curSignupNeedsParental
+    ?parentalDataForSet
+    :{parentalConsentAgreed:deleteField(),parentName:deleteField(),parentPhone:deleteField()};
 
   // 自選號碼（若開放且有填）
   const customBibEl=document.getElementById('suBib');
@@ -757,17 +762,17 @@ window.submitSignup=async function(){
         });
         if(result==='refill') return;
         if(result==='new'){
-          await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,null,customBib,parentalData);
+          await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,null,customBib,parentalDataForSet,parentalDataForUpdate);
           return;
         }
-        await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match,customBib,parentalData);
+        await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match,customBib,parentalDataForSet,parentalDataForUpdate);
         return;
       }
       // 完全相同，直接沿用
-      await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match,customBib,parentalData);
+      await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match,customBib,parentalDataForSet,parentalDataForUpdate);
       return;
     }
-    await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,null,customBib,parentalData);
+    await doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,null,customBib,parentalDataForSet,parentalDataForUpdate);
   }catch(e){
     showToast('報名失敗：'+e.message,'error');
     const b=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
@@ -775,7 +780,7 @@ window.submitSignup=async function(){
   }
 }
 
-async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match,customBib,parentalData){
+async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,runnerData,existingRunners,match,customBib,parentalDataForSet,parentalDataForUpdate){
   const btn=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
   if(btn){btn.textContent='送出中...';btn.disabled=true;}
   try{
@@ -794,12 +799,12 @@ async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,
         if(existingData.cancelRequested){
           // 之前申請取消但尚未經審核，視為撤回申請、重新啟用此筆報名
           await updateDoc(doc(db,'events',eventId,'runners',existingEntry.id),{
-            group,customData,updatedAt:serverTimestamp(),
+            group,customData,...parentalDataForUpdate,updatedAt:serverTimestamp(),
             cancelRequested:deleteField(),cancelRequestedAt:deleteField()
           });
           showToast('已為您重新啟用此賽事的報名（取消申請已自動撤回）');
         } else {
-          await updateDoc(doc(db,'events',eventId,'runners',existingEntry.id),{group,customData,updatedAt:serverTimestamp()});
+          await updateDoc(doc(db,'events',eventId,'runners',existingEntry.id),{group,customData,...parentalDataForUpdate,updatedAt:serverTimestamp()});
           showToast('選手資料已更新，您已報名過此賽事');
         }
         if(btn){btn.textContent='送出報名';btn.disabled=false;}
@@ -839,7 +844,7 @@ async function doSignup(eventId,group,name,gender,birthday,phone,email,idNumber,
       while(usedBibs.has(String(n).padStart(pad,'0')))n++;
       bibNumber=String(n).padStart(pad,'0');
     }
-    batch.set(doc(collection(db,'events',eventId,'runners')),{uniqueId,bibNumber,group,customData,...parentalData,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+    batch.set(doc(collection(db,'events',eventId,'runners')),{uniqueId,bibNumber,group,customData,...parentalDataForSet,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
     await batch.commit();
     showSignupSuccess({uniqueId,name,gender,group,bibNumber,eventName:curSignupEvent.name,eventDate:curSignupEvent.date});
   }catch(e){
@@ -1113,6 +1118,7 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
     return age!==null&&age<g.parentalAge;
   }
   const showParental=needsParental(e.group||'',r.birthday||'');
+  curEditNeedsParental=showParental;
 
   let html='<div class="card" style="background:var(--surface2)">';
   const canChangeBib=evDoc.data()?.allowBibChange&&isRunnerRegOpen(evDoc.data(),0);
@@ -1178,7 +1184,7 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   box.dataset.customFields=JSON.stringify(customFields);
 }
 
-// 修改表單：依生日/組別更新家長陪同區塊顯示
+// 修改表單：依生日/組別更新家長陪同區塊顯示，並更新 curEditNeedsParental
 window.updateEditParentalBlock=function(cardId, gMapJson, evDate){
   const block=document.getElementById(cardId+'_eParentalBlock');
   if(!block)return;
@@ -1187,18 +1193,16 @@ window.updateEditParentalBlock=function(cardId, gMapJson, evDate){
     const group=document.getElementById(cardId+'_eGroup')?.value;
     const birthday=document.getElementById(cardId+'_eBirthday')?.value.trim();
     const g=gMap[group];
-    if(!g||!(g.parentalAge>0)){block.style.display='none';return;}
-    // 組別有家長陪同設定：預設顯示
-    // 只有生日格式正確且年齡明確超過限制時才隱藏
+    if(!g||!(g.parentalAge>0)){curEditNeedsParental=false;block.style.display='none';return;}
     if(birthday&&validateBirthday(birthday)){
       const base=evDate||new Date().getFullYear()+'-01-01';
       const age=calcAgeRunner(birthday,base);
-      if(age!==null&&age>=g.parentalAge){block.style.display='none';return;}
-      block.style.display='';
+      if(age!==null&&age>=g.parentalAge){curEditNeedsParental=false;block.style.display='none';return;}
+      curEditNeedsParental=true;block.style.display='';
     }else{
-      block.style.display='none';
+      curEditNeedsParental=false;block.style.display='none';
     }
-  }catch(e){block.style.display='none';}
+  }catch(e){curEditNeedsParental=false;block.style.display='none';}
 }
 
 window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
@@ -1248,11 +1252,9 @@ window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
     if(f.type==='checkbox')customData[f.id]=el.checked;
     else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
   }
-  // 家長陪同欄位（若 block 顯示中才驗證和儲存）
-  const parentalBlock=document.getElementById(cardId+'_eParentalBlock');
-  const parentalVisible=parentalBlock&&parentalBlock.style.display!=='none';
+  // 家長陪同欄位：以 curEditNeedsParental 為判斷依據
   let parentalData={};
-  if(parentalVisible){
+  if(curEditNeedsParental){
     const consent=document.getElementById(cardId+'_eParentalConsent')?.checked||false;
     const parentName=document.getElementById(cardId+'_eParentName')?.value.trim()||'';
     const parentPhone=document.getElementById(cardId+'_eParentPhone')?.value.trim()||'';
@@ -1260,6 +1262,8 @@ window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
     if(!parentName){showToast('請填寫緊急聯絡人姓名','error');return;}
     if(!parentPhone||!validatePhone(parentPhone)){showToast('請填寫正確的緊急聯絡人手機','error');return;}
     parentalData={parentalConsentAgreed:true,parentName,parentPhone};
+  }else{
+    parentalData={parentalConsentAgreed:deleteField(),parentName:deleteField(),parentPhone:deleteField()};
   }
   try{
     if(runnerDocId){
@@ -1278,6 +1282,7 @@ window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
 // ════════════════════════════
 // 查詢成績
 // ════════════════════════════
+let curEditNeedsParental=false; // 修改表單：是否需要家長陪同（單一事實來源）
 let lookupInited=false;
 async function initLookupPage(){
   if(lookupInited)return; lookupInited=true;
