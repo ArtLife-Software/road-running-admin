@@ -77,6 +77,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDoc, getDocs, updateDoc, query, orderBy, where, serverTimestamp, runTransaction, deleteField } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBWn7703qi0X6rL2c4WBhieTZ2-_JSrvco",
@@ -89,6 +90,8 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+// Cloud Functions（工作人員報名/查改的伺服器端處理，部署在 asia-east1）
+const functions = getFunctions(app, 'asia-east1');
 
 // ── 匿名登入（使用者無感）──
 // firestore.rules 要求所有讀寫至少要有登入身分；這裡在背景自動取得
@@ -340,23 +343,14 @@ window.submitSignup=async function(){
   const btn=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
   btn.textContent='送出中...'; btn.disabled=true;
   try{
-    // 用身分證字號當這場賽事工作人員報名記錄的文件ID，包進transaction做「不存在才寫入」
-    // 取代原本「先查詢、查無才寫入」的寫法，避免兩個分頁或兩次快速送出同一張身分證時都通過檢查、造成重複報名
-    const staffRef=doc(db,'events',eventId,'staff',idNumber);
-    let reactivated=false;
-    await runTransaction(db, async tx=>{
-      const existing=await tx.get(staffRef);
-      if(existing.exists()){
-        if(!existing.data().cancelRequested) throw new Error('DUP_SIGNUP');
-        // 之前申請取消但尚未經審核，視為撤回申請、重新啟用此筆報名
-        reactivated=true;
-      }
-      tx.set(staffRef,{
-        name,gender,birthday,phone,email,idNumber,note,customData,
-        createdAt:existing.exists()?(existing.data().createdAt||serverTimestamp()):serverTimestamp(),
-        updatedAt:serverTimestamp()
-      });
-    });
+    // 報名改走 Cloud Function（staffAction）：工作人員個資已從公開可讀的
+    // 資料庫下架，伺服器端以「身分證當文件ID + transaction 不存在才寫入」
+    // 防重複（與原本前端 transaction 的行為一致），並做欄位驗證。
+    const res=(await httpsCallable(functions,'staffAction')({
+      eventId,action:'signup',idNumber,
+      profile:{name,gender,birthday,phone,email,note},customData
+    })).data;
+    const reactivated=res.status==='reactivated';
     const content=document.getElementById('signupContent');
     content.innerHTML='<div class="card" style="text-align:center">'
       +'<div style="font-size:2.5rem;margin-bottom:8px">✅</div>'
@@ -367,7 +361,7 @@ window.submitSignup=async function(){
       +'<div class="csv-hint" style="margin-top:16px;text-align:left">如需查詢 / 修改，請至「查詢報名／修改」分頁輸入身分證字號查詢 / 修改。</div>'
       +'</div>';
   }catch(e){
-    if(e.message==='DUP_SIGNUP'){showToast('您已報名過此賽事','error');btn.textContent='送出報名';btn.disabled=false;return;}
+    if((e.message||'').includes('DUP_SIGNUP')||e.code==='functions/already-exists'){showToast('您已報名過此賽事','error');btn.textContent='送出報名';btn.disabled=false;return;}
     showToast('報名失敗：'+e.message,'error');btn.textContent='送出報名';btn.disabled=false;
   }
 }
@@ -378,6 +372,7 @@ window.submitSignup=async function(){
 let allStatusEvents=[];
 let curStatusEvent=null;
 let lastStatusEventId=null;
+let staffCache={}; // 查詢回傳的本人資料快取（供修改表單預填）
 
 async function initStatusPage(){
   const content=document.getElementById('statusContent');
@@ -440,12 +435,22 @@ window.doStatusQuery=async function(){
 
   const eventId=curStatusEvent.id;
   const ev=curStatusEvent;
-  const staffSnap=await getDocs(query(collection(db,'events',eventId,'staff'),where('idNumber','==',idNum)));
-  if(staffSnap.empty){result.innerHTML='<div class="card"><div class="loading-cell">查無報名記錄</div></div>';return;}
+  // 查詢改走 Cloud Function（工作人員資料已不開放讀取），把回傳資料
+  // 快取起來給修改表單使用
+  let qres;
+  try{
+    qres=(await httpsCallable(functions,'staffAction')({eventId,action:'query',idNumber:idNum.toUpperCase()})).data;
+  }catch(err){
+    result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查詢失敗：'+esc(err.message)+'</div></div>';return;
+  }
+  if(!(qres.matched||[]).length){result.innerHTML='<div class="card"><div class="loading-cell">查無報名記錄</div></div>';return;}
+  staffCache={};
 
   let html='';
-  for(const eDocRef of staffSnap.docs){
-    const e=eDocRef.data();
+  for(const m of qres.matched){
+    const e=m.data;
+    const eDocRef={id:m.staffDocId};
+    staffCache[m.staffDocId]=m.data;
     const cardId='sCard_'+eventId+'_'+eDocRef.id;
     html+='<div class="card" id="'+cardId+'">';
     html+='<div style="font-size:.78rem;color:var(--muted);margin-bottom:8px">'+esc(ev.name)+(ev.date?'　'+esc(ev.date):'')+'</div>';
@@ -474,9 +479,7 @@ window.doStatusQuery=async function(){
 // ── 撤銷取消申請 ──
 window.withdrawStaffCancelRequest=async function(eventId, staffDocId, cardId){
   try{
-    await updateDoc(doc(db,'events',eventId,'staff',staffDocId),{
-      cancelRequested:deleteField(), cancelRequestedAt:deleteField(), updatedAt:serverTimestamp()
-    });
+    await httpsCallable(functions,'staffAction')({eventId,action:'withdraw',idNumber:staffDocId});
     const actions=document.getElementById(cardId+'_actions');
     if(actions) actions.outerHTML='<div id="'+cardId+'_actions">'
       +'<div style="display:flex;gap:8px;margin-top:12px">'
@@ -492,9 +495,7 @@ window.withdrawStaffCancelRequest=async function(eventId, staffDocId, cardId){
 window.requestCancelStaffEntry=async function(eventId, staffDocId, cardId){
   if(!confirm('確定要送出取消報名申請？\n（送出後請等待主辦方審核確認，不會立即取消）'))return;
   try{
-    await updateDoc(doc(db,'events',eventId,'staff',staffDocId),{
-      cancelRequested:true, cancelRequestedAt:serverTimestamp()
-    });
+    await httpsCallable(functions,'staffAction')({eventId,action:'cancel',idNumber:staffDocId});
     const actions=document.getElementById(cardId+'_actions');
     if(actions) actions.outerHTML='<div style="margin-top:12px;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:.82rem;color:var(--muted)">⏳ 已送出取消申請，請等待主辦方確認</div>';
     showToast('已送出取消申請');
@@ -507,8 +508,9 @@ window.showEditForm=async function(eventId,staffDocId,cardId){
   const box=document.getElementById(cardId+'_edit');
   if(box.dataset.open==='1'){box.innerHTML='';box.dataset.open='';return;}
   box.dataset.open='1';
-  const sSnap=await getDoc(doc(db,'events',eventId,'staff',staffDocId));
-  const e=sSnap.data()||{};
+  // 個資改由查詢時的 Cloud Function 回傳（staff 集合已不開放讀取）
+  const e=staffCache[staffDocId];
+  if(!e){showToast('資料已過期，請重新查詢','error');box.innerHTML='';box.dataset.open='';return;}
   const evDoc=await getDoc(doc(db,'events',eventId));
   const customFields=evDoc.data()?.staffCustomFields||[];
   const cd=e.customData||{};
@@ -567,7 +569,13 @@ window.saveEdit=async function(eventId,staffDocId,cardId){
     else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
   }
   try{
-    await updateDoc(doc(db,'events',eventId,'staff',staffDocId),{name,gender,birthday,idNumber,phone,email,note,customData,updatedAt:serverTimestamp()});
+    // 儲存改走 Cloud Function（伺服器端驗證後就地更新；文件ID＝查詢用的
+    // 原身分證，欄位裡的身分證可修改）
+    await httpsCallable(functions,'staffAction')({
+      eventId,action:'save',idNumber:staffDocId,
+      profile:{name,gender,birthday,phone,email,note,newIdNumber:idNumber},customData
+    });
+    Object.assign(staffCache[staffDocId]||{},{name,gender,birthday,idNumber,phone,email,note,customData});
     showToast('已儲存修改');
     document.getElementById(cardId+'_edit').innerHTML='<div class="csv-hint" style="margin-top:12px">✅ 修改已儲存，如有修改身分證，下次請用新號碼查詢。</div>';
   }catch(err){showToast('儲存失敗：'+err.message,'error');}

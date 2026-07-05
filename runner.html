@@ -166,17 +166,6 @@ function escJs(v) {
     .replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'')
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-// ── 只查指定 uniqueId 的選手主檔，取代整個 runners 集合全表掃描 ──
-async function fetchRunnersByUniqueIds(uniqueIds) {
-  const ids = [...new Set((uniqueIds||[]).filter(Boolean))];
-  const map = {};
-  if (!ids.length) return map;
-  const chunks = [];
-  for (let i=0; i<ids.length; i+=30) chunks.push(ids.slice(i, i+30));
-  const snaps = await Promise.all(chunks.map(c=>getDocs(query(collection(db,'runners'), where('uniqueId','in',c)))));
-  snaps.forEach(snap=>snap.docs.forEach(d=>{ const r=d.data(); if(r.uniqueId) map[r.uniqueId]=r; }));
-  return map;
-}
 
 // ── 工具函式 ──
 function fmt(ts) {
@@ -265,18 +254,6 @@ function setFieldError(id, hasError) {
   const el = document.getElementById(id);
   if (!el) return;
   el.style.borderColor = hasError ? 'var(--red)' : '';
-}
-function isSamePerson(a, b) {
-  if (a.idNumber && b.idNumber) return a.idNumber === b.idNumber;
-  if (a.gender && b.gender && a.gender !== b.gender) return false;
-  if (a.birthday && b.birthday && a.birthday !== b.birthday) return false;
-  const nameMatch = a.name && b.name && a.name === b.name;
-  const phoneMatch = a.phone && b.phone && a.phone === b.phone;
-  const emailMatch = a.email && b.email && a.email === b.email;
-  if (nameMatch && (phoneMatch || emailMatch)) return true;
-  let cnt = 0;
-  ['name','gender','birthday','phone','email'].forEach(f => { if (a[f]&&b[f]&&a[f]===b[f]) cnt++; });
-  return cnt >= 3;
 }
 function showToast(msg,type='success'){
   const t=document.getElementById('toast');
@@ -925,6 +902,12 @@ async function selectStatusEvent(eventId, keepWrapper){
   }
 }
 
+// 查詢狀態的驗證憑證與資料快取：
+// 選手個資已從公開可讀的資料庫下架，查詢/修改/取消全部改走 Cloud Function
+// （runnerStatus / runnerAction），每個動作都在伺服器端重新驗證身分。
+// 這裡暫存查詢時輸入的憑證（姓名/性別/生日）供後續動作使用。
+let statusCred=null;
+let statusCache={};
 window.doStatusQuery=async function(){
   if(!curStatusEvent){showToast('請先選擇賽事','error');return;}
   const bib=document.getElementById('statusBib').value.trim();
@@ -937,20 +920,23 @@ window.doStatusQuery=async function(){
 
   const eventId=curStatusEvent.id;
   const ev=curStatusEvent;
-  // 只查此賽事裡符合編號的報名記錄
-  const entrySnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('bibNumber','==',bib)));
-  const allUids=entrySnap.docs.map(d=>d.data().uniqueId);
-  const rMap=await fetchRunnersByUniqueIds(allUids);
+  let res;
+  try{
+    res=(await httpsCallable(functions,'runnerStatus')({eventId,bib,name,gender,birthday})).data;
+  }catch(err){
+    result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查詢失敗：'+esc(err.message)+'</div></div>';
+    return;
+  }
+  statusCred={name,gender,birthday};
+  statusCache={};
 
   let html=''; let found=false;
   const matched=[];
-  for(const eDoc of entrySnap.docs){
-    const e=eDoc.data();
-    const r=rMap[e.uniqueId]||{};
-    const entryName=r.name||'';
-    if(entryName!==name)continue;
-    if((r.gender||'')!==gender)continue;
-    if((r.birthday||'')!==birthday)continue;
+  for(const m of (res.matched||[])){
+    const e=m.entry;
+    const eDoc={id:m.entryDocId};
+    const entryName=m.profile.name||'';
+    statusCache[m.entryDocId]=m;
     found=true;
     matched.push({eDoc, e});
     const cardId='statusCard_'+eventId+'_'+eDoc.id;
@@ -996,9 +982,8 @@ window.doStatusQuery=async function(){
 // ── 撤銷取消申請 ──
 window.withdrawCancelRequest=async function(eventId, entryDocId, uniqueId, cardId){
   try{
-    await updateDoc(doc(db,'events',eventId,'runners',entryDocId),{
-      cancelRequested:deleteField(), cancelRequestedAt:deleteField(), updatedAt:serverTimestamp()
-    });
+    // 透過 Cloud Function 執行（伺服器端重新驗證身分）
+    await httpsCallable(functions,'runnerAction')({eventId,entryDocId,action:'withdraw',credentials:statusCred});
     const actions=document.getElementById(cardId+'_actions');
     if(actions) actions.outerHTML='<div id="'+cardId+'_actions">'
       +'<div id="'+cardId+'_edit" style="margin-top:12px"></div>'
@@ -1016,9 +1001,8 @@ window.withdrawCancelRequest=async function(eventId, entryDocId, uniqueId, cardI
 window.requestCancelEntry=async function(eventId, entryDocId, cardId){
   if(!confirm('確定要送出取消報名申請？\n（送出後請等待主辦方審核確認，不會立即取消，個人資料也不會被刪除）'))return;
   try{
-    await updateDoc(doc(db,'events',eventId,'runners',entryDocId),{
-      cancelRequested:true, cancelRequestedAt:serverTimestamp()
-    });
+    // 透過 Cloud Function 執行（伺服器端重新驗證身分）
+    await httpsCallable(functions,'runnerAction')({eventId,entryDocId,action:'cancel',credentials:statusCred});
     const actions=document.getElementById(cardId+'_actions');
     if(actions) actions.outerHTML='<div style="margin-top:12px;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:.82rem;color:var(--muted)">⏳ 已送出取消申請，請等待主辦方確認</div>';
     showToast('已送出取消申請');
@@ -1067,11 +1051,11 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   const box=document.getElementById(cardId+'_edit');
   if(box.dataset.open==='1'){box.innerHTML='';box.dataset.open='';return;}
   box.dataset.open='1';
-  const eDoc=await getDoc(doc(db,'events',eventId,'runners',entryDocId));
-  const e=eDoc.data();
-  const rSnap=await getDocs(query(collection(db,'runners'),where('uniqueId','==',uniqueId)));
-  const rDocRef=rSnap.empty?null:rSnap.docs[0];
-  const r=rDocRef?rDocRef.data():{};
+  // 個資改由查詢時的 Cloud Function 回傳（runners 主檔已不開放讀取）
+  const cached=statusCache[entryDocId];
+  if(!cached){showToast('資料已過期，請重新查詢','error');box.innerHTML='';box.dataset.open='';return;}
+  const e=cached.entry;
+  const r=cached.profile;
   const evDoc=await getDoc(doc(db,'events',eventId));
   const customFields=evDoc.data()?.customFields||[];
   const evDate=evDoc.data()?.date||'';
@@ -1152,7 +1136,7 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
       html+='<div class="input-group"><label>'+esc(f.label)+'</label><input id="'+fid+'" type="text" class="input" value="'+esc(customData[f.id]!==undefined?customData[f.id]:'')+'"></div>';
     }
   });
-  html+='<button class="btn btn-primary btn-full" onclick="saveEditEntry(\''+eventId+'\',\''+entryDocId+'\',\''+(rDocRef?rDocRef.id:'')+'\',\''+cardId+'\')">儲存修改</button>';
+  html+='<button class="btn btn-primary btn-full" onclick="saveEditEntry(\''+eventId+'\',\''+entryDocId+'\',\''+cardId+'\')">儲存修改</button>';
   html+='</div>';
   box.innerHTML=html;
   box.dataset.customFields=JSON.stringify(customFields);
@@ -1179,7 +1163,7 @@ window.updateEditParentalBlock=function(cardId, gMapJson, evDate){
   }catch(e){curEditNeedsParental=false;block.style.display='none';}
 }
 
-window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
+window.saveEditEntry=async function(eventId,entryDocId,cardId){
   const name=document.getElementById(cardId+'_eName').value.trim();
   const gender=document.getElementById(cardId+'_eGender').value;
   const birthday=document.getElementById(cardId+'_eBirthday').value.trim();
@@ -1210,15 +1194,6 @@ window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
   if(phone&&!validatePhone(phone)){showToast('手機號碼格式錯誤','error');return;}
   if(email&&!validateEmail(email)){showToast('Email格式錯誤','error');return;}
   if(idNumber&&!validateId(idNumber)){showToast('身分證格式錯誤','error');return;}
-  // 若有填新號碼，最終重複確認
-  if(newBib){
-    const dupSnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('bibNumber','==',newBib)));
-    if(dupSnap.docs.some(d=>d.id!==entryDocId)){
-      showToast('號碼 '+newBib+' 已被使用，請重新填寫','error');
-      if(bibEl)bibEl.style.borderColor='var(--red)';
-      return;
-    }
-  }
   const customFields=JSON.parse(document.getElementById(cardId+'_edit').dataset.customFields||'[]');
   const customData={};
   for(const f of customFields){
@@ -1236,33 +1211,26 @@ window.saveEditEntry=async function(eventId,entryDocId,runnerDocId,cardId){
     if(!parentName){showToast('請填寫緊急聯絡人姓名','error');return;}
     if(!parentPhone||!validatePhone(parentPhone)){showToast('請填寫正確的緊急聯絡人手機','error');return;}
     parentalData={parentalConsentAgreed:true,parentName,parentPhone};
-  }else{
-    parentalData={parentalConsentAgreed:deleteField(),parentName:deleteField(),parentPhone:deleteField()};
   }
   try{
-    if(runnerDocId){
-      await updateDoc(doc(db,'runners',runnerDocId),{name,gender,birthday,phone,email,idNumber,note,updatedAt:serverTimestamp()});
-    }
-    const entryUpdate={group,customData,name,...parentalData,updatedAt:serverTimestamp()};
-    const oldBib=rangeEl?.dataset.oldBib||'';
-    if(newBib&&newBib!==oldBib){
-      // 改號碼走跟報名相同的防撞號機制：同一個 batch 裡建立新號碼的預約
-      // 標記（規則只允許「建立」不允許「覆蓋」，號碼同時被別人搶走時整包
-      // 失敗），成功後再釋放舊號碼的標記。
-      // 注意：表單預填的是原本的號碼，只有「真的有改」才需要走這段。
-      entryUpdate.bibNumber=newBib;
-      const b=writeBatch(db);
-      b.update(doc(db,'events',eventId,'runners',entryDocId),entryUpdate);
-      b.set(doc(db,'events',eventId,'bibs',newBib),{uniqueId:rangeEl?.dataset.uid||'',createdAt:serverTimestamp()});
-      try{
-        await b.commit();
-      }catch(err2){
-        if(err2&&err2.code==='permission-denied'){showToast('號碼 '+newBib+' 剛被別人用走了，請換一個','error');if(bibEl)bibEl.style.borderColor='var(--red)';return;}
-        throw err2;
-      }
-      if(oldBib){deleteDoc(doc(db,'events',eventId,'bibs',oldBib)).catch(()=>{});}
-    }else{
-      await updateDoc(doc(db,'events',eventId,'runners',entryDocId),entryUpdate);
+    // 全部交給 Cloud Function：伺服器端重新驗證身分後，原子地更新個人資料
+    // 與報名資料（含改號碼的防撞號交易與家長陪同/必填欄位的伺服器端驗證）
+    const res=(await httpsCallable(functions,'runnerAction')({
+      eventId,entryDocId,action:'save',credentials:statusCred,
+      profile:{name,gender,birthday,phone,email,idNumber,note},
+      entry:{group,customData,newBib:newBib||''},
+      parental:(curEditNeedsParental
+        ?{consent:document.getElementById(cardId+'_eParentalConsent')?.checked||false,
+          parentName:document.getElementById(cardId+'_eParentName')?.value.trim()||'',
+          parentPhone:document.getElementById(cardId+'_eParentPhone')?.value.trim()||''}
+        :null)
+    })).data;
+    // 憑證與快取更新（姓名/性別/生日可能被改了，之後的動作要用新值驗證）
+    statusCred=res.updatedCredentials||statusCred;
+    const cached=statusCache[entryDocId];
+    if(cached){
+      Object.assign(cached.profile,{name,gender,birthday,phone,email,idNumber,note});
+      Object.assign(cached.entry,{group,customData,bibNumber:res.newBib||cached.entry.bibNumber});
     }
     showToast('已儲存修改');
     document.getElementById(cardId+'_edit').innerHTML='<div class="csv-hint">✅ 修改已儲存</div>';
@@ -1307,72 +1275,39 @@ window.doLookup=async function(){
   if(!isAll&&!eventId){showToast('請先選擇賽事','error');return;}
   result.innerHTML='<div class="card"><div class="loading-cell">查詢中...</div></div>';
 
-  // 只查詢符合 ID 或身分證的候選選手，取代整個runners集合全表掃描
-  // uniqueId固定為系統產生的大寫格式，统一轉大寫查詢；身分證字母可能存成大寫或小寫，兩種都查以維持原本大小寫不敏感的比對行為
-  const candidateQueries=[];
-  if(uid) candidateQueries.push(getDocs(query(collection(db,'runners'),where('uniqueId','==',uid.toUpperCase()))));
-  if(idNum){
-    candidateQueries.push(getDocs(query(collection(db,'runners'),where('idNumber','==',idNum.toUpperCase()))));
-    candidateQueries.push(getDocs(query(collection(db,'runners'),where('idNumber','==',idNum.toLowerCase()))));
+  // 身分比對改由 Cloud Function（runnerLookup）在伺服器端處理：
+  // 選手主檔（含個資）已不開放讀取，伺服器驗證「(ID 或身分證) + 生日」
+  // 相符後，只回傳報名記錄的基本資料（姓名/編號/組別），成績明細
+  // 仍由本頁讀取公開的打卡記錄組出。
+  let res;
+  try{
+    res=(await httpsCallable(functions,'runnerLookup')({
+      eventId:isAll?'all':eventId, uid, idNumber:idNum, birthday
+    })).data;
+  }catch(err){
+    result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查詢失敗：'+esc(err.message)+'</div></div>';
+    return;
   }
-  const candidateSnaps=await Promise.all(candidateQueries);
-  const rMap={};
-  candidateSnaps.forEach(snap=>snap.docs.forEach(d=>{ const r=d.data(); if(r.uniqueId) rMap[r.uniqueId]=r; }));
+  const matched=res.matched||[];
+  if(!matched.length){result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查無資料，請確認填寫的資料是否正確</div></div>';return;}
 
-  // 可能符合的 uniqueId 清單（候選選手＋直接輸入的 ID）。
-  // 報名記錄改用 whereIn 只撈這幾筆，取代原本「下載該賽事全部報名資料」
-  // 的做法——查詢全部賽事時尤其有感（原本是每一場都整包下載）。
-  const lookupUids=[...new Set([...Object.keys(rMap),...(uid?[uid.toUpperCase()]:[])])];
-  if(!lookupUids.length){result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查無資料，請確認填寫的資料是否正確</div></div>';return;}
-  async function fetchMatchingEntries(evId){
-    const out=[];
-    for(let i=0;i<lookupUids.length;i+=30){ // whereIn 上限 30 個值
-      const chunk=lookupUids.slice(i,i+30);
-      const snap=await getDocs(query(collection(db,'events',evId,'runners'),where('uniqueId','in',chunk)));
-      snap.docs.forEach(d=>out.push({id:d.id,...d.data()}));
+  // 依賽事分組（同一場找到多筆時，提示同時輸入 ID 和身分證）
+  const byEvent=new Map();
+  matched.forEach(m=>{
+    if(!byEvent.has(m.eventId))byEvent.set(m.eventId,{evName:m.evName,evDate:m.evDate,items:[]});
+    byEvent.get(m.eventId).items.push(m);
+  });
+  let html='';
+  for(const [evId,grp] of byEvent){
+    if(grp.items.length>1){
+      html+='<div class="card"><div style="font-size:.85rem;color:var(--muted)">'+esc(grp.evName)+'（'+esc(grp.evDate||'日期不詳')+'）</div><div style="color:var(--accent);font-size:.85rem;margin-top:4px">找到多筆符合資料，請同時輸入 ID 和身分證字號</div></div>';
+      continue;
     }
-    return out;
+    html+=await buildLookupCard(grp.items[0].entry, evId, isAll?{name:grp.evName,date:grp.evDate}:null);
   }
-
-  function matchEntry(e){
-    const r=rMap[e.uniqueId]||{};
-    // 生日必須符合
-    if((r.birthday||'')!==birthday) return false;
-    // ID 或身分證擇一，兩個都填時任一符合即可
-    const uidMatch=uid&&(e.uniqueId||'').toLowerCase()===uid.toLowerCase();
-    const idNumMatch=idNum&&(r.idNumber||'').toLowerCase()===idNum.toLowerCase();
-    if(uid&&idNum) return uidMatch||idNumMatch;
-    if(uid) return uidMatch;
-    if(idNum) return idNumMatch;
-    return false;
-  }
-
-  if(!isAll){
-    const entries=await fetchMatchingEntries(eventId);
-    const matched=entries.filter(matchEntry);
-    if(!matched.length){result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查無資料，請確認填寫的資料是否正確</div></div>';return;}
-    if(matched.length>1){result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--accent)">找到多筆符合資料，請同時輸入 ID 和身分證字號</div></div>';return;}
-    result.innerHTML=await buildLookupCard(matched[0], eventId, rMap, null);
-  } else {
-    const evSnap=await getDocs(query(collection(db,'events'),orderBy('date','desc')));
-    let html='';
-    for(const evDoc of evSnap.docs){
-      const ev=evDoc.data();
-      const entries=await fetchMatchingEntries(evDoc.id);
-      const matched=entries.filter(matchEntry);
-      if(!matched.length)continue;
-      if(matched.length>1){
-        html+='<div class="card"><div style="font-size:.85rem;color:var(--muted)">'+esc(ev.name)+'（'+esc(ev.date||'日期不詳')+'）</div><div style="color:var(--accent);font-size:.85rem;margin-top:4px">找到多筆符合資料，請同時輸入 ID 和身分證字號</div></div>';
-        continue;
-      }
-      html+=await buildLookupCard(matched[0], evDoc.id, rMap, ev);
-    }
-    if(!html){result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">查無資料，請確認填寫的資料是否正確</div></div>';return;}
-    result.innerHTML=html;
-  }
+  result.innerHTML=html;
 }
-async function buildLookupCard(e, eventId, rMap, evData){
-  const r=rMap[e.uniqueId]||{};
+async function buildLookupCard(e, eventId, evData){
   const recSnap=await getDocs(query(collection(db,'events',eventId,'records'),orderBy('scanTime','asc')));
   const allRecs=recSnap.docs.map(d=>d.data()).filter(x=>x.uniqueId===e.uniqueId);
   const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
@@ -1384,7 +1319,7 @@ async function buildLookupCard(e, eventId, rMap, evData){
 
   let html='<div class="card">'+evTitle
     +'<div class="runner-card-header">'
-    +'<strong style="font-size:1.05rem">'+esc(e.name||r.name||'')+'</strong>'
+    +'<strong style="font-size:1.05rem">'+esc(e.name||'')+'</strong>'
     +'<span class="badge">'+esc(e.group||'-')+'</span>'
     +'<span class="badge">編號 '+esc(e.bibNumber||'-')+'</span>'
     +'</div>';

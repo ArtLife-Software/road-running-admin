@@ -924,6 +924,22 @@ window.loadEntries=async function(){
   const checkinMap={};
   checkinSnap.docs.forEach(d=>{checkinMap[d.id]=d.data();});
   allEntries=snap.docs.map(d=>({id:d.id,...d.data(),runnerData:rMap[d.data().uniqueId]||{},checkin:checkinMap[d.data().uniqueId]||null}));
+  // 靜默補寫：舊報名記錄若缺 name 欄位（反正規化姓名），從主檔補進去。
+  // runners 主檔已鎖成僅限管理員讀取，掃描 App 抓名冊只能靠報名記錄裡的
+  // name——管理員開過一次這頁，舊資料就補齊了。
+  (async()=>{
+    const missing=allEntries.filter(e=>!e.name&&(rMap[e.uniqueId]?.name));
+    if(!missing.length)return;
+    try{
+      let b=writeBatch(db);let n=0;
+      for(const e of missing){
+        b.update(doc(db,'events',eventId,'runners',e.id),{name:rMap[e.uniqueId].name});
+        if(++n>=400){await b.commit();b=writeBatch(db);n=0;}
+      }
+      if(n>0)await b.commit();
+      console.log('已補寫',missing.length,'筆報名記錄的姓名');
+    }catch(err){console.warn('姓名補寫失敗',err);}
+  })();
   renderEntries(getSorted('entriesTableBody',allEntries));
 }
 function renderEntries(list){
