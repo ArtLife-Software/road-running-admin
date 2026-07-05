@@ -1303,6 +1303,7 @@ window.showAddEntry=async function(){
   applyEntryFieldSettings(evDoc.data()?.fieldSettings||{});
   loadEntryGroupOptions('');
   renderEntryCustomFields({});
+  updateAdminParentalBlock(); // 欄位已全部清空，同步重設家長旗標與顯示
   document.getElementById('entryModal').style.display='flex';
 }
 let curEntryGroupMap={}; // groupName -> group data (含限制)
@@ -1330,8 +1331,8 @@ async function loadEntryGroupOptions(selected){
 // ── 年齡計算（以賽事日期為基準）──
 function calcAge(birthday, eventDate){
   if(!birthday||!eventDate)return null;
-  const [by,bm,bd]=birthday.split('/').map(Number);
-  const [ey,em,ed]=eventDate.split('-').map(Number);
+  const [by,bm,bd]=birthday.split(/[/-]/).map(Number);
+  const [ey,em,ed]=eventDate.split(/[/-]/).map(Number);
   if(!by||!ey)return null;
   let age=ey-by;
   if(em<bm||(em===bm&&ed<bd))age--;
@@ -1522,8 +1523,10 @@ window.editEntry=async function(id){
   const evDoc2=await getDoc(doc(db,'events',eventId));
   applyEntryFieldSettings(evDoc2.data()?.fieldSettings||{});
   renderEntryCustomFields(e.customData||{});
-  // 家長陪同初始狀態：以已載入的 curAdminNeedsParental 為準（由 loadEntryGroupOptions 觸發的 onEntryGroupChange 設定）
-  // 此時 onEntryGroupChange 已因 loadEntryGroupOptions 完成而執行，curAdminNeedsParental 已是正確值
+  // 家長陪同初始判斷：必須在「生日與組別都已填入欄位之後」執行。
+  // （loadEntryGroupOptions 觸發的那次判斷發生在生日填入之前，
+  //   用到的是上一筆殘留的生日值，會造成初始顯示狀態錯誤。）
+  updateAdminParentalBlock();
   document.getElementById('entryModal').style.display='flex';
 }
 window.saveEntry=async function(){
@@ -1572,7 +1575,8 @@ window.saveEntry=async function(){
     document.getElementById('eGroupHint').style.color='var(--red)';
     showToast(groupErr,'error');return;
   }
-  // 家長陪同驗證：以 curAdminNeedsParental 為判斷依據
+  // 家長陪同驗證：送出前依「目前的組別＋生日」即時重算，不依賴殘留旗標
+  updateAdminParentalBlock();
   let parentalData={};
   if(curAdminNeedsParental){
     const consent=document.getElementById('eParentalConsent')?.checked||false;

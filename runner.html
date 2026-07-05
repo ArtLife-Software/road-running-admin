@@ -490,6 +490,10 @@ async function selectSignupEvent(eventId, keepWrapper){
   }else{
     document.getElementById('signupContent').innerHTML=formHtml;
   }
+  // 表單建好後立即初始化：重設上一筆報名殘留的家長旗標，並依目前
+  // 預選的組別顯示限制提示／判斷家長區塊（不用等使用者動到欄位）
+  curSignupNeedsParental=false;
+  onSignupGroupChange();
 }
 
 // ── 組別切換時動態顯示限制欄位 ──
@@ -500,7 +504,9 @@ window.onSignupGroupChange=function(){
   const parentalBlock=document.getElementById('suParentalBlock');
   const hint=document.getElementById('suGroupHint');
   if(inviteRow){inviteRow.style.display='none';document.getElementById('suInviteCode').value='';}
-  if(parentalBlock)parentalBlock.style.display='none';
+  // 家長區塊的顯示與旗標一律交給 updateParentalBlock 統一維護
+  //（放在提早 return 之前，「未選組別」時旗標也會被正確重設為 false）
+  updateParentalBlock();
   if(!g||!hint)return;
   // 限制摘要
   const hints=[];
@@ -512,13 +518,6 @@ window.onSignupGroupChange=function(){
   hint.textContent=hints.length?'此組別限制：'+hints.join('、'):'';
   // 邀請碼
   if(inviteRow&&groupHasInvite(g))inviteRow.style.display='';
-  // 家長陪同：有生日才判斷，否則隱藏等待填生日
-  const birthday=document.getElementById('suBirthday')?.value.trim();
-  if(birthday&&validateBirthday(birthday)){
-    updateParentalBlock();
-  }else{
-    if(parentalBlock)parentalBlock.style.display='none';
-  }
 }
 
 // 依目前填寫的生日判斷是否需要顯示家長聲明區塊，並更新模組變數 curSignupNeedsParental
@@ -532,7 +531,8 @@ window.updateParentalBlock=function updateParentalBlock(){
   if(birthday&&validateBirthday(birthday)){
     const evDate=curSignupEvent?.date||new Date().getFullYear()+'-01-01';
     const age=calcAgeRunner(birthday,evDate);
-    if(age!==null&&age>=g.parentalAge){curSignupNeedsParental=false;block.style.display='none';return;}
+    // 算不出年齡（日期異常）時保守隱藏——伺服器端會用權威資料做最終判斷
+    if(age===null||age>=g.parentalAge){curSignupNeedsParental=false;block.style.display='none';return;}
     curSignupNeedsParental=true;block.style.display='';
   }else{
     curSignupNeedsParental=false;block.style.display='none';
@@ -541,8 +541,8 @@ window.updateParentalBlock=function updateParentalBlock(){
 
 window.calcAgeRunner=function calcAgeRunner(birthday,eventDate){
   if(!birthday||!eventDate)return null;
-  const [by,bm,bd]=birthday.split('/').map(Number);
-  const [ey,em,ed]=eventDate.split('-').map(Number);
+  const [by,bm,bd]=birthday.split(/[/-]/).map(Number);
+  const [ey,em,ed]=eventDate.split(/[/-]/).map(Number);
   if(!by||!ey)return null;
   let age=ey-by;
   if(em<bm||(em===bm&&ed<bd))age--;
@@ -638,7 +638,9 @@ window.submitSignup=async function(){
       }
     }
     if(groupHasInvite(g)&&!(await checkInviteCode(g,inviteInput))){showToast('邀請碼不正確','error');return;}
-    // 家長陪同聲明：以 curSignupNeedsParental 為判斷依據
+    // 家長陪同聲明：送出前即時重算（依目前的組別＋生日），
+    // 不依賴可能殘留的旗標
+    updateParentalBlock();
     if(curSignupNeedsParental){
       const consent=document.getElementById('suParentalConsent');
       const parentName=document.getElementById('suParentName')?.value.trim()||'';
@@ -669,8 +671,7 @@ window.submitSignup=async function(){
 
   const runnerData={name,gender,birthday,phone,email,idNumber,note};
 
-  // 收集家長陪同資料：curSignupNeedsParental 是單一事實來源
-  // set 用版（不含 deleteField，用於 batch.set 新報名）
+  // 收集家長陪同資料（curSignupNeedsParental 已在上方即時重算過）
   const parentalDataForSet=(()=>{
     if(!curSignupNeedsParental)return{};
     const agreed=document.getElementById('suParentalConsent')?.checked||false;
@@ -1067,17 +1068,6 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   // 精簡版 groupMap 只保留 parentalAge，供 inline onchange 使用
   const gMapJson=JSON.stringify(Object.fromEntries(Object.entries(groupMap).map(([k,v])=>[k,{parentalAge:v.parentalAge||0}])));
 
-  function needsParental(grpName,bday){
-    const g=groupMap[grpName];
-    if(!g||!(g.parentalAge>0))return false;
-    if(!bday||!validateBirthday(bday))return false;
-    const base=evDate||new Date().getFullYear()+'-01-01';
-    const age=calcAgeRunner(bday,base);
-    return age!==null&&age<g.parentalAge;
-  }
-  const showParental=needsParental(e.group||'',r.birthday||'');
-  curEditNeedsParental=showParental;
-
   let html='<div class="card" style="background:var(--surface2)">';
   const canChangeBib=evDoc.data()?.allowBibChange&&isRunnerRegOpen(evDoc.data(),0);
   html+='<div class="csv-hint">'+(canChangeBib?'可修改以下資料，包含選手號碼。':'可修改以下資料，ID 與編號無法變更。')+'</div>';
@@ -1110,7 +1100,7 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   groups.forEach(g=>{html+='<option value="'+esc(g)+'"'+(g===e.group?' selected':'')+'>'+esc(g)+'</option>';});
   html+='</select></div>';
   // 家長陪同欄位
-  html+='<div id="'+cardId+'_eParentalBlock" style="display:'+(showParental?'':'none')+'">'
+  html+='<div id="'+cardId+'_eParentalBlock" style="display:none">'
     +'<div style="padding:12px;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.3);border-radius:8px;margin-bottom:14px">'
     +'<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:.85rem;line-height:1.5">'
     +'<input type="checkbox" id="'+cardId+'_eParentalConsent" style="margin-top:3px;flex-shrink:0"'+(e.parentalConsentAgreed?' checked':'')+'>'
@@ -1140,27 +1130,34 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   html+='</div>';
   box.innerHTML=html;
   box.dataset.customFields=JSON.stringify(customFields);
+  // 儲存時重算家長需求要用到的資料
+  box.dataset.gmap=gMapJson;
+  box.dataset.evdate=evDate;
+  // 開啟表單當下就依「目前的組別＋生日」判斷是否顯示家長區塊
+  //（與之後改生日/組別時走同一條判斷路徑，不會有初始不判斷的問題）
+  updateEditParentalBlock(cardId,gMapJson,evDate);
 }
 
-// 修改表單：依生日/組別更新家長陪同區塊顯示，並更新 curEditNeedsParental
+// 修改表單：依生日/組別更新家長陪同區塊顯示
+// 判斷結果寫在 block.dataset.need（每張卡片各自獨立），
+// 取代原本的全域旗標——舊寫法同時開兩張卡的編輯表單時會互相覆蓋，
+// 「是否需要家長欄位」會變成最後一次判斷的那張卡的值。
 window.updateEditParentalBlock=function(cardId, gMapJson, evDate){
   const block=document.getElementById(cardId+'_eParentalBlock');
-  if(!block)return;
+  if(!block)return false;
+  const set=(need)=>{block.dataset.need=need?'1':'';block.style.display=need?'':'none';return need;};
   try{
     const gMap=JSON.parse(gMapJson);
     const group=document.getElementById(cardId+'_eGroup')?.value;
     const birthday=document.getElementById(cardId+'_eBirthday')?.value.trim();
     const g=gMap[group];
-    if(!g||!(g.parentalAge>0)){curEditNeedsParental=false;block.style.display='none';return;}
-    if(birthday&&validateBirthday(birthday)){
-      const base=evDate||new Date().getFullYear()+'-01-01';
-      const age=calcAgeRunner(birthday,base);
-      if(age!==null&&age>=g.parentalAge){curEditNeedsParental=false;block.style.display='none';return;}
-      curEditNeedsParental=true;block.style.display='';
-    }else{
-      curEditNeedsParental=false;block.style.display='none';
-    }
-  }catch(e){curEditNeedsParental=false;block.style.display='none';}
+    if(!g||!(g.parentalAge>0))return set(false);
+    if(!(birthday&&validateBirthday(birthday)))return set(false);
+    const base=evDate||new Date().getFullYear()+'-01-01';
+    const age=calcAgeRunner(birthday,base);
+    // 算不出年齡（日期異常）時保守隱藏——伺服器端會做最終判斷
+    return set(!(age===null||age>=g.parentalAge));
+  }catch(e){return set(false);}
 }
 
 window.saveEditEntry=async function(eventId,entryDocId,cardId){
@@ -1201,9 +1198,11 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
     if(f.type==='checkbox')customData[f.id]=el.checked;
     else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
   }
-  // 家長陪同欄位：以 curEditNeedsParental 為判斷依據
+  // 家長陪同欄位：儲存前依「目前表單的組別＋生日」即時重算是否需要
+  const editBox=document.getElementById(cardId+'_edit');
+  const needParental=updateEditParentalBlock(cardId,editBox?.dataset.gmap||'{}',editBox?.dataset.evdate||'');
   let parentalData={};
-  if(curEditNeedsParental){
+  if(needParental){
     const consent=document.getElementById(cardId+'_eParentalConsent')?.checked||false;
     const parentName=document.getElementById(cardId+'_eParentName')?.value.trim()||'';
     const parentPhone=document.getElementById(cardId+'_eParentPhone')?.value.trim()||'';
@@ -1219,7 +1218,7 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
       eventId,entryDocId,action:'save',credentials:statusCred,
       profile:{name,gender,birthday,phone,email,idNumber,note},
       entry:{group,customData,newBib:newBib||''},
-      parental:(curEditNeedsParental
+      parental:(needParental
         ?{consent:document.getElementById(cardId+'_eParentalConsent')?.checked||false,
           parentName:document.getElementById(cardId+'_eParentName')?.value.trim()||'',
           parentPhone:document.getElementById(cardId+'_eParentPhone')?.value.trim()||''}
@@ -1242,7 +1241,6 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
 // ════════════════════════════
 // 查詢成績
 // ════════════════════════════
-let curEditNeedsParental=false; // 修改表單：是否需要家長陪同（單一事實來源）
 let lookupInited=false;
 async function initLookupPage(){
   if(lookupInited)return; lookupInited=true;
