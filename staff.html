@@ -76,6 +76,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDoc, getDocs, updateDoc, query, orderBy, where, serverTimestamp, runTransaction, deleteField } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBWn7703qi0X6rL2c4WBhieTZ2-_JSrvco",
@@ -87,6 +88,16 @@ const firebaseConfig = {
 };
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
+
+// ── 匿名登入（使用者無感）──
+// firestore.rules 要求所有讀寫至少要有登入身分；這裡在背景自動取得
+// 匿名身分，工作人員不需要註冊任何帳號。
+async function ensureAuth(){
+  if (auth.currentUser) return;
+  try { await signInAnonymously(auth); }
+  catch(e){ showToast('連線初始化失敗，請重新整理頁面：'+e.message,'error'); throw e; }
+}
 
 // ── HTML escape（防止使用者輸入被當作HTML/JS執行）──
 function esc(v) {
@@ -562,7 +573,7 @@ window.saveEdit=async function(eventId,staffDocId,cardId){
   }catch(err){showToast('儲存失敗：'+err.message,'error');}
 }
 
-initSignupPage();
+ensureAuth().then(()=>initSignupPage());
 </script>
 </body>
 </html>

@@ -7,8 +7,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, where, onSnapshot, serverTimestamp, writeBatch, Timestamp, deleteField } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, where, onSnapshot, serverTimestamp, writeBatch, runTransaction, Timestamp, deleteField } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBWn7703qi0X6rL2c4WBhieTZ2-_JSrvco",
@@ -40,6 +40,13 @@ function diffHMS(a, b) {
   const s = Math.max(0, Math.floor((da - db2) / 1000));
   return String(Math.floor(s/3600)).padStart(2,'0')+':'+String(Math.floor((s%3600)/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
 }
+// CSV 儲存格：正確轉義內部雙引號，並防止 CSV 公式注入
+// （欄位以 = + - @ 開頭時，Excel 會把它當公式執行——前面補一個單引號中和）
+function csvCell(v) {
+  v = String(v ?? '');
+  if (/^[=+\-@\t\r]/.test(v)) v = "'" + v;
+  return '"' + v.replace(/"/g, '""') + '"';
+}
 function downloadCSV(csv, filename) {
   const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
   const a = document.createElement('a');
@@ -67,6 +74,67 @@ function escJs(v) {
   return String(v ?? '')
     .replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'')
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── 邀請碼雜湊（資料庫只存 SHA-256，不存明文；組別文件是公開可讀的）──
+async function sha256Hex(text){
+  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function groupHasInvite(g){
+  return !!(g&&((g.inviteCodeHash&&g.inviteCodeHash.trim())||(g.inviteCode&&g.inviteCode.trim())));
+}
+async function checkInviteCode(g,input){
+  const v=(input||'').trim();
+  if(g.inviteCodeHash&&g.inviteCodeHash.trim()) return (await sha256Hex(v))===g.inviteCodeHash.trim();
+  return v===(g.inviteCode||'').trim();
+}
+
+// ── 選手流水號：用 config/runnerCounter 計數器 + transaction 配發 ──
+// （跟 runner.html 線上報名共用同一個計數器，取代「掃全表找最大值+1」，
+//  管理員手動新增報名跟線上報名同時發生也不會撞號）
+async function reserveIdBlock(n){
+  const counterRef=doc(db,'config','runnerCounter');
+  return await runTransaction(db,async tx=>{
+    const snap=await tx.get(counterRef);
+    const cur=(snap.exists()&&snap.data().value)||0;
+    tx.set(counterRef,{value:cur+n});
+    return cur; // 回傳保留區段的起點（不含），可用 cur+1 ~ cur+n
+  });
+}
+async function allocateUniqueId(){
+  const counterRef=doc(db,'config','runnerCounter');
+  // 計數器還沒建立（或落後）時，先掃描現有選手把它補到最大編號
+  const snap=await getDoc(counterRef);
+  if(!snap.exists()||!(snap.data().value>0)){
+    const allSnap=await getDocs(collection(db,'runners'));
+    let maxId=0;
+    allSnap.docs.forEach(d=>{const n=parseInt((d.data().uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
+    await runTransaction(db,async tx=>{
+      const s2=await tx.get(counterRef);
+      const cur=(s2.exists()&&s2.data().value)||0;
+      if(maxId>cur) tx.set(counterRef,{value:maxId});
+      else if(!s2.exists()) tx.set(counterRef,{value:0});
+    });
+  }
+  // 逐次 +1，並驗證沒被用過才回傳（防止計數器異常時配出重複編號）
+  for(let i=0;i<50;i++){
+    const start=await reserveIdBlock(1);
+    const cand='R'+String(start+1).padStart(4,'0');
+    const dup=await getDocs(query(collection(db,'runners'),where('uniqueId','==',cand)));
+    if(dup.empty) return cand;
+  }
+  throw new Error('無法產生選手編號');
+}
+
+// ── 刪除報名記錄時，一併刪除對應的號碼預約標記 events/{id}/bibs/{號碼} ──
+// （線上報名建立報名記錄時會同時建立這個標記當作防撞號的鎖；
+//  報名刪掉後標記也要跟著清，該號碼才能再被使用）
+function deleteBibMarker(batchOrNull,eventId,bibNumber){
+  if(!bibNumber)return;
+  const ref=doc(db,'events',eventId,'bibs',bibNumber);
+  if(batchOrNull){batchOrNull.delete(ref);}
+  else{deleteDoc(ref).catch(()=>{});} // 標記本來就不存在也沒關係
 }
 
 // ── 只查指定 uniqueId 的選手主檔，取代整個 runners 集合全表掃描 ──
@@ -188,18 +256,30 @@ window.doLogin = async function() {
   const pw = document.getElementById('loginPassword').value;
   const btn = document.getElementById('loginBtn');
   btn.textContent='登入中...'; btn.disabled=true;
-  try { await signInWithEmailAndPassword(auth, email, pw); }
+  try {
+    if (auth.currentUser && auth.currentUser.isAnonymous) await signOut(auth);
+    await signInWithEmailAndPassword(auth, email, pw);
+  }
   catch(e) { showToast('登入失敗：'+e.message,'error'); btn.textContent='登入'; btn.disabled=false; }
 }
 window.doLogout = async function() { await signOut(auth); }
 onAuthStateChanged(auth, user => {
   if(isStatsMode){
+    // 統計模式不需要管理員登入，但 Firestore 規則現在要求至少要有
+    // （匿名）登入身分才能讀取——在背景自動匿名登入後再載入資料。
+    if(!user){ signInAnonymously(auth).catch(e=>showToast('連線初始化失敗：'+e.message,'error')); return; }
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('appScreen').style.display='block';
     document.getElementById('appScreen').classList.add('stats-mode');
     document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
     document.getElementById('sec-stats').classList.add('active');
     loadStatsSection();
+    return;
+  }
+  // 匿名身分不是管理員：不能進入後台（可能是統計模式殘留的登入狀態）
+  if (user && user.isAnonymous) {
+    document.getElementById('loginScreen').style.display='flex';
+    document.getElementById('appScreen').style.display='none';
     return;
   }
   if (user) {
@@ -281,9 +361,8 @@ window.exportRunners = async function() {
   const sorted = getSorted('runnersTableBody', allRunners);
   let csv = 'uniqueId,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註,建立時間,更新時間\n';
   sorted.forEach(r => {
-    csv += '"'+(r.uniqueId||'')+'","'+(r.name||'')+'","'+(r.gender||'')+'","'+(r.birthday||'')+'","'
-      +(r.phone||'')+'","'+(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'","'
-      +fmtDT(r.createdAt)+'","'+fmtDT(r.updatedAt)+'"\n';
+    csv += [r.uniqueId,r.name,r.gender,r.birthday,r.phone,r.email,r.idNumber,r.note,
+      fmtDT(r.createdAt),fmtDT(r.updatedAt)].map(csvCell).join(',')+'\n';
   });
   downloadCSV(csv, '選手資料_'+fmtFileDateTime()+'.csv');
   showToast('選手資料已匯出');
@@ -602,6 +681,7 @@ window.showAddGroup=function(){
   document.getElementById('gAgeMax').value='0';
   document.getElementById('gParentalAge').value='0';
   document.getElementById('gInviteCode').value='';
+  document.getElementById('gInviteCode').placeholder='例：VIP2026';
   document.getElementById('groupForm').style.display='block';
 }
 window.editGroup=async function(id){
@@ -616,7 +696,10 @@ window.editGroup=async function(id){
   document.getElementById('gAgeMin').value=g.ageMin||0;
   document.getElementById('gAgeMax').value=g.ageMax||0;
   document.getElementById('gParentalAge').value=g.parentalAge||0;
-  document.getElementById('gInviteCode').value=g.inviteCode||'';
+  // 邀請碼只存雜湊，無法回填明文：留空＝維持不變；輸入新碼＝更換；輸入「清除」＝移除
+  const gInv=document.getElementById('gInviteCode');
+  gInv.value='';
+  gInv.placeholder=groupHasInvite(g)?'已設定（輸入新碼可更換；輸入「清除」可移除）':'例：VIP2026';
   document.getElementById('groupForm').style.display='block';
 }
 window.addGStation=function(val=''){
@@ -635,11 +718,20 @@ window.saveGroup=async function(){
   const ageMin=parseInt(document.getElementById('gAgeMin').value)||0;
   const ageMax=parseInt(document.getElementById('gAgeMax').value)||0;
   const parentalAge=parseInt(document.getElementById('gParentalAge').value)||0;
-  const inviteCode=document.getElementById('gInviteCode').value.trim();
+  const inviteInput=document.getElementById('gInviteCode').value.trim();
   if(ageMin>0&&ageMax>0&&ageMin>ageMax){showToast('年齡下限不能大於上限','error');return;}
-  const data={name,stations,genderLimit,groupCapacity,ageMin,ageMax,parentalAge,inviteCode,updatedAt:serverTimestamp()};
-  if(id){await updateDoc(doc(db,'events',curGEvId,'groups',id),data);}
-  else{data.createdAt=serverTimestamp();await addDoc(collection(db,'events',curGEvId,'groups'),data);}
+  const data={name,stations,genderLimit,groupCapacity,ageMin,ageMax,parentalAge,updatedAt:serverTimestamp()};
+  if(id){
+    // 邀請碼：留空＝維持原設定；輸入「清除」＝移除；輸入其他＝換成新碼的雜湊。
+    // 一律順便刪除舊版可能殘留的明文 inviteCode 欄位。
+    if(inviteInput==='清除'){data.inviteCodeHash=deleteField();data.inviteCode=deleteField();}
+    else if(inviteInput){data.inviteCodeHash=await sha256Hex(inviteInput);data.inviteCode=deleteField();}
+    await updateDoc(doc(db,'events',curGEvId,'groups',id),data);
+  }
+  else{
+    if(inviteInput&&inviteInput!=='清除')data.inviteCodeHash=await sha256Hex(inviteInput);
+    data.createdAt=serverTimestamp();await addDoc(collection(db,'events',curGEvId,'groups'),data);
+  }
   const gSnap=await getDocs(collection(db,'events',curGEvId,'groups'));
   await updateDoc(doc(db,'events',curGEvId),{groupNames:gSnap.docs.map(d=>d.data().name),updatedAt:serverTimestamp()});
   document.getElementById('groupForm').style.display='none'; showToast('已儲存'); loadGroups();
@@ -927,6 +1019,28 @@ async function getNextBibNumber(eventId) {
   return String(next).padStart(pad,'0');
 }
 
+// 解析一列 CSV：正確處理「引號包住的欄位裡有逗號」「"" 代表一個雙引號」
+// 以及 Windows 換行殘留的 \r——原本用 split(',') 的做法，備註欄只要含
+// 逗號整列欄位就會位移。
+function parseCSVLine(line){
+  const out=[]; let cur=''; let inQ=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(inQ){
+      if(c==='"'){
+        if(line[i+1]==='"'){cur+='"';i++;}
+        else inQ=false;
+      } else cur+=c;
+    } else {
+      if(c==='"') inQ=true;
+      else if(c===','){out.push(cur);cur='';}
+      else cur+=c;
+    }
+  }
+  out.push(cur);
+  return out.map(v=>v.replace(/\r/g,'').trim());
+}
+
 // 匯入CSV：0.編號 1.組別 2.姓名 3.性別 4.生日 5.手機 6.Email 7.身分證 8.備註
 window.handleEntryCSV=async function(e){
   const eventId=document.getElementById('entryEventSelect').value;
@@ -944,14 +1058,37 @@ window.handleEntryCSV=async function(e){
 
   let maxId=0;
   existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
+  const existingUids=new Set(existingRunners.map(r=>r.uniqueId));
 
-  const batch=writeBatch(db);
+  // 先把流水號計數器補到不落後於現有最大編號（第一次使用或計數器落後時），
+  // 之後新選手的編號一律從計數器保留區段配發——跟線上報名共用同一個計數器，
+  // 匯入期間就算有人同時線上報名也不會撞號。
+  await runTransaction(db,async tx=>{
+    const ref=doc(db,'config','runnerCounter');
+    const snap=await tx.get(ref);
+    const cur=(snap.exists()&&snap.data().value)||0;
+    if(maxId>cur) tx.set(ref,{value:maxId});
+  });
+  let idBlockNext=0,idBlockEnd=0;
+  async function nextImportId(){
+    for(;;){
+      if(idBlockNext>=idBlockEnd){const start=await reserveIdBlock(25);idBlockNext=start+1;idBlockEnd=start+26;}
+      const cand='R'+String(idBlockNext++).padStart(4,'0');
+      if(!existingUids.has(cand)) return cand; // 多一層保險：跳過已被使用的編號
+    }
+  }
+
+  // Firestore 單一 batch 上限 500 個操作——一列匯入最多會產生 2 個操作
+  //（選手主檔＋報名記錄），原本一個 batch 塞到底，匯入約 250 列以上就會
+  // 整批失敗。改成每滿 400 個操作自動先 commit 一批。
+  let batch=writeBatch(db);let opCount=0;
+  async function bop(fn){fn(batch);if(++opCount>=400){await batch.commit();batch=writeBatch(db);opCount=0;}}
   let addedRunners=0,updatedRunners=0,addedEntries=0,skippedEntries=0,fixedBibs=0,reactivatedEntries=0;
 
-  const startLine=isNaN(parseInt(lines[0].split(',')[0].replace(/"/g,'')))?1:0;
+  const startLine=isNaN(parseInt(parseCSVLine(lines[0])[0]))?1:0;
 
   for(let i=startLine;i<lines.length;i++){
-    const vals=lines[i].split(',').map(v=>v.trim().replace(/^"|"$/g,''));
+    const vals=parseCSVLine(lines[i]);
     if(vals.length<3||!vals[2])continue;
     const bibNumber=vals[0]||'';
     const group=vals[1]||'';
@@ -977,14 +1114,14 @@ window.handleEntryCSV=async function(e){
       if(email&&email!==match.email)updates.email=email;
       if(idNumber&&idNumber!==match.idNumber)updates.idNumber=idNumber;
       if(note&&note!==match.note)updates.note=note;
-      if(Object.keys(updates).length){updates.updatedAt=serverTimestamp();batch.update(doc(db,'runners',match.docId),updates);updatedRunners++;}
+      if(Object.keys(updates).length){updates.updatedAt=serverTimestamp();await bop(b=>b.update(doc(db,'runners',match.docId),updates));updatedRunners++;}
       uniqueId=match.uniqueId;
     } else {
-      maxId++;
-      uniqueId='R'+String(maxId).padStart(4,'0');
+      uniqueId=await nextImportId();
       const ref=doc(collection(db,'runners'));
-      batch.set(ref,{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+      await bop(b=>b.set(ref,{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}));
       existingRunners.push({docId:ref.id,...runnerData,uniqueId});
+      existingUids.add(uniqueId);
       addedRunners++;
     }
 
@@ -992,9 +1129,9 @@ window.handleEntryCSV=async function(e){
     const existingEntryObj=existingEntries.find(e=>e.uniqueId===uniqueId);
     if(existingEntryObj){
       if(existingEntryObj.cancelRequested){
-        batch.update(doc(db,'events',eventId,'runners',existingEntryObj.docId),{
+        await bop(b=>b.update(doc(db,'events',eventId,'runners',existingEntryObj.docId),{
           group,cancelRequested:deleteField(),cancelRequestedAt:deleteField(),updatedAt:serverTimestamp()
-        });
+        }));
         reactivatedEntries++;
       } else {
         skippedEntries++;
@@ -1025,12 +1162,12 @@ window.handleEntryCSV=async function(e){
     usedBibs.add(finalBib);
 
     const entryRef=doc(collection(db,'events',eventId,'runners'));
-    batch.set(entryRef,{uniqueId,bibNumber:finalBib,group,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+    await bop(b=>b.set(entryRef,{uniqueId,name,bibNumber:finalBib,group,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}));
     existingEntries.push({docId:entryRef.id,uniqueId,bibNumber:finalBib,group});
     addedEntries++;
   }
 
-  await batch.commit();
+  if(opCount>0) await batch.commit();
   let msg='匯入完成：新增選手'+addedRunners+'人，更新'+updatedRunners+'人，報名'+addedEntries+'筆';
   if(reactivatedEntries)msg+='，重新啟用'+reactivatedEntries+'筆（原申請取消中）';
   if(skippedEntries)msg+='，略過重複'+skippedEntries+'筆';
@@ -1049,19 +1186,18 @@ window.exportEntries=async function(){
   const evDate=evDoc.data()?.date||'';
   const customFields=evDoc.data()?.customFields||[];
   const sorted=getSorted('entriesTableBody',allEntries);
-  let csv='編號,組別,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註,家長陪同聲明,緊急聯絡人,緊急聯絡人手機'+customFields.map(f=>','+f.label).join('')+',報到,報到時間\n';
+  let csv='編號,組別,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註,家長陪同聲明,緊急聯絡人,緊急聯絡人手機'+customFields.map(f=>','+csvCell(f.label)).join('')+',報到,報到時間\n';
   sorted.forEach(e=>{
     const r=e.runnerData||{}; const cd=e.customData||{}; const ci=e.checkin;
-    csv+='"'+(e.bibNumber||'')+'","'+(e.group||'')+'","'+(e.name||r.name||'')+'","'
-      +(r.gender||'')+'","'+(r.birthday||'')+'","'+(r.phone||'')+'","'
-      +(r.email||'')+'","'+(r.idNumber||'')+'","'+(r.note||'')+'","'
-      +(e.parentalConsentAgreed?'已同意':'')+'","'+(e.parentName||'')+'","'+(e.parentPhone||'')+'"';
+    csv+=[e.bibNumber,e.group,e.name||r.name,r.gender,r.birthday,r.phone,
+      r.email,r.idNumber,r.note,
+      e.parentalConsentAgreed?'已同意':'',e.parentName,e.parentPhone].map(csvCell).join(',');
     customFields.forEach(f=>{
       let v=cd[f.id];
       if(f.type==='checkbox') v=v?'是':'否';
-      csv+=',"'+(v!==undefined?v:'')+'"';
+      csv+=','+csvCell(v!==undefined?v:'');
     });
-    csv+=',"'+(ci?'已報到':'未報到')+'","'+(ci?.checkedInAt?.toDate?ci.checkedInAt.toDate().toLocaleString('zh-TW'):'')+'"';
+    csv+=','+csvCell(ci?'已報到':'未報到')+','+csvCell(ci?.checkedInAt?.toDate?ci.checkedInAt.toDate().toLocaleString('zh-TW'):'');
     csv+='\n';
   });
   downloadCSV(csv,evFileName(evName,evDate)+'_報名資料_'+fmtFileDateTime()+'.csv');
@@ -1205,9 +1341,9 @@ async function validateGroupLimits(group, gender, birthday, inviteInput){
       if(g.ageMax>0&&age>g.ageMax) return '此組別年齡限制 '+g.ageMax+' 歲以下（您的年齡：'+age+'歲）';
     }
   }
-  // 邀請碼
-  if(g.inviteCode&&g.inviteCode.trim()){
-    if((inviteInput||'').trim()!==g.inviteCode.trim())
+  // 邀請碼（雜湊比對；相容舊版明文）
+  if(groupHasInvite(g)){
+    if(!(await checkInviteCode(g,inviteInput)))
       return '邀請碼不正確';
   }
   // 組別名額
@@ -1228,7 +1364,7 @@ window.onEntryGroupChange=function(){
   const hint=document.getElementById('eGroupHint');
   document.getElementById('eInviteCode').value='';
   if(!g){inviteRow.style.display='none';hint.textContent='';updateAdminParentalBlock();return;}
-  inviteRow.style.display=(g.inviteCode?.trim())?'':'none';
+  inviteRow.style.display=groupHasInvite(g)?'':'none';
   // 限制摘要
   const hints=[];
   if(g.genderLimit) hints.push('限'+g.genderLimit+'性');
@@ -1465,10 +1601,8 @@ window.saveEntry=async function(){
           uniqueId=match.uniqueId;
           await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
         } else {
-          // 非同一人：建立新選手
-          let maxId=0;
-          existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
-          uniqueId='R'+String(maxId+1).padStart(4,'0');
+          // 非同一人：建立新選手（計數器配號，與線上報名共用、不會撞號）
+          uniqueId=await allocateUniqueId();
           await setDoc(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
         }
       } else {
@@ -1476,10 +1610,8 @@ window.saveEntry=async function(){
         uniqueId=match.uniqueId;
       }
     } else {
-      // 無比對結果，建立新選手
-      let maxId=0;
-      existingRunners.forEach(r=>{const n=parseInt((r.uniqueId||'').replace('R',''))||0;if(n>maxId)maxId=n;});
-      uniqueId='R'+String(maxId+1).padStart(4,'0');
+      // 無比對結果，建立新選手（計數器配號，與線上報名共用、不會撞號）
+      uniqueId=await allocateUniqueId();
       await setDoc(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
     }
   }
@@ -1489,7 +1621,7 @@ window.saveEntry=async function(){
     if(!existingEntry.empty){
       const exDoc=existingEntry.docs[0];
       const exData=exDoc.data();
-      const entryUpdate={bibNumber,group,customData,updatedAt:serverTimestamp()};
+      const entryUpdate={bibNumber,group,customData,name,updatedAt:serverTimestamp()};
       if(exData.cancelRequested){
         entryUpdate.cancelRequested=deleteField();
         entryUpdate.cancelRequestedAt=deleteField();
@@ -1511,7 +1643,7 @@ window.saveEntry=async function(){
       await updateDoc(doc(db,'runners',rSnap.docs[0].id),{name,gender,birthday,phone,email,idNumber:idNum,note,updatedAt:serverTimestamp()});
     }
   }
-  const data={uniqueId,bibNumber,group,customData,...parentalData,updatedAt:serverTimestamp()};
+  const data={uniqueId,name,bibNumber,group,customData,...parentalData,updatedAt:serverTimestamp()};
   if(id){await updateDoc(doc(db,'events',eventId,'runners',id),data);showToast('已更新');}
   else{data.createdAt=serverTimestamp();await addDoc(collection(db,'events',eventId,'runners'),data);showToast('已新增');}
   closeModal('entryModal'); loadEntries();
@@ -1519,7 +1651,11 @@ window.saveEntry=async function(){
 window.deleteEntry=async function(id,name){
   const eventId=document.getElementById('entryEventSelect').value;
   if(!confirm('確定刪除「'+name+'」的報名資料？'))return;
-  await deleteDoc(doc(db,'events',eventId,'runners',id)); showToast('已刪除'); loadEntries();
+  // 一併刪除號碼預約標記，讓這個號碼之後可以重新配發
+  const entryObj=allEntries.find(x=>x.docId===id||x.id===id);
+  await deleteDoc(doc(db,'events',eventId,'runners',id));
+  deleteBibMarker(null,eventId,entryObj&&entryObj.bibNumber);
+  showToast('已刪除'); loadEntries();
 }
 // 駁回取消申請：只清除標記，報名資料不受影響
 window.rejectCancelRequest=async function(id){
@@ -1626,7 +1762,7 @@ window.exportRecordsCSV=async function(){
   const sorted=getSorted('recordsTableBody',_lastRecordsData);
   let csv='ID,姓名,編號,組別,站點,掃描時間\n';
   sorted.forEach(r=>{
-    csv+='"'+(r.uniqueId||'')+'","'+(r.name||'')+'","'+(r.bibNumber||'')+'","'+(r.group||'')+'","'+(r.station||'')+'","'+fmtDT(r.scanTime)+'"\n';
+    csv+=[r.uniqueId,r.name,r.bibNumber,r.group,r.station,fmtDT(r.scanTime)].map(csvCell).join(',')+'\n';
   });
   downloadCSV(csv,evFileName(evName,evDate)+'_打卡記錄_'+fmtFileDateTime()+'.csv');
   showToast('CSV已下載');
@@ -1930,7 +2066,7 @@ window.exportSearchCSV=function(){
       const r=rMap[uid]||{};
       const myRecs=allRecs.filter(x=>x.uniqueId===uid);
       let firstRec=null;
-      csv+='"'+(e.bibNumber||'')+'","'+uid+'","'+(e.name||r.name||'')+'"';
+      csv+=csvCell(e.bibNumber)+','+csvCell(uid)+','+csvCell(e.name||r.name);
       gStations.forEach((s,i)=>{
         const rec=myRecs.find(x=>x.station===s);
         if(!rec){
@@ -2163,7 +2299,9 @@ window.saveAccount=async function(){
     const secAuth=getAuth2(secApp);
     const cred=await createUser2(secAuth,email,password);
     await signOut2(secAuth);
-    await addDoc(collection(db,'accounts'),{email,note,createdAt:serverTimestamp()});
+    // 文件 id 直接用 email：firestore.rules 的 isAdmin() 會用
+    // exists(accounts/{email}) 查白名單，這個帳號登入後才有管理權限
+    await setDoc(doc(db,'accounts',email),{email,note,createdAt:serverTimestamp()});
     showToast('帳戶已建立');
     closeModal('accountModal');
     loadAccountsSection();
@@ -2536,11 +2674,11 @@ window.exportStaff=async function(){
   const evName=evDoc.data()?.name||'賽事'; const evDate=evDoc.data()?.date||'';
   const customFields=evDoc.data()?.staffCustomFields||[];
   const sorted=getSorted('staffTableBody',allStaff);
-  let csv='姓名,性別,生日,手機,Email,身分證,備註'+customFields.map(f=>','+f.label).join('')+'\n';
+  let csv='姓名,性別,生日,手機,Email,身分證,備註'+customFields.map(f=>','+csvCell(f.label)).join('')+'\n';
   sorted.forEach(e=>{
     const cd=e.customData||{};
-    csv+='"'+(e.name||'')+'","'+(e.gender||'')+'","'+(e.birthday||'')+'","'+(e.phone||'')+'","'+(e.email||'')+'","'+(e.idNumber||'')+'","'+(e.note||'')+'"';
-    customFields.forEach(f=>{let v=cd[f.id];if(f.type==='checkbox')v=v?'是':'否';csv+=',"'+(v!==undefined?v:'')+'"';});
+    csv+=[e.name,e.gender,e.birthday,e.phone,e.email,e.idNumber,e.note].map(csvCell).join(',');
+    customFields.forEach(f=>{let v=cd[f.id];if(f.type==='checkbox')v=v?'是':'否';csv+=','+csvCell(v!==undefined?v:'');});
     csv+='\n';
   });
   downloadCSV(csv,evFileName(evName,evDate)+'_工作人員_'+fmtFileDateTime()+'.csv');
@@ -2724,9 +2862,15 @@ window.batchDeleteEntries=async function(){
   const eventId=document.getElementById('entryEventSelect').value;
   if(!ids.length||!eventId)return;
   if(!confirm('確定刪除選取的 '+ids.length+' 筆報名資料？'))return;
-  const batch=writeBatch(db);
-  ids.forEach(id=>batch.delete(doc(db,'events',eventId,'runners',id)));
-  await batch.commit();
+  // 每筆會刪 2 個文件（報名記錄＋號碼預約標記），分批避開單一 batch 500 個操作的上限
+  let batch=writeBatch(db);let opCount=0;
+  for(const id of ids){
+    batch.delete(doc(db,'events',eventId,'runners',id));opCount++;
+    const entryObj=allEntries.find(x=>x.docId===id||x.id===id);
+    if(entryObj&&entryObj.bibNumber){deleteBibMarker(batch,eventId,entryObj.bibNumber);opCount++;}
+    if(opCount>=400){await batch.commit();batch=writeBatch(db);opCount=0;}
+  }
+  if(opCount>0) await batch.commit();
   showToast('已刪除 '+ids.length+' 筆報名資料');
   resetBatchUI('entriesTableBody','entriesSelectAll','entriesBatchDeleteBtn','entriesBatchRejectBtn');
   loadEntries();
