@@ -87,7 +87,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDoc, getDocs, updateDoc, query, orderBy, where, serverTimestamp, runTransaction, deleteField } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
 
 const firebaseConfig = {
@@ -107,10 +107,29 @@ const functions = getFunctions(app, 'asia-east1');
 // ── 匿名登入（使用者無感）──
 // firestore.rules 要求所有讀寫至少要有登入身分；這裡在背景自動取得
 // 匿名身分，工作人員不需要註冊任何帳號。
-async function ensureAuth(){
-  if (auth.currentUser) return;
-  try { await signInAnonymously(auth); }
-  catch(e){ showToast('連線初始化失敗，請重新整理頁面：'+e.message,'error'); throw e; }
+//
+// ⚠️ 這裡故意不用「if(auth.currentUser) return; 否則 signInAnonymously()」
+// 這種寫法：頁面剛載入時，Firebase 都還在背景非同步地從瀏覽器裡還原「先前
+// 已經登入」的身分（例如同一瀏覽器另一分頁開著 admin.html 用管理員帳號
+// 登入），這個還原動作還沒完成之前 auth.currentUser 會短暫是 null。
+// 若直接判斷 null 就呼叫 signInAnonymously()，等於在管理員身分「正要」
+// 被還原的那一瞬間硬塞進一個匿名身分，蓋掉同瀏覽器（同網域）其他分頁
+// 原本的管理員登入狀態，導致 admin.html 被強制登出。
+// 改用 onAuthStateChanged 等 Firebase 確定「目前到底有沒有人登入」之後，
+// 沒有才補做匿名登入；已經有登入（不論是管理員或匿名）就直接沿用。
+let ensureAuthPromise = null;
+function ensureAuth(){
+  if (!ensureAuthPromise) {
+    ensureAuthPromise = new Promise((resolve, reject) => {
+      const unsub = onAuthStateChanged(auth, async user => {
+        unsub();
+        if (user) { resolve(); return; }
+        try { await signInAnonymously(auth); resolve(); }
+        catch(e){ showToast('連線初始化失敗，請重新整理頁面：'+e.message,'error'); reject(e); }
+      });
+    });
+  }
+  return ensureAuthPromise;
 }
 
 // ── HTML escape（防止使用者輸入被當作HTML/JS執行）──
