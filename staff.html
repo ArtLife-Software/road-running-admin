@@ -39,6 +39,16 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
 .toast.success{border-left:4px solid var(--green);}
 .toast.error{border-left:4px solid var(--red);}
+/* ── 關於 Modal ── */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);align-items:center;justify-content:center;z-index:500;}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px;width:360px;max-width:92vw;max-height:88vh;overflow-y:auto;box-shadow:0 30px 80px rgba(0,0,0,.6);}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px;}
+.about-title{font-size:1.1rem;font-weight:900;color:var(--accent);margin-bottom:16px;}
+.about-row{display:flex;align-items:flex-start;padding:3px 0;font-size:.85rem;}
+.about-row .about-label{width:80px;flex-shrink:0;color:var(--muted);}
+.about-row .about-value{flex:1;color:var(--text);word-break:break-all;}
+.about-row .about-value a{color:var(--accent);text-decoration:underline;}
+.about-divider{height:1px;background:var(--border);margin:14px 0;}
 </style>
 </head>
 <body>
@@ -53,7 +63,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
     <div class="tab active" data-page="signup" onclick="showPage('signup')">📝 報名</div>
     <div class="tab" data-page="status" onclick="showPage('status')">🔍 查詢報名／修改</div>
   </div>
-  <div style="text-align:right;margin-bottom:12px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <a href="javascript:void(0)" onclick="showAbout()" style="font-size:.78rem;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;gap:4px" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">ℹ️ 關於</a>
     <a href="admin.html?mode=stats" target="_blank" style="font-size:.78rem;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;gap:4px" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">📊 即時統計 →</a>
   </div>
 
@@ -582,6 +593,47 @@ window.saveEdit=async function(eventId,staffDocId,cardId){
 }
 
 ensureAuth().then(()=>initSignupPage());
+
+// ── 關於 ──
+const ABOUT_INFO = {
+  appName: '路跑打卡系統',
+  rows: [
+    {label:'版本', value:'1.0.0'},
+    {label:'日期', value:'2026/07/05'},
+    {divider:true},
+    {label:'執行環境', value:'瀏覽器'},
+    {label:'語言', value:'JavaScript+HTML+CSS'},
+    {label:'語系', value:'正體中文'},
+    {label:'授權', value:'PolyForm-NC 1.0.0', url:'https://polyformproject.org/licenses/noncommercial/1.0.0'},
+    {divider:true},
+    {label:'設計開發', value:'林彥丞'},
+    {label:'Mail', value:'lin.yancheng@outlook.com', url:'mailto:lin.yancheng@outlook.com'},
+    {label:'GitHub', value:'ArtLife-Software', url:'https://github.com/ArtLife-Software'},
+    {label:'Facebook', value:'O && C VBA研究社', url:'https://www.facebook.com/groups/vba.club'},
+    {label:'Country', value:'中華民國台灣'},
+  ]
+};
+window.showAbout=function(){
+  document.getElementById('aboutAppName').textContent = ABOUT_INFO.appName;
+  document.getElementById('aboutBody').innerHTML = ABOUT_INFO.rows.map(r=>{
+    if (r.divider) return '<div class="about-divider"></div>';
+    const val = r.url
+      ? '<a href="'+esc(r.url)+'" target="_blank" rel="noopener noreferrer">'+esc(r.value)+'</a>'
+      : esc(r.value);
+    return '<div class="about-row"><div class="about-label">'+esc(r.label)+'</div><div class="about-value">'+val+'</div></div>';
+  }).join('');
+  document.getElementById('aboutModal').style.display='flex';
+}
+window.closeModal=function(id){document.getElementById(id).style.display='none';}
 </script>
+
+<!-- 關於 Modal -->
+<div id="aboutModal" class="modal-overlay">
+  <div class="modal">
+    <div class="about-title" id="aboutAppName"></div>
+    <div id="aboutBody"></div>
+    <div class="modal-actions"><button class="btn btn-primary" onclick="closeModal('aboutModal')">確定</button></div>
+  </div>
+</div>
 </body>
 </html>
