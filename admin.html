@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>路跑打卡系統｜管理後台</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script type="module">
@@ -2978,13 +2978,13 @@ window.closeModal=function(id){document.getElementById(id).style.display='none';
 const ABOUT_INFO = {
   appName: '路跑打卡系統',
   rows: [
-    {label:'版本', value:'1.0.0'},
-    {label:'日期', value:'2026/07/05'},
+    {label:'發行版本', value:'1.0.0'},
+    {label:'發行日期', value:'2026/07/05'},
     {divider:true},
-    {label:'執行環境', value:'瀏覽器'},
-    {label:'語言', value:'JavaScript+HTML+CSS'},
-    {label:'語系', value:'正體中文'},
-    {label:'授權', value:'PolyForm-NC 1.0.0', url:'https://polyformproject.org/licenses/noncommercial/1.0.0'},
+    {label:'執行環境', value:'網頁瀏覽器'},
+    {label:'程式語言', value:'JavaScript + HTML + CSS'},
+    {label:'軟體語系', value:'正體中文'},
+    {label:'授權協議', value:'PolyForm-NC 1.0.0', url:'https://polyformproject.org/licenses/noncommercial/1.0.0'},
     {divider:true},
     {label:'設計開發', value:'林彥丞'},
     {label:'Mail', value:'lin.yancheng@outlook.com', url:'mailto:lin.yancheng@outlook.com'},
@@ -3122,14 +3122,13 @@ th[data-sort]:hover{color:var(--accent);}
 .toast.error{border-left:4px solid var(--red);}
 @media(max-width:768px){
   .sidebar{display:none!important;}
-  #appScreen{padding-bottom:90px;}
-  .main{margin-left:0;padding:16px;padding-top:50px;padding-bottom:16px;}
+  .main{margin-left:0;padding:16px;padding-bottom:80px;}
   .station-stat-row{grid-template-columns:110px 1fr 45px;}
   .section-header{flex-direction:column;align-items:flex-start;}
   .top-bar{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);margin:-16px -16px 16px;}
   .top-bar-title{font-size:1rem;font-weight:900;white-space:nowrap;}
   .top-bar-right{display:flex;align-items:center;gap:6px;font-size:.7rem;color:var(--muted);}
-  .bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);z-index:9999;height:90px;overflow-x:auto;overflow-y:hidden;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;box-shadow:0 -4px 12px rgba(0,0,0,.2);padding-bottom:env(safe-area-inset-bottom);}
+  .bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);z-index:200;height:60px;overflow-x:auto;overflow-y:hidden;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;}
   .bottom-nav::-webkit-scrollbar{height:3px;}
   .bottom-nav::-webkit-scrollbar-track{background:transparent;}
   .bottom-nav::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
