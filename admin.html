@@ -3128,8 +3128,11 @@ th[data-sort]:hover{color:var(--accent);}
   .top-bar{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);margin:-16px -16px 16px;}
   .top-bar-title{font-size:1rem;font-weight:900;white-space:nowrap;}
   .top-bar-right{display:flex;align-items:center;gap:6px;font-size:.7rem;color:var(--muted);}
-  .bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);z-index:200;height:60px;}
-  .bottom-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--muted);cursor:pointer;font-size:.58rem;font-weight:600;transition:color .15s;}
+  .bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);z-index:200;height:60px;overflow-x:auto;overflow-y:hidden;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;}
+  .bottom-nav::-webkit-scrollbar{height:3px;}
+  .bottom-nav::-webkit-scrollbar-track{background:transparent;}
+  .bottom-nav::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+  .bottom-nav-item{flex-shrink:0;width:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--muted);cursor:pointer;font-size:.58rem;font-weight:600;transition:color .15s;}
   .bottom-nav-item .nav-icon{font-size:1.15rem;}
   .bottom-nav-item.active{color:var(--accent);}
 }
@@ -3198,6 +3201,7 @@ th[data-sort]:hover{color:var(--accent);}
     <div class="bottom-nav-item" data-nav="search" onclick="showSection('search')"><span class="nav-icon">🔍</span><span>成績</span></div>
     <div class="bottom-nav-item" data-nav="stats" onclick="showSection('stats')"><span class="nav-icon">📈</span><span>統計</span></div>
     <div class="bottom-nav-item admin-only" data-nav="accounts" onclick="showSection('accounts')" style="display:none"><span class="nav-icon">👤</span><span>帳戶</span></div>
+    <div class="bottom-nav-item" data-nav="about" onclick="showAbout()"><span class="nav-icon">ℹ️</span><span>關於</span></div>
   </div>
 
   <div class="main">
