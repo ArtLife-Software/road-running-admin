@@ -2179,7 +2179,11 @@ async function loadStatsRoster(eventId){
   const entries=entrySnap.docs.map(d=>d.data());
   const groups=gSnap.docs.map(d=>d.data());
   const statsBasis=evDoc.data()?.statsBasis||'registered';
-  const rMap=await fetchRunnersByUniqueIds(entries.map(e=>e.uniqueId));
+  // 公開統計模式（?mode=stats）只有匿名登入身分，Firestore 規則刻意將
+  // runners 主檔（含生日/電話/身分證等個資）限定僅管理員可讀，
+  // 所以這裡不呼叫 fetchRunnersByUniqueIds，避免 permission denied
+  // 導致整個統計頁面連基本人數/進度都無法顯示。
+  const rMap=isStatsMode?{}:await fetchRunnersByUniqueIds(entries.map(e=>e.uniqueId));
   return {entries, groups, rMap, statsBasis};
 }
 // 用既有名單(roster) + 最新的打卡記錄/報到記錄畫面統計畫面
@@ -2221,8 +2225,9 @@ function renderStatsContent(roster, records, checkinIds){
 
   let html='<div class="stats-grid" style="margin-bottom:24px">'
     +'<div class="stat-card large"><div class="stat-num">'+entries.length+'</div><div class="stat-label">報名總人數</div></div>'
-    +'<div class="stat-card large"><div class="stat-num">'+maleCount+'</div><div class="stat-label">男生人數</div></div>'
-    +'<div class="stat-card large"><div class="stat-num">'+femaleCount+'</div><div class="stat-label">女生人數</div></div>'
+    // 公開統計模式讀不到 runners 主檔（個資保護），沒有性別資料可顯示，故不顯示這兩張卡片
+    +(isStatsMode?'':'<div class="stat-card large"><div class="stat-num">'+maleCount+'</div><div class="stat-label">男生人數</div></div>')
+    +(isStatsMode?'':'<div class="stat-card large"><div class="stat-num">'+femaleCount+'</div><div class="stat-label">女生人數</div></div>')
     +'<div class="stat-card large"><div class="stat-num">'+totalCheckin+'</div><div class="stat-label">報到總人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+totalFinishers+'</div><div class="stat-label">抵達終點總人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+overallProgress+'%</div><div class="stat-label">進度總百分比<br><span style="font-size:.65rem;font-weight:400">（'+(statsBasis==='checkin'?'報到':'報名')+'人數，不含起跑站）</span></div></div>'
@@ -2242,8 +2247,8 @@ function renderStatsContent(roster, records, checkinIds){
     let card='<div class="runner-card" style="margin-bottom:16px">'
       +'<div class="runner-card-header"><strong>'+esc(label)+'</strong>'
       +' <span class="badge">報名'+ents.length+'人</span>'
-      +' <span class="badge">男生'+gMale+'人</span>'
-      +' <span class="badge">女生'+gFemale+'人</span>'
+      +(isStatsMode?'':' <span class="badge">男生'+gMale+'人</span>')
+      +(isStatsMode?'':' <span class="badge">女生'+gFemale+'人</span>')
       +' <span class="badge badge-green">報到'+gCheckin+'人</span>'
       +'</div>'
       +'<div style="margin-top:6px;margin-bottom:8px">'
