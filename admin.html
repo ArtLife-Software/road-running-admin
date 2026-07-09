@@ -2965,6 +2965,40 @@ window.batchDeleteRecords=async function(){
 
 // ── Modal & Toast ──
 window.closeModal=function(id){document.getElementById(id).style.display='none';}
+
+// ── 關於 ──
+// 通用「關於」元件設定：可直接複製這段 ABOUT_INFO 及 showAbout 到其他網頁
+// （搭配上方 aboutModal 的 HTML 與 CSS 一併複製），
+// 只需依各專案調整 appName／rows 內容即可，不需更動渲染邏輯。
+const ABOUT_INFO = {
+  appName: '路跑打卡系統',
+  rows: [
+    {label:'版本', value:'1.0.0'},
+    {label:'日期', value:'2026/07/05'},
+    {divider:true},
+    {label:'執行環境', value:'瀏覽器'},
+    {label:'語言', value:'JavaScript+HTML+CSS'},
+    {label:'語系', value:'正體中文'},
+    {label:'授權', value:'PolyForm-NC 1.0.0', url:'https://polyformproject.org/licenses/noncommercial/1.0.0'},
+    {divider:true},
+    {label:'設計開發', value:'林彥丞'},
+    {label:'Mail', value:'lin.yancheng@outlook.com', url:'mailto:lin.yancheng@outlook.com'},
+    {label:'GitHub', value:'ArtLife-Software', url:'https://github.com/ArtLife-Software'},
+    {label:'Facebook', value:'O && C VBA研究社', url:'https://www.facebook.com/groups/vba.club'},
+    {label:'Country', value:'中華民國台灣'},
+  ]
+};
+window.showAbout=function(){
+  document.getElementById('aboutAppName').textContent = ABOUT_INFO.appName;
+  document.getElementById('aboutBody').innerHTML = ABOUT_INFO.rows.map(r=>{
+    if (r.divider) return '<div class="about-divider"></div>';
+    const val = r.url
+      ? '<a href="'+esc(r.url)+'" target="_blank" rel="noopener noreferrer">'+esc(r.value)+'</a>'
+      : esc(r.value);
+    return '<div class="about-row"><div class="about-label">'+esc(r.label)+'</div><div class="about-value">'+val+'</div></div>';
+  }).join('');
+  document.getElementById('aboutModal').style.display='flex';
+}
 // 欄位設定：隱藏時自動取消必填並 disable 必填 checkbox
 window.onFsShowChange=function(type,field){
   const show=document.getElementById('evFS_'+type+'_'+field+'_show').checked;
@@ -3051,6 +3085,12 @@ tr.row-active td{background:rgba(249,115,22,.05);}
 .modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px;width:500px;max-width:92vw;max-height:88vh;overflow-y:auto;box-shadow:0 30px 80px rgba(0,0,0,.6);}
 .modal-title{font-size:1.1rem;font-weight:900;margin-bottom:20px;}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px;}
+.about-title{font-size:1.1rem;font-weight:900;color:var(--accent);margin-bottom:16px;}
+.about-row{display:flex;align-items:flex-start;padding:3px 0;font-size:.85rem;}
+.about-row .about-label{width:80px;flex-shrink:0;color:var(--muted);}
+.about-row .about-value{flex:1;color:var(--text);word-break:break-all;}
+.about-row .about-value a{color:var(--accent);text-decoration:underline;}
+.about-divider{height:1px;background:var(--border);margin:14px 0;}
 .station-row{display:flex;gap:8px;margin-bottom:8px;}
 .station-row .input{flex:1;}
 th[data-sort]{cursor:pointer;user-select:none;white-space:nowrap;}
@@ -3128,6 +3168,7 @@ th[data-sort]:hover{color:var(--accent);}
       <div class="nav-item" data-nav="search" onclick="showSection('search')"><span class="nav-icon">🔍</span><span>查詢成績</span></div>
       <div class="nav-item" data-nav="stats" onclick="showSection('stats')"><span class="nav-icon">📈</span><span>統計分析</span></div>
       <div class="nav-item admin-only" data-nav="accounts" onclick="showSection('accounts')" style="display:none"><span class="nav-icon">👤</span><span>帳戶管理</span></div>
+      <div class="nav-item" data-nav="about" onclick="showAbout()"><span class="nav-icon">ℹ️</span><span>關於</span></div>
     </nav>
     <div class="sidebar-footer">
       <div class="user-email" id="userEmail"></div>
@@ -3744,6 +3785,16 @@ th[data-sort]:hover{color:var(--accent);}
     </div>
     <div id="vstartPreview" style="font-size:.82rem;color:var(--muted);margin-bottom:8px"></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('vstartModal')">取消</button><button class="btn btn-primary" onclick="runVirtualStart()">執行</button></div>
+  </div>
+</div>
+
+<!-- 關於 Modal（通用元件，可直接複製到其他頁面重複使用，
+     使用時僅需依需求調整下方 ABOUT_INFO 設定內容） -->
+<div id="aboutModal" class="modal-overlay">
+  <div class="modal" style="width:360px">
+    <div class="about-title" id="aboutAppName"></div>
+    <div id="aboutBody"></div>
+    <div class="modal-actions"><button class="btn btn-primary" onclick="closeModal('aboutModal')">確定</button></div>
   </div>
 </div>
 </body>
