@@ -215,6 +215,18 @@ function validateBirthday(v) {
   if(dt>=today) return false;
   return true;
 }
+// 只驗證「日期格式是否正確、是否為存在的日期」，不限制過去或未來。
+// 給賽事的報名開始/結束日期等欄位使用（這些日期通常設在未來，
+// 不能沿用 validateBirthday 那種「不能是今天或未來」的限制）。
+function validateDateFormat(v) {
+  if (!v) return true; // 空值由呼叫端決定是否必填
+  if (!/^\d{4}\/\d{2}\/\d{2}$/.test(v)) return false;
+  const [y,m,d] = v.split('/').map(Number);
+  const dt = new Date(y,m-1,d);
+  if(dt.getFullYear()!==y||dt.getMonth()!==m-1||dt.getDate()!==d) return false;
+  if(y<1900) return false;
+  return true;
+}
 function validatePhone(v) {
   if (!v) return true;
   return /^09\d{8}$/.test(v);
@@ -593,7 +605,7 @@ window.saveEvent = async function() {
   for (const f of dateFields) {
     const el = document.getElementById(f.id);
     const v = el.value.trim();
-    if (v && !validateBirthday(v)) {
+    if (v && !validateDateFormat(v)) {
       el.style.borderColor = 'var(--red)';
       showToast(f.label+'格式錯誤，請輸入 yyyy/mm/dd（例：2026/06/16）','error');
       el.focus();
@@ -1586,9 +1598,12 @@ window.saveEntry=async function(){
     if(!parentName){showToast('請填寫緊急聯絡人姓名','error');return;}
     if(!parentPhone||!validatePhone(parentPhone)){showToast('請填寫正確的緊急聯絡人手機','error');return;}
     parentalData={parentalConsentAgreed:true,parentName,parentPhone};
-  }else{
+  }else if(id){
+    // 編輯既有報名記錄時，若不再需要家長陪同，才需要清掉舊欄位（updateDoc 才支援 deleteField()）
     parentalData={parentalConsentAgreed:deleteField(),parentName:deleteField(),parentPhone:deleteField()};
   }
+  // 新增報名（沒有 id）且不需要家長陪同時，parentalData 維持 {}——
+  // addDoc() 建立新文件不支援 deleteField()，新文件本來就沒有這些欄位，不需要刪
   // 自訂欄位必填驗證
   const missingLabel=validateEntryCustomFields();
   if(missingLabel){showToast('「'+missingLabel+'」為必填','error');return;}
