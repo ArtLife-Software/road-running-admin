@@ -38,6 +38,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .runner-card-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;font-size:.95rem;}
 .station-stats{display:flex;flex-direction:column;gap:8px;}
 .station-num{background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0;}
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:auto;margin-top:10px;}
+.table-wrap table{width:max-content;min-width:100%;border-collapse:collapse;}
+.table-wrap th{background:var(--surface2);padding:8px 12px;text-align:left;font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;white-space:nowrap;}
+.table-wrap td{padding:8px 12px;border-top:1px solid var(--border);font-size:.82rem;font-family:var(--mono);white-space:nowrap;}
+.table-wrap td:first-child,.table-wrap th:first-child{font-family:var(--sans);white-space:normal;}
 .loading-cell{text-align:center;color:var(--muted);padding:30px 10px;font-size:.85rem;}
 .qr-box{display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px;background:#fff;border-radius:12px;margin-top:12px;}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 20px;font-size:.88rem;font-weight:600;box-shadow:0 8px 30px rgba(0,0,0,.4);opacity:0;transition:all .25s;z-index:9999;max-width:90vw;text-align:center;}
@@ -1337,22 +1342,62 @@ window.doLookup=async function(){
 }
 async function buildLookupCard(e, eventId, evData){
   const recSnap=await getDocs(query(collection(db,'events',eventId,'records'),orderBy('scanTime','asc')));
-  const allRecs=recSnap.docs.map(d=>d.data()).filter(x=>x.uniqueId===e.uniqueId);
+  const groupRecs=recSnap.docs.map(d=>d.data()); // 整個賽事的打卡記錄（不含個資，選手端可讀）
+  const allRecs=groupRecs.filter(x=>x.uniqueId===e.uniqueId);
   const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
   const groupStations={};
   gSnap.docs.forEach(d=>{groupStations[d.data().name]=d.data().stations||[];});
   const stations=groupStations[e.group]||[];
 
+  // 抓同組別其他選手的報名記錄，用來計算名次（跟後台查詢成績同一套邏輯：
+  // 依「第一站到各站」的累積時間排序，只有抵達終點的人才有終點排名）
+  const sameGroupSnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('group','==',e.group)));
+  const groupUids=sameGroupSnap.docs.map(d=>d.data().uniqueId);
+  const lastStation=stations[stations.length-1];
+  const rankMap={}; // key: uid 或 uid+'_'+station
+  if(lastStation){
+    const finishers=[];
+    groupUids.forEach(uid=>{
+      const myRecs=groupRecs.filter(r=>r.uniqueId===uid);
+      const firstR=myRecs[0];
+      const lastR=myRecs.find(r=>r.station===lastStation);
+      if(firstR&&lastR){
+        const total=lastR.scanTime?.toDate?lastR.scanTime.toDate()-firstR.scanTime.toDate():0;
+        finishers.push({uid,total});
+      }
+    });
+    finishers.sort((a,b)=>a.total-b.total);
+    finishers.forEach((f,i)=>{rankMap[f.uid]=i+1;});
+    stations.forEach(s=>{
+      const stEntries=[];
+      groupUids.forEach(uid=>{
+        const myRecs=groupRecs.filter(r=>r.uniqueId===uid);
+        const firstR=myRecs[0];
+        const sRec=myRecs.find(r=>r.station===s);
+        if(firstR&&sRec){
+          const cum=sRec.scanTime?.toDate?sRec.scanTime.toDate()-firstR.scanTime.toDate():0;
+          stEntries.push({uid,cum});
+        }
+      });
+      stEntries.sort((a,b)=>a.cum-b.cum);
+      stEntries.forEach((se,i)=>{rankMap[se.uid+'_'+s]=i+1;});
+    });
+  }
+
   const evTitle=evData?'<div style="font-size:.75rem;color:var(--muted);margin-bottom:8px">'+esc(evData.name)+(evData.date?' ・ '+esc(evData.date):'')+'</div>':'';
+  const finalRank=rankMap[e.uniqueId];
 
   let html='<div class="card">'+evTitle
     +'<div class="runner-card-header">'
     +'<strong style="font-size:1.05rem">'+esc(e.name||'')+'</strong>'
     +'<span class="badge">'+esc(e.group||'-')+'</span>'
     +'<span class="badge">編號 '+esc(e.bibNumber||'-')+'</span>'
+    +(finalRank?'<span class="badge badge-green">終點第 '+finalRank+' 名</span>':'')
     +'</div>';
   if(!allRecs.length){html+='<p style="color:var(--muted);font-size:.85rem;margin-top:8px">尚無打卡記錄</p></div>';return html;}
-  html+='<div class="station-stats" style="margin-top:10px">';
+  html+='<div class="table-wrap"><table><thead><tr>'
+    +'<th>站點</th><th>到達時間</th><th>累積時間</th><th>區段時間</th><th>名次</th>'
+    +'</tr></thead><tbody>';
   const firstRec=allRecs[0];
   let prevRec=null;
   stations.forEach((s,i)=>{
@@ -1361,18 +1406,18 @@ async function buildLookupCard(e, eventId, evData){
     const total=arrived&&i>0?diffHMS(rec.scanTime,firstRec.scanTime):null;
     // 第二站（i===1）區段時間 = 累積時間，省略不顯示；第三站以後才顯示區段時間
     const seg=arrived&&i>1&&prevRec?diffHMS(rec.scanTime,prevRec.scanTime):null;
+    const sRank=arrived&&i>0?rankMap[e.uniqueId+'_'+s]:null;
     if(arrived) prevRec=rec;
-    html+='<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">'
-      +'<span class="station-num" style="background:'+(arrived?'var(--green)':'var(--surface2)')+';color:'+(arrived?'#fff':'var(--muted)')+';">'+(i+1)+'</span>'
-      +'<span style="flex:1;font-size:.88rem">'+esc(s)+'</span>'
+    html+='<tr><td>'+(i===0?'<span style="color:var(--muted);font-size:.7rem">(起跑)</span> ':'')+esc(s)+'</td>'
       +(arrived
-        ?'<span style="font-family:var(--mono);font-size:.82rem">'+fmt(rec.scanTime)+'</span>'
-          +(total?'<span style="font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-left:8px">累積 '+total+'</span>':'')
-          +(seg?'<span style="font-family:var(--mono);font-size:.78rem;color:var(--accent);margin-left:6px">區段 '+seg+'</span>':'')
-        :'<span style="color:var(--muted);font-size:.82rem">未到</span>')
-      +'</div>';
+        ?'<td>'+fmt(rec.scanTime)+'</td>'
+          +'<td>'+(total||'-')+'</td>'
+          +'<td>'+(seg||(i===1?'（同累積）':'-'))+'</td>'
+          +'<td>'+(sRank?'第'+sRank+'名':'-')+'</td>'
+        :'<td style="color:var(--muted)">未到</td><td style="color:var(--muted)">-</td><td style="color:var(--muted)">-</td><td style="color:var(--muted)">-</td>')
+      +'</tr>';
   });
-  html+='</div></div>';
+  html+='</tbody></table></div></div>';
   return html;
 }
 

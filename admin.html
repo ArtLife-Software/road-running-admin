@@ -2011,6 +2011,14 @@ window.doSearch=async function(){
   for(const gName of groupOrder){
     const gStations=groupStations[gName]||[];
     const gEntries=targetEntries.filter(([,e])=>e.group===gName);
+    // 排序：已完賽者依終點排名由前到後；未完賽者排在後面、依編號排序
+    // （原本完全沒有排序，Firestore 回傳的順序等同亂序，導致看起來「資料順序不對」）
+    gEntries.sort((a,b)=>{
+      const rankA=groupRankMap[a[0]]||Infinity;
+      const rankB=groupRankMap[b[0]]||Infinity;
+      if(rankA!==rankB) return rankA-rankB;
+      return (a[1].bibNumber||'').localeCompare((b[1].bibNumber||''), undefined, {numeric:true});
+    });
 
     // 表頭：第1站只有「到達」；第2站有「到達/累積/名次」（區段=累積，省略）；第3站以後有「到達/區段/累積/名次」
     let thead='<tr><th>編號</th><th>ID</th><th>姓名</th>';
@@ -2090,6 +2098,13 @@ window.exportSearchCSV=function(){
     const gStations=groupStations[gName]||[];
     const gEntries=targetEntries.filter(([,e])=>e.group===gName);
     if(!gEntries.length)continue;
+    // 排序邏輯與畫面表格一致：已完賽者依終點排名，未完賽者依編號
+    gEntries.sort((a,b)=>{
+      const rankA=groupRankMap[a[0]]||Infinity;
+      const rankB=groupRankMap[b[0]]||Infinity;
+      if(rankA!==rankB) return rankA-rankB;
+      return (a[1].bibNumber||'').localeCompare((b[1].bibNumber||''), undefined, {numeric:true});
+    });
     // 表頭（第二站省略區段欄）
     let csv='編號,ID,姓名,'+gStations[0]+'到達';
     for(let i=1;i<gStations.length;i++){
@@ -2214,8 +2229,11 @@ function renderStatsContent(roster, records, checkinIds){
   // 分母依 statsBasis 決定：'checkin'=報到人數，否則=報名人數
   function calcProgress(ents, recs){
     if(!ents.length)return 0;
+    // 分母依 statsBasis 決定：'checkin'=只算已報到的人，否則=全部報名者
+    const baseEnts = statsBasis==='checkin' ? ents.filter(e=>checkinIds.has(e.uniqueId)) : ents;
+    if(!baseEnts.length)return 0;
     let scannedCount=0, expectedCount=0;
-    ents.forEach(e=>{
+    baseEnts.forEach(e=>{
       const stations=groupStationsMap[e.group]||[];
       if(stations.length<2)return; // 只有起跑站或無站點，不列入計算
       const progressStations=stations.slice(1); // 排除第一站
