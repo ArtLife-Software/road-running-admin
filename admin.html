@@ -498,17 +498,6 @@ window.showAddEvent = function() {
   document.getElementById('evAllowBibChange').value='0';
   document.getElementById('evBibRangeMin').value='';
   document.getElementById('evBibRangeMax').value='';
-  // 重設欄位設定為預設值（全部顯示、全部選填）
-  ['phone','email','idNumber'].forEach(f=>{
-    document.getElementById('evFS_runner_'+f+'_show').checked=true;
-    document.getElementById('evFS_runner_'+f+'_req').checked=false;
-    document.getElementById('evFS_runner_'+f+'_req').disabled=false;
-  });
-  ['phone','email'].forEach(f=>{
-    document.getElementById('evFS_staff_'+f+'_show').checked=true;
-    document.getElementById('evFS_staff_'+f+'_req').checked=false;
-    document.getElementById('evFS_staff_'+f+'_req').disabled=false;
-  });
   document.getElementById('eventModal').style.display='flex';
 }
 window.editEvent = async function(id) {
@@ -540,23 +529,6 @@ window.editEvent = async function(id) {
   document.getElementById('evAllowBibChange').value=ev.allowBibChange?'1':'0';
   document.getElementById('evBibRangeMin').value=ev.bibRangeMin||'';
   document.getElementById('evBibRangeMax').value=ev.bibRangeMax||'';
-  // 欄位設定
-  const fs=ev.fieldSettings||{};
-  const sfs=ev.staffFieldSettings||{};
-  ['phone','email','idNumber'].forEach(f=>{
-    const show=fs[f]?.show!==false;
-    const req=fs[f]?.required===true;
-    document.getElementById('evFS_runner_'+f+'_show').checked=show;
-    document.getElementById('evFS_runner_'+f+'_req').checked=req;
-    document.getElementById('evFS_runner_'+f+'_req').disabled=!show;
-  });
-  ['phone','email'].forEach(f=>{
-    const show=sfs[f]?.show!==false;
-    const req=sfs[f]?.required===true;
-    document.getElementById('evFS_staff_'+f+'_show').checked=show;
-    document.getElementById('evFS_staff_'+f+'_req').checked=req;
-    document.getElementById('evFS_staff_'+f+'_req').disabled=!show;
-  });
   document.getElementById('eventModal').style.display='flex';
 }
 // 輔助：把 Timestamp 拆填入 日期文字框（yyyy/mm/dd）+ 時間欄位（type=time）
@@ -629,21 +601,6 @@ window.saveEvent = async function() {
   if(bibRangeMin>0&&bibRangeMax>0&&bibRangeMin>bibRangeMax){
     showToast('號碼最小值不能大於最大值','error'); return;
   }
-  // 欄位設定
-  const fieldSettings={};
-  ['phone','email','idNumber'].forEach(f=>{
-    fieldSettings[f]={
-      show:document.getElementById('evFS_runner_'+f+'_show').checked,
-      required:document.getElementById('evFS_runner_'+f+'_req').checked
-    };
-  });
-  const staffFieldSettings={};
-  ['phone','email'].forEach(f=>{
-    staffFieldSettings[f]={
-      show:document.getElementById('evFS_staff_'+f+'_show').checked,
-      required:document.getElementById('evFS_staff_'+f+'_req').checked
-    };
-  });
   const data = {
     name:document.getElementById('evName').value.trim(),
     date:document.getElementById('evDate').value,
@@ -654,7 +611,6 @@ window.saveEvent = async function() {
     staffRegistrationStartAt: dtFieldsToTs('evStaffRegStart'),
     staffRegistrationEndAt:   dtFieldsToTs('evStaffRegEnd'),
     bibPadLength, statsBasis, allowCustomBib, allowBibChange, bibRangeMin, bibRangeMax,
-    fieldSettings, staffFieldSettings,
     updatedAt:serverTimestamp()
   };
   if (!data.name) { showToast('賽事名稱為必填','error'); return; }
@@ -768,8 +724,40 @@ window.manageCustomFields=async function(eid,ename,type){
   document.getElementById('cfHint').textContent=type==='staff'
     ?'標準欄位（姓名、性別、生日、身分證、手機、Email、備註）一律顯示。以下為此賽事額外新增的自訂欄位，會出現在工作人員報名表單、後台工作人員分頁與匯出 CSV 中。'
     :'標準欄位（編號、組別、ID、姓名、性別、生日、手機、Email、身分證、備註）一律顯示。以下為此賽事額外新增的自訂欄位，會出現在選手報名表單、報名管理表格與匯出 CSV 中。';
+  // 身分證字號只有選手表單才有，工作人員表單不用顯示這一列
+  const idRowDisplay=curCFType==='staff'?'none':'';
+  document.getElementById('cfFS_idNumber_row_label').style.display=idRowDisplay;
+  document.getElementById('cfFS_idNumber_row_show').style.display=idRowDisplay;
+  document.getElementById('cfFS_idNumber_row_req').style.display=idRowDisplay;
+  await loadFieldSettings();
   await loadCustomFields();
   document.getElementById('customFieldsModal').style.display='flex';
+}
+async function loadFieldSettings(){
+  const evDoc=await getDoc(doc(db,'events',curCFEvId));
+  const key=curCFType==='staff'?'staffFieldSettings':'fieldSettings';
+  const fs=evDoc.data()?.[key]||{};
+  const fields=curCFType==='staff'?['phone','email']:['phone','email','idNumber'];
+  fields.forEach(f=>{
+    const show=fs[f]?.show!==false;
+    const req=fs[f]?.required===true;
+    document.getElementById('cfFS_'+f+'_show').checked=show;
+    document.getElementById('cfFS_'+f+'_req').checked=req;
+    document.getElementById('cfFS_'+f+'_req').disabled=!show;
+  });
+}
+window.saveFieldSettings=async function(){
+  const key=curCFType==='staff'?'staffFieldSettings':'fieldSettings';
+  const fields=curCFType==='staff'?['phone','email']:['phone','email','idNumber'];
+  const fs={};
+  fields.forEach(f=>{
+    fs[f]={
+      show:document.getElementById('cfFS_'+f+'_show').checked,
+      required:document.getElementById('cfFS_'+f+'_req').checked
+    };
+  });
+  await updateDoc(doc(db,'events',curCFEvId),{[key]:fs,updatedAt:serverTimestamp()});
+  showToast('已儲存標準欄位設定');
 }
 async function loadCustomFields(){
   const evDoc=await getDoc(doc(db,'events',curCFEvId));
@@ -3038,9 +3026,9 @@ window.showAbout=function(){
   document.getElementById('aboutModal').style.display='flex';
 }
 // 欄位設定：隱藏時自動取消必填並 disable 必填 checkbox
-window.onFsShowChange=function(type,field){
-  const show=document.getElementById('evFS_'+type+'_'+field+'_show').checked;
-  const reqEl=document.getElementById('evFS_'+type+'_'+field+'_req');
+window.onFsShowChange=function(field){
+  const show=document.getElementById('cfFS_'+field+'_show').checked;
+  const reqEl=document.getElementById('cfFS_'+field+'_req');
   if(!show){reqEl.checked=false;reqEl.disabled=true;}
   else{reqEl.disabled=false;}
 }
@@ -3577,33 +3565,8 @@ th[data-sort]:hover{color:var(--accent);}
             </div>
           </div>
         </div>
-        <!-- 報名表單欄位設定 -->
-        <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
-          <div style="font-size:.75rem;font-weight:700;color:var(--muted);margin-bottom:10px;letter-spacing:.04em">🏃 選手報名欄位</div>
-          <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 12px;align-items:center;font-size:.78rem">
-            <div style="color:var(--muted)">欄位</div><div style="color:var(--muted);text-align:center">顯示</div><div style="color:var(--muted);text-align:center">必填</div>
-            <div style="color:var(--text)">手機號碼</div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_runner_phone_show" onchange="onFsShowChange('runner','phone')" checked></div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_runner_phone_req"></div>
-            <div style="color:var(--text)">E-Mail</div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_runner_email_show" onchange="onFsShowChange('runner','email')" checked></div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_runner_email_req"></div>
-            <div style="color:var(--text)">身分證字號</div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_runner_idNumber_show" onchange="onFsShowChange('runner','idNumber')" checked></div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_runner_idNumber_req"></div>
-          </div>
-          <div style="font-size:.75rem;font-weight:700;color:var(--muted);margin-top:14px;margin-bottom:10px;letter-spacing:.04em">🦺 工作人員報名欄位</div>
-          <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 12px;align-items:center;font-size:.78rem">
-            <div style="color:var(--muted)">欄位</div><div style="color:var(--muted);text-align:center">顯示</div><div style="color:var(--muted);text-align:center">必填</div>
-            <div style="color:var(--text)">手機號碼</div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_staff_phone_show" onchange="onFsShowChange('staff','phone')" checked></div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_staff_phone_req"></div>
-            <div style="color:var(--text)">E-Mail</div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_staff_email_show" onchange="onFsShowChange('staff','email')" checked></div>
-            <div style="text-align:center"><input type="checkbox" id="evFS_staff_email_req"></div>
-          </div>
-          <div style="font-size:.72rem;color:var(--muted);margin-top:8px">隱藏時欄位不顯示也不驗證；顯示時可選必填或選填。</div>
-        </div>
+        <!-- 報名表單的「標準欄位顯示/必填」設定已移到「選手表單」／「工作人員表單」頁面設定，
+             請在賽事列表點選對應按鈕開啟 -->
       </div>
       <!-- 宣傳圖片設定 -->
       <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
@@ -3678,6 +3641,23 @@ th[data-sort]:hover{color:var(--accent);}
   <div class="modal" style="width:560px">
     <div class="modal-title">報名表單設定 — <span id="cfEventName"></span></div>
     <div id="cfHint" class="csv-hint"></div>
+    <div id="cfStdFieldsBlock" style="margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+      <div style="font-size:.75rem;font-weight:700;color:var(--muted);margin-bottom:10px;letter-spacing:.04em">標準欄位</div>
+      <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 12px;align-items:center;font-size:.78rem">
+        <div style="color:var(--muted)">欄位</div><div style="color:var(--muted);text-align:center">顯示</div><div style="color:var(--muted);text-align:center">必填</div>
+        <div style="color:var(--text)">手機號碼</div>
+        <div style="text-align:center"><input type="checkbox" id="cfFS_phone_show" onchange="onFsShowChange('phone')" checked></div>
+        <div style="text-align:center"><input type="checkbox" id="cfFS_phone_req"></div>
+        <div style="color:var(--text)">E-Mail</div>
+        <div style="text-align:center"><input type="checkbox" id="cfFS_email_show" onchange="onFsShowChange('email')" checked></div>
+        <div style="text-align:center"><input type="checkbox" id="cfFS_email_req"></div>
+        <div style="color:var(--text)" id="cfFS_idNumber_row_label">身分證字號</div>
+        <div style="text-align:center" id="cfFS_idNumber_row_show"><input type="checkbox" id="cfFS_idNumber_show" onchange="onFsShowChange('idNumber')" checked></div>
+        <div style="text-align:center" id="cfFS_idNumber_row_req"><input type="checkbox" id="cfFS_idNumber_req"></div>
+      </div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:8px">隱藏時欄位不顯示也不驗證；顯示時可選必填或選填。</div>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="saveFieldSettings()">儲存標準欄位設定</button>
+    </div>
     <div id="cfList" style="margin-bottom:12px"></div>
     <button class="btn btn-primary btn-sm" onclick="showAddCustomField()">＋ 新增欄位</button>
     <div id="cfForm" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
