@@ -718,17 +718,26 @@ window.cancelGroupForm=function(){document.getElementById('groupForm').style.dis
 // ════════════════════════════
 let curCFEvId='';
 let curCFType='runner'; // 'runner' or 'staff'
+let curCFGroups=[]; // 目前賽事的組別名稱清單，只有 runner 表單才用得到
 window.manageCustomFields=async function(eid,ename,type){
   curCFEvId=eid; curCFType=type||'runner';
   document.getElementById('cfEventName').textContent=ename+(type==='staff'?' — 工作人員表單':' — 選手表單');
   document.getElementById('cfHint').textContent=type==='staff'
-    ?'標準欄位（姓名、性別、生日、身分證、手機、Email、備註）一律顯示。以下為此賽事額外新增的自訂欄位，會出現在工作人員報名表單、後台工作人員分頁與匯出 CSV 中。'
-    :'標準欄位（編號、組別、ID、姓名、性別、生日、手機、Email、身分證、備註）一律顯示。以下為此賽事額外新增的自訂欄位，會出現在選手報名表單、報名管理表格與匯出 CSV 中。';
+    ?'標準欄位中，姓名、性別、生日、身分證字號、備註一律顯示；手機號碼、Email 的顯示與必填可在下方「標準欄位」調整。以下為此賽事額外新增的自訂欄位，會出現在工作人員報名表單、後台工作人員分頁與匯出 CSV 中。'
+    :'標準欄位中，編號、組別、ID、姓名、性別、生日、備註一律顯示；手機號碼、Email、身分證字號的顯示與必填可在下方「標準欄位」調整。以下為此賽事額外新增的自訂欄位可設定「適用組別」，只有指定組別的選手報名時才會看到，會出現在選手報名表單、報名管理表格與匯出 CSV 中。';
   // 身分證字號只有選手表單才有，工作人員表單不用顯示這一列
   const idRowDisplay=curCFType==='staff'?'none':'';
   document.getElementById('cfFS_idNumber_row_label').style.display=idRowDisplay;
   document.getElementById('cfFS_idNumber_row_show').style.display=idRowDisplay;
   document.getElementById('cfFS_idNumber_row_req').style.display=idRowDisplay;
+  // 工作人員沒有「組別」這個概念，適用組別設定只給選手表單用
+  if(curCFType==='runner'){
+    const gSnap=await getDocs(collection(db,'events',eid,'groups'));
+    curCFGroups=gSnap.docs.map(d=>d.data().name);
+  }else{
+    curCFGroups=[];
+  }
+  document.getElementById('cfGroupsRow').style.display=curCFType==='runner'?'block':'none';
   await loadFieldSettings();
   await loadCustomFields();
   document.getElementById('customFieldsModal').style.display='flex';
@@ -769,6 +778,7 @@ async function loadCustomFields(){
     const typeLabel={text:'文字',select:'下拉選單',checkbox:'是／否'}[f.type]||f.type;
     let detail=typeLabel+(f.required?'　必填':'　選填');
     if(f.type==='select')detail+='　選項：'+esc((f.options||[]).join('、'));
+    if(curCFType==='runner')detail+='　適用組別：'+((f.groups&&f.groups.length)?esc(f.groups.join('、')):'全部組別');
     return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">'
       +'<div><strong>'+esc(f.label)+'</strong><div style="font-size:.75rem;color:var(--muted)">'+detail+'</div></div>'
       +'<div style="white-space:nowrap">'
@@ -788,6 +798,11 @@ window.moveCustomField=async function(i,dir){
   await updateDoc(doc(db,'events',curCFEvId),{[fieldKey]:fields,updatedAt:serverTimestamp()});
   loadCustomFields();
 }
+function renderCfGroupsCheckboxes(selected){
+  const box=document.getElementById('cfGroupsCheckboxes');
+  if(!curCFGroups.length){box.innerHTML='<span style="color:var(--muted);font-size:.82rem">此賽事尚未建立組別</span>';return;}
+  box.innerHTML=curCFGroups.map(g=>'<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:.85rem"><input type="checkbox" class="cfGroupChk" data-group="'+esc(g)+'"'+(selected.includes(g)?' checked':'')+'> '+esc(g)+'</label>').join('');
+}
 window.showAddCustomField=function(){
   document.getElementById('cfFormTitle').textContent='新增欄位';
   document.getElementById('cfFieldIndex').value='';
@@ -796,6 +811,7 @@ window.showAddCustomField=function(){
   document.getElementById('cfRequired').checked=false;
   document.getElementById('cfOptions').value='';
   onCfTypeChange();
+  if(curCFType==='runner')renderCfGroupsCheckboxes([]);
   document.getElementById('cfForm').style.display='block';
 }
 window.editCustomField=async function(i){
@@ -810,6 +826,7 @@ window.editCustomField=async function(i){
   document.getElementById('cfRequired').checked=!!f.required;
   document.getElementById('cfOptions').value=(f.options||[]).join('\n');
   onCfTypeChange();
+  if(curCFType==='runner')renderCfGroupsCheckboxes(f.groups||[]);
   document.getElementById('cfForm').style.display='block';
 }
 window.onCfTypeChange=function(){
@@ -826,6 +843,9 @@ window.saveCustomField=async function(){
   const required=type==='checkbox'?false:document.getElementById('cfRequired').checked;
   if(!label){showToast('欄位名稱為必填','error');return;}
   const field={id:'cf_'+Date.now()+'_'+Math.floor(Math.random()*1000), label, type, required};
+  if(curCFType==='runner'){
+    field.groups=[...document.querySelectorAll('.cfGroupChk:checked')].map(el=>el.dataset.group);
+  }
   if(type==='yesno'){
     // 「是/否下拉」本質為 select，固定選項，正規化後沿用既有 select 邏輯
     field.type='select';
@@ -3677,6 +3697,10 @@ th[data-sort]:hover{color:var(--accent);}
         <textarea id="cfOptions" class="input" rows="3" placeholder="S&#10;M&#10;L&#10;XL"></textarea>
       </div>
       <div class="input-group" id="cfRequiredRow"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="cfRequired"> 必填</label></div>
+      <div class="input-group" id="cfGroupsRow">
+        <label>適用組別（不勾選＝全部組別皆顯示）</label>
+        <div id="cfGroupsCheckboxes" style="display:flex;flex-wrap:wrap;gap:8px 16px;padding:8px 0"></div>
+      </div>
       <div class="modal-actions" style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="cancelCustomField()">取消</button><button class="btn btn-primary btn-sm" onclick="saveCustomField()">儲存欄位</button></div>
     </div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('customFieldsModal')">關閉</button></div>

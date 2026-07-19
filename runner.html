@@ -487,10 +487,11 @@ async function selectSignupEvent(eventId, keepWrapper){
       +'</div>';
   }
 
-  // 自訂欄位
+  // 自訂欄位（依「適用組別」決定顯示/隱藏，由 onSignupGroupChange 動態切換）
   curSignupCustomFields.forEach(f=>{
     const id='su_cf_'+f.id;
     const reqMark=f.required?' *':'';
+    formHtml+='<div id="su_cf_row_'+f.id+'">';
     if(f.type==='select'){
       formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{formHtml+='<option value="'+esc(o)+'">'+esc(o)+'</option>';});
@@ -500,6 +501,7 @@ async function selectSignupEvent(eventId, keepWrapper){
     } else {
       formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input"></div>';
     }
+    formHtml+='</div>';
   });
 
   // 家長陪同聲明（由 onSignupGroupChange 動態顯示）
@@ -553,6 +555,13 @@ window.onSignupGroupChange=function(){
   hint.textContent=hints.length?'此組別限制：'+hints.join('、'):'';
   // 邀請碼
   if(inviteRow&&groupHasInvite(g))inviteRow.style.display='';
+  // 自訂欄位：依「適用組別」設定切換顯示（groups 未設定或空陣列＝全部組別皆顯示）
+  curSignupCustomFields.forEach(f=>{
+    const row=document.getElementById('su_cf_row_'+f.id);
+    if(!row)return;
+    const applicable=!f.groups||!f.groups.length||f.groups.includes(group);
+    row.style.display=applicable?'':'none';
+  });
 }
 
 // 依目前填寫的生日判斷是否需要顯示家長聲明區塊，並更新模組變數 curSignupNeedsParental
@@ -691,9 +700,10 @@ window.submitSignup=async function(){
     }
   }
 
-  // 自訂欄位必填驗證 + 收集
+  // 自訂欄位必填驗證 + 收集（只處理「適用此組別」的欄位，其餘已隱藏、不驗證也不送出）
   const customData={};
   for(const f of curSignupCustomFields){
+    if(f.groups&&f.groups.length&&!f.groups.includes(group))continue;
     const el=document.getElementById('su_cf_'+f.id);
     if(!el)continue;
     if(f.type==='checkbox'){customData[f.id]=el.checked;}
@@ -1131,7 +1141,7 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   html+='<div class="input-group"><label>E-Mail</label><input id="'+cardId+'_eEmail" type="email" class="input" value="'+esc(r.email||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>身分證字號</label><input id="'+cardId+'_eIdNumber" type="text" class="input" value="'+esc(r.idNumber||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_eNote" type="text" class="input" value="'+esc(r.note||'')+'"></div>';
-  html+='<div class="input-group"><label>組別</label><select id="'+cardId+'_eGroup" class="input" onchange="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\')">';
+  html+='<div class="input-group"><label>組別</label><select id="'+cardId+'_eGroup" class="input" onchange="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\');updateEditCustomFieldsVisibility(\''+cardId+'\')">';
   groups.forEach(g=>{html+='<option value="'+esc(g)+'"'+(g===e.group?' selected':'')+'>'+esc(g)+'</option>';});
   html+='</select></div>';
   // 家長陪同欄位
@@ -1151,6 +1161,7 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
     +'</div>';
   customFields.forEach(f=>{
     const fid=cardId+'_ecf_'+f.id;
+    html+='<div id="'+cardId+'_ecf_row_'+f.id+'">';
     if(f.type==='select'){
       html+='<div class="input-group"><label>'+esc(f.label)+'</label><select id="'+fid+'" class="input"><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{html+='<option value="'+esc(o)+'"'+(customData[f.id]===o?' selected':'')+'>'+esc(o)+'</option>';});
@@ -1160,6 +1171,7 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
     }else{
       html+='<div class="input-group"><label>'+esc(f.label)+'</label><input id="'+fid+'" type="text" class="input" value="'+esc(customData[f.id]!==undefined?customData[f.id]:'')+'"></div>';
     }
+    html+='</div>';
   });
   html+='<button class="btn btn-primary btn-full" onclick="saveEditEntry(\''+eventId+'\',\''+entryDocId+'\',\''+cardId+'\')">儲存修改</button>';
   html+='</div>';
@@ -1171,6 +1183,23 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   // 開啟表單當下就依「目前的組別＋生日」判斷是否顯示家長區塊
   //（與之後改生日/組別時走同一條判斷路徑，不會有初始不判斷的問題）
   updateEditParentalBlock(cardId,gMapJson,evDate);
+  updateEditCustomFieldsVisibility(cardId);
+}
+
+// 修改表單：依目前選擇的組別，動態顯示/隱藏對應的自訂欄位
+// （groups 未設定或空陣列＝全部組別皆顯示，跟新報名表單的 onSignupGroupChange 邏輯一致）
+window.updateEditCustomFieldsVisibility=function(cardId){
+  const editBox=document.getElementById(cardId+'_edit');
+  if(!editBox)return;
+  let customFields=[];
+  try{customFields=JSON.parse(editBox.dataset.customFields||'[]');}catch(e){return;}
+  const group=document.getElementById(cardId+'_eGroup')?.value;
+  customFields.forEach(f=>{
+    const row=document.getElementById(cardId+'_ecf_row_'+f.id);
+    if(!row)return;
+    const applicable=!f.groups||!f.groups.length||f.groups.includes(group);
+    row.style.display=applicable?'':'none';
+  });
 }
 
 // 修改表單：依生日/組別更新家長陪同區塊顯示
@@ -1229,6 +1258,7 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
   const customFields=JSON.parse(document.getElementById(cardId+'_edit').dataset.customFields||'[]');
   const customData={};
   for(const f of customFields){
+    if(f.groups&&f.groups.length&&!f.groups.includes(group))continue; // 不適用目前組別：不送出，等同清除
     const el=document.getElementById(cardId+'_ecf_'+f.id); if(!el)continue;
     if(f.type==='checkbox')customData[f.id]=el.checked;
     else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
