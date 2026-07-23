@@ -485,10 +485,6 @@ window.showAddEvent = function() {
   document.getElementById('eventModalTitle').textContent='新增賽事';
   document.getElementById('eventForm').reset();
   document.getElementById('eventDocId').value='';
-  document.getElementById('evBannerUrl').value='';
-  document.getElementById('evStaffBannerUrl').value='';
-  document.getElementById('evBannerPreview').style.display='none';
-  document.getElementById('evStaffBannerPreview').style.display='none';
   ['evRegStartDate','evRegEndDate','evStaffRegStartDate','evStaffRegEndDate'].forEach(id=>{const el=document.getElementById(id);el.value='';el.style.borderColor='';});
   ['evRegStartTime','evRegEndTime','evStaffRegStartTime','evStaffRegEndTime'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('evRegCapacity').value='';
@@ -507,16 +503,6 @@ window.editEvent = async function(id) {
   document.getElementById('eventDocId').value=id;
   document.getElementById('evName').value=ev.name||'';
   document.getElementById('evDate').value=ev.date||'';
-  const url=ev.bannerUrl||'';
-  document.getElementById('evBannerUrl').value=url;
-  const preview=document.getElementById('evBannerPreview');
-  if(url){document.getElementById('evBannerImg').src=url;preview.style.display='block';}
-  else preview.style.display='none';
-  const sUrl=ev.staffBannerUrl||'';
-  document.getElementById('evStaffBannerUrl').value=sUrl;
-  const sPreview=document.getElementById('evStaffBannerPreview');
-  if(sUrl){document.getElementById('evStaffBannerImg').src=sUrl;sPreview.style.display='block';}
-  else sPreview.style.display='none';
   // 報名時間欄位：拆成日期（yyyy/mm/dd 文字）+ 時間（hh:mm 文字）
   setDateTimeFields('evRegStart', ev.registrationStartAt);
   setDateTimeFields('evRegEnd', ev.registrationEndAt);
@@ -542,21 +528,7 @@ function setDateTimeFields(prefix, ts) {
   dateEl.value=d.getFullYear()+'/'+pad(d.getMonth()+1)+'/'+pad(d.getDate());
   timeEl.value=pad(d.getHours())+':'+pad(d.getMinutes());
 }
-// 圖片URL輸入後即時預覽
-document.addEventListener('DOMContentLoaded',()=>{
-  document.getElementById('evBannerUrl').addEventListener('input',function(){
-    const url=this.value.trim();
-    const preview=document.getElementById('evBannerPreview');
-    if(url){document.getElementById('evBannerImg').src=url;preview.style.display='block';}
-    else preview.style.display='none';
-  });
-  document.getElementById('evStaffBannerUrl').addEventListener('input',function(){
-    const url=this.value.trim();
-    const preview=document.getElementById('evStaffBannerPreview');
-    if(url){document.getElementById('evStaffBannerImg').src=url;preview.style.display='block';}
-    else preview.style.display='none';
-  });
-});
+// 圖片URL輸入後即時預覽（宣傳圖片設定已移至「選手表單」／「工作人員表單」設定視窗，見 initCfBannerPreview）
 // 輔助：日期文字（yyyy/mm/dd，已在 saveEvent 驗證過）+ 時間（type=time） → Firestore Timestamp，日期空白回傳 deleteField()
 function dtFieldsToTs(prefix) {
   const dateVal=document.getElementById(prefix+'Date').value.trim();
@@ -586,8 +558,6 @@ window.saveEvent = async function() {
     el.style.borderColor = '';
   }
   const id = document.getElementById('eventDocId').value;
-  const bannerUrl=document.getElementById('evBannerUrl').value.trim();
-  const staffBannerUrl=document.getElementById('evStaffBannerUrl').value.trim();
   const regCapRaw=document.getElementById('evRegCapacity').value.trim();
   const regCapacity=regCapRaw===''||parseInt(regCapRaw)===0?0:parseInt(regCapRaw)||0;
   const bibPadLength=parseInt(document.getElementById('evBibPadLength').value)||3;
@@ -604,7 +574,6 @@ window.saveEvent = async function() {
   const data = {
     name:document.getElementById('evName').value.trim(),
     date:document.getElementById('evDate').value,
-    bannerUrl, staffBannerUrl,
     registrationStartAt: dtFieldsToTs('evRegStart'),
     registrationEndAt:   dtFieldsToTs('evRegEnd'),
     registrationCapacity: regCapacity,
@@ -650,6 +619,7 @@ window.showAddGroup=function(){
   document.getElementById('gParentalAge').value='0';
   document.getElementById('gInviteCode').value='';
   document.getElementById('gInviteCode').placeholder='例：VIP2026';
+  document.getElementById('gFinishTimeLimit').value='0';
   document.getElementById('groupForm').style.display='block';
 }
 window.editGroup=async function(id){
@@ -664,6 +634,7 @@ window.editGroup=async function(id){
   document.getElementById('gAgeMin').value=g.ageMin||0;
   document.getElementById('gAgeMax').value=g.ageMax||0;
   document.getElementById('gParentalAge').value=g.parentalAge||0;
+  document.getElementById('gFinishTimeLimit').value=g.finishTimeLimit||0;
   // 邀請碼只存雜湊，無法回填明文：留空＝維持不變；輸入新碼＝更換；輸入「清除」＝移除
   const gInv=document.getElementById('gInviteCode');
   gInv.value='';
@@ -686,9 +657,10 @@ window.saveGroup=async function(){
   const ageMin=parseInt(document.getElementById('gAgeMin').value)||0;
   const ageMax=parseInt(document.getElementById('gAgeMax').value)||0;
   const parentalAge=parseInt(document.getElementById('gParentalAge').value)||0;
+  const finishTimeLimit=parseInt(document.getElementById('gFinishTimeLimit').value)||0;
   const inviteInput=document.getElementById('gInviteCode').value.trim();
   if(ageMin>0&&ageMax>0&&ageMin>ageMax){showToast('年齡下限不能大於上限','error');return;}
-  const data={name,stations,genderLimit,groupCapacity,ageMin,ageMax,parentalAge,updatedAt:serverTimestamp()};
+  const data={name,stations,genderLimit,groupCapacity,ageMin,ageMax,parentalAge,finishTimeLimit,updatedAt:serverTimestamp()};
   if(id){
     // 邀請碼：留空＝維持原設定；輸入「清除」＝移除；輸入其他＝換成新碼的雜湊。
     // 一律順便刪除舊版可能殘留的明文 inviteCode 欄位。
@@ -738,9 +710,33 @@ window.manageCustomFields=async function(eid,ename,type){
     curCFGroups=[];
   }
   document.getElementById('cfGroupsRow').style.display=curCFType==='runner'?'block':'none';
+  document.getElementById('cfBannerLabel').textContent='宣傳圖片 URL — '+(curCFType==='staff'?'工作人員':'選手')+'（選填，會顯示在報名表單最上方）';
+  const evDocForBanner=await getDoc(doc(db,'events',eid));
+  const bannerKey=curCFType==='staff'?'staffBannerUrl':'bannerUrl';
+  const bUrl=evDocForBanner.data()?.[bannerKey]||'';
+  document.getElementById('cfBannerUrl').value=bUrl;
+  const bPreview=document.getElementById('cfBannerPreview');
+  if(bUrl){document.getElementById('cfBannerImg').src=bUrl;bPreview.style.display='block';}
+  else bPreview.style.display='none';
   await loadFieldSettings();
   await loadCustomFields();
   document.getElementById('customFieldsModal').style.display='flex';
+}
+// 宣傳圖片 URL 輸入即時預覽
+document.addEventListener('DOMContentLoaded',()=>{
+  const cfBannerInput=document.getElementById('cfBannerUrl');
+  if(cfBannerInput)cfBannerInput.addEventListener('input',function(){
+    const url=this.value.trim();
+    const preview=document.getElementById('cfBannerPreview');
+    if(url){document.getElementById('cfBannerImg').src=url;preview.style.display='block';}
+    else preview.style.display='none';
+  });
+});
+window.saveCfBanner=async function(){
+  const bannerKey=curCFType==='staff'?'staffBannerUrl':'bannerUrl';
+  const bannerUrl=document.getElementById('cfBannerUrl').value.trim();
+  await updateDoc(doc(db,'events',curCFEvId),{[bannerKey]:bannerUrl,updatedAt:serverTimestamp()});
+  showToast('已儲存宣傳圖片設定');
 }
 async function loadFieldSettings(){
   const evDoc=await getDoc(doc(db,'events',curCFEvId));
@@ -3586,14 +3582,7 @@ th[data-sort]:hover{color:var(--accent);}
           </div>
         </div>
         <!-- 報名表單的「標準欄位顯示/必填」設定已移到「選手表單」／「工作人員表單」頁面設定，
-             請在賽事列表點選對應按鈕開啟 -->
-      </div>
-      <!-- 宣傳圖片設定 -->
-      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
-        <div class="input-group"><label>宣傳圖片 URL — 選手（選填）</label><input id="evBannerUrl" type="url" class="input" placeholder="https://..."></div>
-        <div id="evBannerPreview" style="display:none;margin-top:8px"><img id="evBannerImg" style="max-width:100%;border-radius:8px;display:block"></div>
-        <div class="input-group" style="margin-top:12px"><label>宣傳圖片 URL — 工作人員（選填）</label><input id="evStaffBannerUrl" type="url" class="input" placeholder="https://..."></div>
-        <div id="evStaffBannerPreview" style="display:none;margin-top:8px"><img id="evStaffBannerImg" style="max-width:100%;border-radius:8px;display:block"></div>
+             請在賽事列表點選對應按鈕開啟；宣傳圖片設定也已移至該處 -->
       </div>
     </form>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('eventModal')">取消</button><button class="btn btn-primary" onclick="saveEvent()">儲存</button></div>
@@ -3647,8 +3636,12 @@ th[data-sort]:hover{color:var(--accent);}
             <label>邀請碼（空白＝不需要）</label>
             <input id="gInviteCode" type="text" class="input" placeholder="例：VIP2026">
           </div>
+          <div class="input-group" style="margin:0">
+            <label>完賽時間限制（分鐘，0＝不限）</label>
+            <input id="gFinishTimeLimit" type="number" min="0" class="input" placeholder="0">
+          </div>
         </div>
-        <div style="font-size:.72rem;color:var(--muted);margin-top:8px">年齡以賽事日期為基準計算。</div>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:8px">年齡以賽事日期為基準計算；完賽時間限制以「起跑站到終點站」的累積時間計算，超過限制者仍可查詢成績，但不會產生完賽證書。</div>
       </div>
       <div class="modal-actions" style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="cancelGroupForm()">取消</button><button class="btn btn-primary btn-sm" onclick="saveGroup()">儲存組別</button></div>
     </div>
@@ -3661,6 +3654,12 @@ th[data-sort]:hover{color:var(--accent);}
   <div class="modal" style="width:560px">
     <div class="modal-title">報名表單設定 — <span id="cfEventName"></span></div>
     <div id="cfHint" class="csv-hint"></div>
+    <div id="cfBannerBlock" style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+      <div style="font-size:.75rem;font-weight:700;color:var(--muted);margin-bottom:10px;letter-spacing:.04em">宣傳圖片</div>
+      <div class="input-group" style="margin:0"><label id="cfBannerLabel">宣傳圖片 URL（選填）</label><input id="cfBannerUrl" type="url" class="input" placeholder="https://..."></div>
+      <div id="cfBannerPreview" style="display:none;margin-top:8px"><img id="cfBannerImg" style="max-width:100%;border-radius:8px;display:block"></div>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="saveCfBanner()">儲存宣傳圖片設定</button>
+    </div>
     <div id="cfStdFieldsBlock" style="margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
       <div style="font-size:.75rem;font-weight:700;color:var(--muted);margin-bottom:10px;letter-spacing:.04em">標準欄位</div>
       <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 12px;align-items:center;font-size:.78rem">

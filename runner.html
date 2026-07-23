@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>路跑打卡系統｜選手服務</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Great+Vibes&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 :root{--bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2e3349;--accent:#f97316;--accent2:#fb923c;--green:#22c55e;--red:#ef4444;--text:#e8eaf0;--muted:#6b7280;--mono:'DM Mono',monospace;--sans:'Noto Sans TC',sans-serif;}
 *{box-sizing:border-box;margin:0;padding:0;}
@@ -60,6 +62,41 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .about-row .about-value{flex:1;color:var(--text);word-break:break-all;}
 .about-row .about-value a{color:var(--accent);text-decoration:underline;}
 .about-divider{height:1px;background:var(--border);margin:14px 0;}
+/* ── 完賽證書 ── */
+.cert-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);backdrop-filter:blur(4px);align-items:center;justify-content:center;z-index:600;padding:16px;overflow:auto;}
+.cert-modal-box{background:#12141c;border-radius:16px;padding:16px;max-width:96vw;box-shadow:0 30px 80px rgba(0,0,0,.6);}
+.cert-scale-wrap{width:100%;overflow:auto;display:flex;justify-content:center;}
+#certContent{width:900px;height:636px;flex-shrink:0;position:relative;background:#fbf6ea;font-family:'Cinzel',serif;color:#5a3b1e;box-sizing:border-box;padding:34px;background-image:radial-gradient(circle at 50% 0%, #fffaf0 0%, #fbf6ea 60%);}
+.cert-border-outer{position:absolute;inset:16px;border:3px solid #b8860b;border-radius:6px;}
+.cert-border-inner{position:absolute;inset:24px;border:1px solid #d4af37;border-radius:4px;}
+.cert-inner{position:relative;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:38px 60px;text-align:center;}
+.cert-medal{font-size:2.6rem;line-height:1;margin-bottom:2px;}
+.cert-kicker{font-size:.78rem;letter-spacing:.35em;color:#b8860b;font-weight:700;text-transform:uppercase;margin-bottom:6px;}
+.cert-title{font-size:2.1rem;font-weight:900;letter-spacing:.12em;color:#7a4a12;text-transform:uppercase;margin-bottom:4px;}
+.cert-title-sub{font-size:.85rem;letter-spacing:.2em;color:#a9793a;margin-bottom:18px;text-transform:uppercase;}
+.cert-presented{font-size:.85rem;color:#8a6a3a;margin-bottom:8px;letter-spacing:.05em;}
+.cert-name{font-family:'Great Vibes',cursive;font-size:3.2rem;color:#3d2410;margin-bottom:10px;line-height:1;}
+.cert-desc{font-family:'Noto Sans TC',sans-serif;font-size:.88rem;color:#5a3b1e;line-height:1.9;max-width:620px;margin-bottom:18px;}
+.cert-desc strong{color:#7a4a12;}
+.cert-stats{display:flex;gap:28px;margin-bottom:22px;flex-wrap:wrap;justify-content:center;}
+.cert-stat{text-align:center;}
+.cert-stat .v{font-family:'Cinzel',serif;font-size:1.3rem;font-weight:700;color:#7a4a12;}
+.cert-stat .l{font-family:'Noto Sans TC',sans-serif;font-size:.68rem;color:#a9793a;letter-spacing:.1em;text-transform:uppercase;margin-top:2px;}
+.cert-footer{position:absolute;bottom:44px;left:60px;right:60px;display:flex;justify-content:space-between;align-items:flex-end;}
+.cert-sign{text-align:center;font-family:'Noto Sans TC',sans-serif;}
+.cert-sign .line{width:150px;border-top:1px solid #a9793a;margin-bottom:4px;}
+.cert-sign .label{font-size:.68rem;color:#a9793a;letter-spacing:.05em;}
+.cert-seal{font-size:2.2rem;opacity:.85;}
+.cert-actions{display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap;}
+@media print{
+  body *{visibility:hidden;}
+  .cert-modal-overlay, .cert-modal-overlay *{visibility:visible;}
+  .cert-modal-overlay{position:fixed;inset:0;background:#fff;padding:0;display:flex;align-items:center;justify-content:center;}
+  .cert-modal-box{box-shadow:none;background:#fff;padding:0;}
+  .cert-scale-wrap{overflow:visible;}
+  .cert-no-print{display:none!important;}
+  @page{size:landscape;margin:0;}
+}
 </style>
 </head>
 <body>
@@ -1306,6 +1343,7 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
 // ════════════════════════════
 // 查詢成績
 // ════════════════════════════
+let certDataStore=[]; // 暫存符合完賽資格的選手資料，供「完賽證書」按鈕使用
 let lookupInited=false;
 async function initLookupPage(){
   if(lookupInited)return; lookupInited=true;
@@ -1337,6 +1375,7 @@ window.doLookup=async function(){
   if(!uid&&!idNum){showToast('請輸入 ID 或身分證字號（擇一）','error');return;}
   if(!isAll&&!eventId){showToast('請先選擇賽事','error');return;}
   result.innerHTML='<div class="card"><div class="loading-cell">查詢中...</div></div>';
+  certDataStore.length=0;
 
   // 身分比對改由 Cloud Function（runnerLookup）在伺服器端處理：
   // 選手主檔（含個資）已不開放讀取，伺服器驗證「(ID 或身分證) + 生日」
@@ -1371,13 +1410,20 @@ window.doLookup=async function(){
   result.innerHTML=html;
 }
 async function buildLookupCard(e, eventId, evData){
+  let certEventInfo = evData;
+  if (!certEventInfo) {
+    const evSnap = await getDoc(doc(db,'events',eventId));
+    certEventInfo = evSnap.exists() ? {name:evSnap.data().name||'', date:evSnap.data().date||''} : {name:'',date:''};
+  }
   const recSnap=await getDocs(query(collection(db,'events',eventId,'records'),orderBy('scanTime','asc')));
   const groupRecs=recSnap.docs.map(d=>d.data()); // 整個賽事的打卡記錄（不含個資，選手端可讀）
   const allRecs=groupRecs.filter(x=>x.uniqueId===e.uniqueId);
   const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
   const groupStations={};
-  gSnap.docs.forEach(d=>{groupStations[d.data().name]=d.data().stations||[];});
+  const groupFinishLimit={};
+  gSnap.docs.forEach(d=>{groupStations[d.data().name]=d.data().stations||[];groupFinishLimit[d.data().name]=d.data().finishTimeLimit||0;});
   const stations=groupStations[e.group]||[];
+  const finishTimeLimit=groupFinishLimit[e.group]||0;
 
   // 抓同組別其他選手的報名記錄，用來計算名次（跟後台查詢成績同一套邏輯：
   // 依「第一站到各站」的累積時間排序，只有抵達終點的人才有終點排名）
@@ -1447,8 +1493,83 @@ async function buildLookupCard(e, eventId, evData){
         :'<td style="color:var(--muted)">未到</td><td style="color:var(--muted)">-</td><td style="color:var(--muted)">-</td><td style="color:var(--muted)">-</td>')
       +'</tr>';
   });
-  html+='</tbody></table></div></div>';
+  html+='</tbody></table></div>';
+
+  // ── 完賽證書：所有站點皆已完成打卡才符合資格 ──
+  const isCompleted = stations.length>0 && stations.every(s=>allRecs.find(x=>x.station===s));
+  if (isCompleted) {
+    const lastRec = allRecs.find(x=>x.station===lastStation);
+    const finishSeconds = Math.max(0, Math.floor((lastRec.scanTime.toDate() - firstRec.scanTime.toDate())/1000));
+    const withinLimit = !finishTimeLimit || finishSeconds/60 <= finishTimeLimit;
+    const finishTimeStr = diffHMS(lastRec.scanTime, firstRec.scanTime);
+    if (withinLimit) {
+      const certIdx = certDataStore.push({
+        name: e.name||'', bibNumber: e.bibNumber||'-', group: e.group||'-',
+        eventName: certEventInfo.name||'', eventDate: certEventInfo.date||'',
+        finishTime: finishTimeStr, rank: finalRank||null
+      }) - 1;
+      html += '<div style="margin-top:14px;text-align:center">'
+        + '<button class="btn btn-primary btn-full" onclick="openCertificate('+certIdx+')">🏅 產生完賽證書</button>'
+        + '</div>';
+    } else {
+      html += '<p style="color:var(--muted);font-size:.78rem;margin-top:10px;text-align:center">已完成全部站點打卡，但成績超過本組別完賽時間限制，無法產生完賽證書</p>';
+    }
+  }
+  html += '</div>';
   return html;
+}
+
+// ════════════════════════════
+// 完賽證書
+// ════════════════════════════
+function certificateHtml(c){
+  const rankHtml = c.rank
+    ? '<div class="cert-stat"><div class="v">第 '+c.rank+' 名</div><div class="l">Overall Rank</div></div>'
+    : '';
+  return ''
+    +'<div class="cert-border-outer"></div>'
+    +'<div class="cert-border-inner"></div>'
+    +'<div class="cert-inner">'
+    +'  <div class="cert-medal">🏅</div>'
+    +'  <div class="cert-kicker">Certificate of Achievement</div>'
+    +'  <div class="cert-title">完賽證書</div>'
+    +'  <div class="cert-title-sub">Certificate of Completion</div>'
+    +'  <div class="cert-presented">茲證明</div>'
+    +'  <div class="cert-name">'+esc(c.name)+'</div>'
+    +'  <div class="cert-desc">已完成 <strong>'+esc(c.eventName||'本次賽事')+'</strong>'+(c.eventDate?'（'+esc(c.eventDate)+'）':'')+' <strong>'+esc(c.group)+'</strong> 組別全程賽事，通過全部檢查站完成打卡，特頒此證，以茲鼓勵。</div>'
+    +'  <div class="cert-stats">'
+    +'    <div class="cert-stat"><div class="v">'+esc(c.bibNumber)+'</div><div class="l">Bib Number</div></div>'
+    +'    <div class="cert-stat"><div class="v">'+esc(c.finishTime)+'</div><div class="l">Finish Time</div></div>'
+    +      rankHtml
+    +'  </div>'
+    +'  <div class="cert-footer">'
+    +'    <div class="cert-sign"><div class="line"></div><div class="label">主辦單位</div></div>'
+    +'    <div class="cert-seal">🏁</div>'
+    +'    <div class="cert-sign"><div class="line"></div><div class="label">'+esc(c.eventDate||'')+'</div></div>'
+    +'  </div>'
+    +'</div>';
+}
+window.openCertificate=function(idx){
+  const c=certDataStore[idx]; if(!c)return;
+  document.getElementById('certContent').innerHTML=certificateHtml(c);
+  document.getElementById('certModalOverlay').style.display='flex';
+}
+window.closeCertificate=function(){
+  document.getElementById('certModalOverlay').style.display='none';
+}
+window.printCertificate=function(){
+  window.print();
+}
+window.exportCertificateImage=function(){
+  const el=document.getElementById('certContent');
+  if(typeof html2canvas==='undefined'){showToast('圖片匯出功能載入失敗，請改用列印功能','error');return;}
+  showToast('正在產生圖片...');
+  html2canvas(el,{scale:2,useCORS:true,backgroundColor:'#fbf6ea'}).then(canvas=>{
+    const link=document.createElement('a');
+    link.download='完賽證書.png';
+    link.href=canvas.toDataURL('image/png');
+    link.click();
+  }).catch(()=>{showToast('圖片匯出失敗','error');});
 }
 
 // 初始化第一個分頁（先完成匿名登入再載入資料）
@@ -1493,6 +1614,18 @@ window.closeModal=function(id){document.getElementById(id).style.display='none';
     <div class="about-title" id="aboutAppName"></div>
     <div id="aboutBody"></div>
     <div class="modal-actions"><button class="btn btn-primary" onclick="closeModal('aboutModal')">確定</button></div>
+  </div>
+</div>
+
+<!-- 完賽證書 Modal -->
+<div id="certModalOverlay" class="cert-modal-overlay">
+  <div class="cert-modal-box">
+    <div class="cert-scale-wrap"><div id="certContent"></div></div>
+    <div class="cert-actions cert-no-print">
+      <button class="btn btn-primary" onclick="printCertificate()">🖨️ 列印證書</button>
+      <button class="btn btn-ghost" onclick="exportCertificateImage()">📥 匯出圖片</button>
+      <button class="btn btn-ghost" onclick="closeCertificate()">關閉</button>
+    </div>
   </div>
 </div>
 </body>
