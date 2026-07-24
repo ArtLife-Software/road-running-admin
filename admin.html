@@ -1352,26 +1352,44 @@ window.exportEntries=async function(){
   showToast('報名資料已匯出');
 }
 
-// 渲染報名Modal的自訂欄位
+// 渲染報名Modal的自訂欄位；每個欄位包一層帶id的容器，才能依組別動態顯示/隱藏
 function renderEntryCustomFields(values){
   const container=document.getElementById('entryCustomFieldsContainer');
   values=values||{};
   container.innerHTML=curEntryCustomFields.map(f=>{
     const id='cfInput_'+f.id;
     const reqMark=f.required?' *':'';
+    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'';
+    let inner;
     if(f.type==='select'){
       const opts=(f.options||[]).map(o=>'<option value="'+esc(o)+'"'+(values[f.id]===o?' selected':'')+'>'+esc(o)+'</option>').join('');
-      return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select></div>';
+      inner='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select>'+descHtml+'</div>';
     } else if(f.type==='checkbox'){
-      return '<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+esc(f.label)+'</label></div>';
+      inner='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+esc(f.label)+'</label>'+descHtml+'</div>';
     } else {
-      return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input" value="'+esc(values[f.id]!==undefined?values[f.id]:'')+'"></div>';
+      inner='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input" value="'+esc(values[f.id]!==undefined?values[f.id]:'')+'">'+descHtml+'</div>';
     }
+    return '<div id="entryCfRow_'+f.id+'">'+inner+'</div>';
   }).join('');
+  updateEntryCustomFieldsVisibility();
+}
+// 依目前選定的組別，切換自訂欄位的顯示/隱藏（groups 未設定或空陣列＝全部組別皆顯示，
+// 跟選手報名頁面 onSignupGroupChange 的邏輯一致）
+function updateEntryCustomFieldsVisibility(){
+  const groupId=document.getElementById('eGroup')?.value||'';
+  curEntryCustomFields.forEach(f=>{
+    const row=document.getElementById('entryCfRow_'+f.id);
+    if(!row)return;
+    const applicable=!f.groups||!f.groups.length||f.groups.includes(groupId);
+    row.style.display=applicable?'':'none';
+  });
 }
 function collectEntryCustomData(){
+  const groupId=document.getElementById('eGroup')?.value||'';
   const data={};
   for(const f of curEntryCustomFields){
+    const applicable=!f.groups||!f.groups.length||f.groups.includes(groupId);
+    if(!applicable)continue; // 不適用目前組別：不收集，等同清除
     const el=document.getElementById('cfInput_'+f.id);
     if(!el)continue;
     data[f.id]=f.type==='checkbox'?el.checked:el.value.trim();
@@ -1379,8 +1397,11 @@ function collectEntryCustomData(){
   return data;
 }
 function validateEntryCustomFields(){
+  const groupId=document.getElementById('eGroup')?.value||'';
   for(const f of curEntryCustomFields){
     if(!f.required)continue;
+    const applicable=!f.groups||!f.groups.length||f.groups.includes(groupId);
+    if(!applicable)continue; // 不適用目前組別的欄位不需要驗證必填
     const el=document.getElementById('cfInput_'+f.id);
     if(el&&!el.value.trim())return f.label;
   }
@@ -1433,7 +1454,7 @@ window.showAddEntry=async function(){
   // 套用 fieldSettings
   const evDoc=await getDoc(doc(db,'events',eventId));
   applyEntryFieldSettings(evDoc.data()?.fieldSettings||{});
-  loadEntryGroupOptions('');
+  await loadEntryGroupOptions('');
   renderEntryCustomFields({});
   updateAdminParentalBlock(); // 欄位已全部清空，同步重設家長旗標與顯示
   document.getElementById('entryModal').style.display='flex';
@@ -1511,6 +1532,7 @@ window.onEntryGroupChange=function(){
   const inviteRow=document.getElementById('eInviteCodeRow');
   const hint=document.getElementById('eGroupHint');
   document.getElementById('eInviteCode').value='';
+  updateEntryCustomFieldsVisibility();
   if(!g){inviteRow.style.display='none';hint.textContent='';updateAdminParentalBlock();return;}
   inviteRow.style.display=groupHasInvite(g)?'':'none';
   // 限制摘要
