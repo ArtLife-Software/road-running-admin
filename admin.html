@@ -1358,7 +1358,7 @@ function renderEntryCustomFields(values){
   container.innerHTML=curEntryCustomFields.map(f=>{
     const id='cfInput_'+f.id;
     const reqMark=f.required?' *':'';
-    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'';
+    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     let inner;
     if(f.type==='select'){
       const opts=(f.options||[]).map(o=>'<option value="'+esc(o)+'"'+(values[f.id]===o?' selected':'')+'>'+esc(o)+'</option>').join('');
@@ -2798,7 +2798,7 @@ function renderStaffCustomFields(values){
   container.innerHTML=curStaffCustomFields.map(f=>{
     const id='scfInput_'+f.id;
     const reqMark=f.required?' *':'';
-    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'';
+    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     if(f.type==='select'){
       const opts=(f.options||[]).map(o=>'<option value="'+esc(o)+'"'+(values[f.id]===o?' selected':'')+'>'+esc(o)+'</option>').join('');
       return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select>'+descHtml+'</div>';

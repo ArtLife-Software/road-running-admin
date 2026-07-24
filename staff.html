@@ -321,7 +321,7 @@ async function selectSignupEvent(eventId,keepWrapper){
   // 自訂欄位
   curSignupCustomFields.forEach(f=>{
     const id='su_cf_'+f.id; const reqMark=f.required?' *':'';
-    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'';
+    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     if(f.type==='select'){
       formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{formHtml+='<option value="'+esc(o)+'">'+esc(o)+'</option>';});
@@ -566,7 +566,7 @@ window.showEditForm=async function(eventId,staffDocId,cardId){
   customFields.forEach(f=>{
     const fid=cardId+'_cf_'+f.id;
     const reqMark=f.required?' *':'';
-    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'';
+    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     if(f.type==='select'){
       html+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+fid+'" class="input"><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{html+='<option value="'+esc(o)+'"'+(cd[f.id]===o?' selected':'')+'>'+esc(o)+'</option>';});
