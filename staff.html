@@ -566,14 +566,15 @@ window.showEditForm=async function(eventId,staffDocId,cardId){
   customFields.forEach(f=>{
     const fid=cardId+'_cf_'+f.id;
     const reqMark=f.required?' *':'';
+    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'';
     if(f.type==='select'){
       html+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+fid+'" class="input"><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{html+='<option value="'+esc(o)+'"'+(cd[f.id]===o?' selected':'')+'>'+esc(o)+'</option>';});
-      html+='</select></div>';
+      html+='</select>'+descHtml+'</div>';
     }else if(f.type==='checkbox'){
-      html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+fid+'" '+(cd[f.id]?'checked':'')+'> '+esc(f.label)+reqMark+'</label></div>';
+      html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+fid+'" '+(cd[f.id]?'checked':'')+'> '+esc(f.label)+reqMark+'</label>'+descHtml+'</div>';
     }else{
-      html+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+fid+'" type="text" class="input" value="'+esc(cd[f.id]||'')+'"></div>';
+      html+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+fid+'" type="text" class="input" value="'+esc(cd[f.id]||'')+'">'+descHtml+'</div>';
     }
   });
   html+='<button class="btn btn-primary btn-full" onclick="saveEdit(\''+eventId+'\',\''+staffDocId+'\',\''+cardId+'\')">儲存修改</button>';
