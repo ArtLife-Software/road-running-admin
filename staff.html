@@ -321,14 +321,15 @@ async function selectSignupEvent(eventId,keepWrapper){
   // 自訂欄位
   curSignupCustomFields.forEach(f=>{
     const id='su_cf_'+f.id; const reqMark=f.required?' *':'';
+    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'';
     if(f.type==='select'){
       formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{formHtml+='<option value="'+esc(o)+'">'+esc(o)+'</option>';});
-      formHtml+='</select></div>';
+      formHtml+='</select>'+descHtml+'</div>';
     }else if(f.type==='checkbox'){
-      formHtml+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'"> '+esc(f.label)+'</label></div>';
+      formHtml+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'"> '+esc(f.label)+'</label>'+descHtml+'</div>';
     }else{
-      formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input"></div>';
+      formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input">'+descHtml+'</div>';
     }
   });
   formHtml+='<button class="btn btn-primary btn-full" onclick="submitSignup()">送出報名</button></div>';

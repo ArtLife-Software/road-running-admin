@@ -405,7 +405,7 @@ function buildRegInfoHtml(ev, entryCount) {
   if (ev.registrationStartAt) lines.push('報名開始：' + fmtDT(ev.registrationStartAt));
   if (ev.registrationEndAt)   lines.push('報名截止：' + fmtDT(ev.registrationEndAt));
   const cap = ev.registrationCapacity ?? 0;
-  if (cap > 0) lines.push('報名人數：' + entryCount + ' / ' + cap);
+  lines.push('已報名人數：' + entryCount + (cap > 0 ? ' / ' + cap : ''));
   return lines.length ? lines.map(l=>'<div style="font-size:.75rem;color:var(--muted);margin-top:3px">'+l+'</div>').join('') : '';
 }
 
@@ -527,15 +527,16 @@ async function selectSignupEvent(eventId, keepWrapper){
   curSignupCustomFields.forEach(f=>{
     const id='su_cf_'+f.id;
     const reqMark=f.required?' *':'';
+    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'';
     formHtml+='<div id="su_cf_row_'+f.id+'">';
     if(f.type==='select'){
       formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{formHtml+='<option value="'+esc(o)+'">'+esc(o)+'</option>';});
-      formHtml+='</select></div>';
+      formHtml+='</select>'+descHtml+'</div>';
     } else if(f.type==='checkbox'){
-      formHtml+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'"> '+esc(f.label)+'</label></div>';
+      formHtml+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'"> '+esc(f.label)+'</label>'+descHtml+'</div>';
     } else {
-      formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input"></div>';
+      formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input">'+descHtml+'</div>';
     }
     formHtml+='</div>';
   });
@@ -1196,15 +1197,16 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
     +'</div>';
   customFields.forEach(f=>{
     const fid=cardId+'_ecf_'+f.id;
+    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'';
     html+='<div id="'+cardId+'_ecf_row_'+f.id+'">';
     if(f.type==='select'){
       html+='<div class="input-group"><label>'+esc(f.label)+'</label><select id="'+fid+'" class="input"><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{html+='<option value="'+esc(o)+'"'+(customData[f.id]===o?' selected':'')+'>'+esc(o)+'</option>';});
-      html+='</select></div>';
+      html+='</select>'+descHtml+'</div>';
     }else if(f.type==='checkbox'){
-      html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+fid+'" '+(customData[f.id]?'checked':'')+'> '+esc(f.label)+'</label></div>';
+      html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+fid+'" '+(customData[f.id]?'checked':'')+'> '+esc(f.label)+'</label>'+descHtml+'</div>';
     }else{
-      html+='<div class="input-group"><label>'+esc(f.label)+'</label><input id="'+fid+'" type="text" class="input" value="'+esc(customData[f.id]!==undefined?customData[f.id]:'')+'"></div>';
+      html+='<div class="input-group"><label>'+esc(f.label)+'</label><input id="'+fid+'" type="text" class="input" value="'+esc(customData[f.id]!==undefined?customData[f.id]:'')+'">'+descHtml+'</div>';
     }
     html+='</div>';
   });

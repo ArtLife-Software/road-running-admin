@@ -875,6 +875,7 @@ async function loadCustomFields(){
     let detail=typeLabel+(f.required?'　必填':'　選填');
     if(f.type==='select')detail+='　選項：'+esc((f.options||[]).join('、'));
     if(curCFType==='runner')detail+='　適用組別：'+((f.groups&&f.groups.length)?esc(f.groups.map(resolveCFGroupLabel).join('、')):'全部組別');
+    if(f.description)detail+='<br>說明：'+esc(f.description);
     return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">'
       +'<div><strong>'+esc(f.label)+'</strong><div style="font-size:.75rem;color:var(--muted)">'+detail+'</div></div>'
       +'<div style="white-space:nowrap">'
@@ -909,6 +910,7 @@ window.showAddCustomField=function(){
   document.getElementById('cfFormTitle').textContent='新增欄位';
   document.getElementById('cfFieldIndex').value='';
   document.getElementById('cfLabel').value='';
+  document.getElementById('cfDescription').value='';
   document.getElementById('cfType').value='text';
   document.getElementById('cfRequired').checked=false;
   document.getElementById('cfOptions').value='';
@@ -924,6 +926,7 @@ window.editCustomField=async function(i){
   document.getElementById('cfFormTitle').textContent='編輯欄位';
   document.getElementById('cfFieldIndex').value=i;
   document.getElementById('cfLabel').value=f.label||'';
+  document.getElementById('cfDescription').value=f.description||'';
   document.getElementById('cfType').value=f.type||'text';
   document.getElementById('cfRequired').checked=!!f.required;
   document.getElementById('cfOptions').value=(f.options||[]).join('\n');
@@ -941,10 +944,11 @@ window.cancelCustomField=function(){document.getElementById('cfForm').style.disp
 window.saveCustomField=async function(){
   const idx=document.getElementById('cfFieldIndex').value;
   const label=document.getElementById('cfLabel').value.trim();
+  const description=document.getElementById('cfDescription').value.trim();
   let type=document.getElementById('cfType').value;
   const required=type==='checkbox'?false:document.getElementById('cfRequired').checked;
   if(!label){showToast('欄位名稱為必填','error');return;}
-  const field={id:'cf_'+Date.now()+'_'+Math.floor(Math.random()*1000), label, type, required};
+  const field={id:'cf_'+Date.now()+'_'+Math.floor(Math.random()*1000), label, description, type, required};
   if(curCFType==='runner'){
     field.groups=[...document.querySelectorAll('.cfGroupChk:checked')].map(el=>el.dataset.group);
   }
@@ -3838,6 +3842,7 @@ th[data-sort]:hover{color:var(--accent);}
       <div class="modal-title" id="cfFormTitle" style="font-size:.95rem;margin-bottom:16px">新增欄位</div>
       <input type="hidden" id="cfFieldIndex">
       <div class="input-group"><label>欄位名稱 *</label><input id="cfLabel" type="text" class="input" placeholder="例：T恤尺寸"></div>
+      <div class="input-group"><label>欄位說明（選填，會顯示在欄位下方，給填表人看的提示文字）</label><input id="cfDescription" type="text" class="input" placeholder="例：請參考尺寸對照表後再選擇"></div>
       <div class="input-group"><label>欄位類型</label>
         <select id="cfType" class="input" onchange="onCfTypeChange()">
           <option value="text">文字</option>
