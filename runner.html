@@ -534,7 +534,7 @@ async function selectSignupEvent(eventId, keepWrapper){
       (f.options||[]).forEach(o=>{formHtml+='<option value="'+esc(o)+'">'+esc(o)+'</option>';});
       formHtml+='</select>'+descHtml+'</div>';
     } else if(f.type==='checkbox'){
-      formHtml+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'"> '+esc(f.label)+'</label>'+descHtml+'</div>';
+      formHtml+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'"> '+esc(f.label)+reqMark+'</label>'+descHtml+'</div>';
     } else {
       formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input">'+descHtml+'</div>';
     }
@@ -743,7 +743,10 @@ window.submitSignup=async function(){
     if(f.groups&&f.groups.length&&!f.groups.includes(group))continue;
     const el=document.getElementById('su_cf_'+f.id);
     if(!el)continue;
-    if(f.type==='checkbox'){customData[f.id]=el.checked;}
+    if(f.type==='checkbox'){
+      if(f.required&&!el.checked){showToast('「'+f.label+'」為必填，請勾選','error');return;}
+      customData[f.id]=el.checked;
+    }
     else{
       const v=el.value.trim();
       if(f.required&&!v){showToast('「'+f.label+'」為必填','error');return;}
@@ -1197,16 +1200,17 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
     +'</div>';
   customFields.forEach(f=>{
     const fid=cardId+'_ecf_'+f.id;
+    const reqMark=f.required?' *':'';
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'';
     html+='<div id="'+cardId+'_ecf_row_'+f.id+'">';
     if(f.type==='select'){
-      html+='<div class="input-group"><label>'+esc(f.label)+'</label><select id="'+fid+'" class="input"><option value="">請選擇...</option>';
+      html+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+fid+'" class="input"><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{html+='<option value="'+esc(o)+'"'+(customData[f.id]===o?' selected':'')+'>'+esc(o)+'</option>';});
       html+='</select>'+descHtml+'</div>';
     }else if(f.type==='checkbox'){
-      html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+fid+'" '+(customData[f.id]?'checked':'')+'> '+esc(f.label)+'</label>'+descHtml+'</div>';
+      html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+fid+'" '+(customData[f.id]?'checked':'')+'> '+esc(f.label)+reqMark+'</label>'+descHtml+'</div>';
     }else{
-      html+='<div class="input-group"><label>'+esc(f.label)+'</label><input id="'+fid+'" type="text" class="input" value="'+esc(customData[f.id]!==undefined?customData[f.id]:'')+'">'+descHtml+'</div>';
+      html+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+fid+'" type="text" class="input" value="'+esc(customData[f.id]!==undefined?customData[f.id]:'')+'">'+descHtml+'</div>';
     }
     html+='</div>';
   });
@@ -1297,7 +1301,10 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
   for(const f of customFields){
     if(f.groups&&f.groups.length&&!f.groups.includes(groupId))continue; // 不適用目前組別：不送出，等同清除
     const el=document.getElementById(cardId+'_ecf_'+f.id); if(!el)continue;
-    if(f.type==='checkbox')customData[f.id]=el.checked;
+    if(f.type==='checkbox'){
+      if(f.required&&!el.checked){showToast('「'+f.label+'」為必填，請勾選','error');return;}
+      customData[f.id]=el.checked;
+    }
     else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
   }
   // 家長陪同欄位：儲存前依「目前表單的組別＋生日」即時重算是否需要

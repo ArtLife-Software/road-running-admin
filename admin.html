@@ -937,8 +937,7 @@ window.editCustomField=async function(i){
 window.onCfTypeChange=function(){
   document.getElementById('cfOptionsRow').style.display=document.getElementById('cfType').value==='select'?'block':'none';
   const isCheckbox=document.getElementById('cfType').value==='checkbox';
-  document.getElementById('cfRequiredRow').style.display=isCheckbox?'none':'block';
-  if(isCheckbox)document.getElementById('cfRequired').checked=false;
+  document.getElementById('cfRequiredLabel').textContent=isCheckbox?'必填（必須勾選才能送出）':'必填';
 }
 window.cancelCustomField=function(){document.getElementById('cfForm').style.display='none';}
 window.saveCustomField=async function(){
@@ -946,7 +945,7 @@ window.saveCustomField=async function(){
   const label=document.getElementById('cfLabel').value.trim();
   const description=document.getElementById('cfDescription').value.trim();
   let type=document.getElementById('cfType').value;
-  const required=type==='checkbox'?false:document.getElementById('cfRequired').checked;
+  const required=document.getElementById('cfRequired').checked;
   if(!label){showToast('欄位名稱為必填','error');return;}
   const field={id:'cf_'+Date.now()+'_'+Math.floor(Math.random()*1000), label, description, type, required};
   if(curCFType==='runner'){
@@ -1365,7 +1364,7 @@ function renderEntryCustomFields(values){
       const opts=(f.options||[]).map(o=>'<option value="'+esc(o)+'"'+(values[f.id]===o?' selected':'')+'>'+esc(o)+'</option>').join('');
       inner='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select>'+descHtml+'</div>';
     } else if(f.type==='checkbox'){
-      inner='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+esc(f.label)+'</label>'+descHtml+'</div>';
+      inner='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+esc(f.label)+reqMark+'</label>'+descHtml+'</div>';
     } else {
       inner='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input" value="'+esc(values[f.id]!==undefined?values[f.id]:'')+'">'+descHtml+'</div>';
     }
@@ -1403,7 +1402,9 @@ function validateEntryCustomFields(){
     const applicable=!f.groups||!f.groups.length||f.groups.includes(groupId);
     if(!applicable)continue; // 不適用目前組別的欄位不需要驗證必填
     const el=document.getElementById('cfInput_'+f.id);
-    if(el&&!el.value.trim())return f.label;
+    if(!el)continue;
+    if(f.type==='checkbox'){ if(!el.checked)return f.label; }
+    else if(!el.value.trim())return f.label;
   }
   return null;
 }
@@ -2797,13 +2798,14 @@ function renderStaffCustomFields(values){
   container.innerHTML=curStaffCustomFields.map(f=>{
     const id='scfInput_'+f.id;
     const reqMark=f.required?' *':'';
+    const descHtml=f.description?'<div style="font-size:.75rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'';
     if(f.type==='select'){
       const opts=(f.options||[]).map(o=>'<option value="'+esc(o)+'"'+(values[f.id]===o?' selected':'')+'>'+esc(o)+'</option>').join('');
-      return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select></div>';
+      return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select>'+descHtml+'</div>';
     } else if(f.type==='checkbox'){
-      return '<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+esc(f.label)+'</label></div>';
+      return '<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+esc(f.label)+reqMark+'</label>'+descHtml+'</div>';
     } else {
-      return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input" value="'+esc(values[f.id]!==undefined?values[f.id]:'')+'"></div>';
+      return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input" value="'+esc(values[f.id]!==undefined?values[f.id]:'')+'">'+descHtml+'</div>';
     }
   }).join('');
 }
@@ -2884,7 +2886,10 @@ window.saveStaff=async function(){
   const customData={};
   for(const f of curStaffCustomFields){
     const el=document.getElementById('scfInput_'+f.id); if(!el)continue;
-    if(f.type==='checkbox')customData[f.id]=el.checked;
+    if(f.type==='checkbox'){
+      if(f.required&&!el.checked){showToast('「'+f.label+'」為必填，請勾選','error');return;}
+      customData[f.id]=el.checked;
+    }
     else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
   }
   const runnerData={name,gender,birthday,phone,email,idNumber,note};
@@ -3869,7 +3874,7 @@ th[data-sort]:hover{color:var(--accent);}
         <select id="cfType" class="input" onchange="onCfTypeChange()">
           <option value="text">文字</option>
           <option value="select">下拉選單</option>
-          <option value="checkbox">是／否（勾選框，不可必填）</option>
+          <option value="checkbox">是／否（勾選框）</option>
           <option value="yesno">是／否（下拉選單，可必填）</option>
         </select>
       </div>
@@ -3877,7 +3882,7 @@ th[data-sort]:hover{color:var(--accent);}
         <label>選項（每行一個）</label>
         <textarea id="cfOptions" class="input" rows="3" placeholder="S&#10;M&#10;L&#10;XL"></textarea>
       </div>
-      <div class="input-group" id="cfRequiredRow"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="cfRequired"> 必填</label></div>
+      <div class="input-group" id="cfRequiredRow"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="cfRequired"> <span id="cfRequiredLabel">必填</span></label></div>
       <div class="input-group" id="cfGroupsRow">
         <label>適用組別（不勾選＝全部組別皆顯示）</label>
         <div id="cfGroupsCheckboxes" style="display:flex;flex-wrap:wrap;gap:8px 16px;padding:8px 0"></div>
