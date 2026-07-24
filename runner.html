@@ -454,11 +454,10 @@ async function selectSignupEvent(eventId, keepWrapper){
   lastSignupEventId=eventId;
   curSignupCustomFields=curSignupEvent.customFields||[];
   const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
-  const groupDocs=gSnap.docs.map(d=>d.data());
-  const groups=groupDocs.map(g=>g.name);
-  // 存下組別限制資料
+  const groupDocs=gSnap.docs.map(d=>({id:d.id,...d.data()}));
+  // 組別的關聯鍵一律用 ID，名稱只是顯示用、之後改名不會弄亂已送出的報名資料
   window._signupGroupMap={};
-  groupDocs.forEach(g=>{window._signupGroupMap[g.name]=g;});
+  groupDocs.forEach(g=>{window._signupGroupMap[g.id]=g;});
 
   let formHtml='';
   // 圖片永遠顯示在最上方
@@ -479,8 +478,8 @@ async function selectSignupEvent(eventId, keepWrapper){
   }
   formHtml+='<div class="card">';
   formHtml+='<div class="input-group"><label>組別 *</label><select id="suGroup" class="input" onchange="onSignupGroupChange()">';
-  if(groups.length){
-    groups.forEach(g=>{formHtml+='<option value="'+esc(g)+'">'+esc(g)+'</option>';});
+  if(groupDocs.length){
+    groupDocs.forEach(g=>{formHtml+='<option value="'+esc(g.id)+'">'+esc(g.name)+'</option>';});
   }else{
     formHtml+='<option value="未分組">未分組</option>';
   }
@@ -732,7 +731,7 @@ window.submitSignup=async function(){
     }
     // 組別名額
     if(g.groupCapacity>0){
-      const capSnap=await getCountFromServer(query(collection(db,'events',curSignupEvent.id,'runners'),where('group','==',group)));
+      const capSnap=await getCountFromServer(query(collection(db,'events',curSignupEvent.id,'runners'),where('groupId','==',group)));
       if(capSnap.data().count>=g.groupCapacity){showToast('此組別已額滿（'+g.groupCapacity+'人）','error');return;}
     }
   }
@@ -805,7 +804,7 @@ window.submitSignup=async function(){
     // ══════════════════════════════════════════════════════════
     const runnerSignupFn=httpsCallable(functions,'runnerSignup');
     const payload={
-      eventId,group,name,gender,birthday,phone,email,idNumber,note,customData,
+      eventId,groupId:group,name,gender,birthday,phone,email,idNumber,note,customData,
       inviteCode:document.getElementById('suInviteCode')?.value.trim()||'',
       customBib:customBib||'',
       parental:(parentalDataForSet.parentalConsentAgreed
@@ -1143,12 +1142,11 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   const customFields=evDoc.data()?.customFields||[];
   const evDate=evDoc.data()?.date||'';
   const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
-  const groupMap={};
-  gSnap.docs.forEach(d=>{groupMap[d.data().name]=d.data();});
-  const groups=Object.keys(groupMap);
+  const groupList=gSnap.docs.map(d=>({id:d.id,...d.data()}));
+  const groupMap={}; groupList.forEach(g=>{groupMap[g.id]=g;});
   const customData=e.customData||{};
-  // 精簡版 groupMap 只保留 parentalAge，供 inline onchange 使用
-  const gMapJson=JSON.stringify(Object.fromEntries(Object.entries(groupMap).map(([k,v])=>[k,{parentalAge:v.parentalAge||0}])));
+  // 精簡版 groupMap 只保留 parentalAge，供 inline onchange 使用（key 是組別ID）
+  const gMapJson=JSON.stringify(Object.fromEntries(groupList.map(g=>[g.id,{parentalAge:g.parentalAge||0}])));
 
   let html='<div class="card" style="background:var(--surface2)">';
   const canChangeBib=evDoc.data()?.allowBibChange&&isRunnerRegOpen(evDoc.data(),0);
@@ -1179,7 +1177,7 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   html+='<div class="input-group"><label>身分證字號</label><input id="'+cardId+'_eIdNumber" type="text" class="input" value="'+esc(r.idNumber||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_eNote" type="text" class="input" value="'+esc(r.note||'')+'"></div>';
   html+='<div class="input-group"><label>組別</label><select id="'+cardId+'_eGroup" class="input" onchange="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\');updateEditCustomFieldsVisibility(\''+cardId+'\')">';
-  groups.forEach(g=>{html+='<option value="'+esc(g)+'"'+(g===e.group?' selected':'')+'>'+esc(g)+'</option>';});
+  groupList.forEach(g=>{html+='<option value="'+esc(g.id)+'"'+(g.id===e.groupId?' selected':'')+'>'+esc(g.name)+'</option>';});
   html+='</select></div>';
   // 家長陪同欄位
   html+='<div id="'+cardId+'_eParentalBlock" style="display:none">'
@@ -1269,7 +1267,7 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
   const email=document.getElementById(cardId+'_eEmail').value.trim();
   const idNumber=document.getElementById(cardId+'_eIdNumber').value.trim();
   const note=document.getElementById(cardId+'_eNote').value.trim();
-  const group=document.getElementById(cardId+'_eGroup').value;
+  const groupId=document.getElementById(cardId+'_eGroup').value;
   const bibEl=document.getElementById(cardId+'_eBib');
   const rangeEl=document.getElementById(cardId+'_bibRange');
   const newBibRaw=bibEl?bibEl.value.trim():'';
@@ -1295,7 +1293,7 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
   const customFields=JSON.parse(document.getElementById(cardId+'_edit').dataset.customFields||'[]');
   const customData={};
   for(const f of customFields){
-    if(f.groups&&f.groups.length&&!f.groups.includes(group))continue; // 不適用目前組別：不送出，等同清除
+    if(f.groups&&f.groups.length&&!f.groups.includes(groupId))continue; // 不適用目前組別：不送出，等同清除
     const el=document.getElementById(cardId+'_ecf_'+f.id); if(!el)continue;
     if(f.type==='checkbox')customData[f.id]=el.checked;
     else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
@@ -1319,7 +1317,7 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
     const res=(await httpsCallable(functions,'runnerAction')({
       eventId,entryDocId,action:'save',credentials:statusCred,
       profile:{name,gender,birthday,phone,email,idNumber,note},
-      entry:{group,customData,newBib:newBib||''},
+      entry:{groupId,customData,newBib:newBib||''},
       parental:(needParental
         ?{consent:document.getElementById(cardId+'_eParentalConsent')?.checked||false,
           parentName:document.getElementById(cardId+'_eParentName')?.value.trim()||'',
@@ -1418,25 +1416,33 @@ async function buildLookupCard(e, eventId, evData){
   const recSnap=await getDocs(query(collection(db,'events',eventId,'records'),orderBy('scanTime','asc')));
   const groupRecs=recSnap.docs.map(d=>d.data()); // 整個賽事的打卡記錄（不含個資，選手端可讀）
   const allRecs=groupRecs.filter(x=>x.uniqueId===e.uniqueId);
-  const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
-  const groupStations={};
+  const [gSnap,checkpointSnap]=await Promise.all([
+    getDocs(collection(db,'events',eventId,'groups')),
+    getDocs(collection(db,'events',eventId,'checkpoints'))
+  ]);
+  // 站點名稱一律即時查詢目前的 checkpoints 名稱；組別/站點比對一律用ID，
+  // 改名字不影響任何比對正確性，也不需要連鎖同步。
+  const checkpointNameById={}; checkpointSnap.docs.forEach(d=>{checkpointNameById[d.id]=d.data().name||'';});
   const groupFinishLimit={};
-  gSnap.docs.forEach(d=>{groupStations[d.data().name]=d.data().stations||[];groupFinishLimit[d.data().name]=d.data().finishTimeLimit||0;});
-  const stations=groupStations[e.group]||[];
-  const finishTimeLimit=groupFinishLimit[e.group]||0;
+  let stations=[]; // [{id,name}]，依站序
+  gSnap.docs.forEach(d=>{
+    if(d.id===e.groupId) stations=(d.data().stationRefs||[]).map(cid=>({id:cid,name:checkpointNameById[cid]||'（已刪除的站點）'}));
+    groupFinishLimit[d.id]=d.data().finishTimeLimit||0;
+  });
+  const finishTimeLimit=groupFinishLimit[e.groupId]||0;
 
   // 抓同組別其他選手的報名記錄，用來計算名次（跟後台查詢成績同一套邏輯：
   // 依「第一站到各站」的累積時間排序，只有抵達終點的人才有終點排名）
-  const sameGroupSnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('group','==',e.group)));
+  const sameGroupSnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('groupId','==',e.groupId)));
   const groupUids=sameGroupSnap.docs.map(d=>d.data().uniqueId);
   const lastStation=stations[stations.length-1];
-  const rankMap={}; // key: uid 或 uid+'_'+station
+  const rankMap={}; // key: uid 或 uid+'_'+stationId
   if(lastStation){
     const finishers=[];
     groupUids.forEach(uid=>{
       const myRecs=groupRecs.filter(r=>r.uniqueId===uid);
       const firstR=myRecs[0];
-      const lastR=myRecs.find(r=>r.station===lastStation);
+      const lastR=myRecs.find(r=>r.stationId===lastStation.id);
       if(firstR&&lastR){
         const total=lastR.scanTime?.toDate?lastR.scanTime.toDate()-firstR.scanTime.toDate():0;
         finishers.push({uid,total});
@@ -1449,14 +1455,14 @@ async function buildLookupCard(e, eventId, evData){
       groupUids.forEach(uid=>{
         const myRecs=groupRecs.filter(r=>r.uniqueId===uid);
         const firstR=myRecs[0];
-        const sRec=myRecs.find(r=>r.station===s);
+        const sRec=myRecs.find(r=>r.stationId===s.id);
         if(firstR&&sRec){
           const cum=sRec.scanTime?.toDate?sRec.scanTime.toDate()-firstR.scanTime.toDate():0;
           stEntries.push({uid,cum});
         }
       });
       stEntries.sort((a,b)=>a.cum-b.cum);
-      stEntries.forEach((se,i)=>{rankMap[se.uid+'_'+s]=i+1;});
+      stEntries.forEach((se,i)=>{rankMap[se.uid+'_'+s.id]=i+1;});
     });
   }
 
@@ -1477,14 +1483,14 @@ async function buildLookupCard(e, eventId, evData){
   const firstRec=allRecs[0];
   let prevRec=null;
   stations.forEach((s,i)=>{
-    const rec=allRecs.find(x=>x.station===s);
+    const rec=allRecs.find(x=>x.stationId===s.id);
     const arrived=!!rec;
     const total=arrived&&i>0?diffHMS(rec.scanTime,firstRec.scanTime):null;
     // 第二站（i===1）區段時間 = 累積時間，省略不顯示；第三站以後才顯示區段時間
     const seg=arrived&&i>1&&prevRec?diffHMS(rec.scanTime,prevRec.scanTime):null;
-    const sRank=arrived&&i>0?rankMap[e.uniqueId+'_'+s]:null;
+    const sRank=arrived&&i>0?rankMap[e.uniqueId+'_'+s.id]:null;
     if(arrived) prevRec=rec;
-    html+='<tr><td>'+(i===0?'<span style="color:var(--muted);font-size:.7rem">(起跑)</span> ':'')+esc(s)+'</td>'
+    html+='<tr><td>'+(i===0?'<span style="color:var(--muted);font-size:.7rem">(起跑)</span> ':'')+esc(s.name)+'</td>'
       +(arrived
         ?'<td>'+fmt(rec.scanTime)+'</td>'
           +'<td>'+(total||'-')+'</td>'
@@ -1496,9 +1502,9 @@ async function buildLookupCard(e, eventId, evData){
   html+='</tbody></table></div>';
 
   // ── 完賽證書：所有站點皆已完成打卡才符合資格 ──
-  const isCompleted = stations.length>0 && stations.every(s=>allRecs.find(x=>x.station===s));
+  const isCompleted = stations.length>0 && stations.every(s=>allRecs.find(x=>x.stationId===s.id));
   if (isCompleted) {
-    const lastRec = allRecs.find(x=>x.station===lastStation);
+    const lastRec = allRecs.find(x=>x.stationId===lastStation.id);
     const finishSeconds = Math.max(0, Math.floor((lastRec.scanTime.toDate() - firstRec.scanTime.toDate())/1000));
     const withinLimit = !finishTimeLimit || finishSeconds/60 <= finishTimeLimit;
     const finishTimeStr = diffHMS(lastRec.scanTime, firstRec.scanTime);
