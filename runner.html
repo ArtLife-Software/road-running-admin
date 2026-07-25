@@ -881,7 +881,7 @@ window.submitSignup=async function(){
       showToast('已為您重新啟用此賽事的報名（取消申請已自動撤回）');
       btn.textContent='送出報名'; btn.disabled=false; return;
     }
-    showSignupSuccess({uniqueId:res.uniqueId,name,gender,group,bibNumber:res.bibNumber,eventName:curSignupEvent.name,eventDate:curSignupEvent.date});
+    showSignupSuccess({uniqueId:res.uniqueId,name,gender,group:g?.name||group,bibNumber:res.bibNumber,eventName:curSignupEvent.name,eventDate:curSignupEvent.date});
   }catch(e){
     showToast('報名失敗：'+e.message,'error');
     const b=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
@@ -1338,7 +1338,8 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
     const cached=statusCache[entryDocId];
     if(cached){
       Object.assign(cached.profile,{name,gender,birthday,phone,email,idNumber,note});
-      Object.assign(cached.entry,{group,customData,bibNumber:res.newBib||cached.entry.bibNumber});
+      const groupName=document.getElementById(cardId+'_eGroup')?.selectedOptions?.[0]?.textContent||cached.entry.group;
+      Object.assign(cached.entry,{group:groupName,groupId,customData,bibNumber:res.newBib||cached.entry.bibNumber});
     }
     showToast('已儲存修改');
     document.getElementById(cardId+'_edit').innerHTML='<div class="csv-hint">✅ 修改已儲存</div>';
