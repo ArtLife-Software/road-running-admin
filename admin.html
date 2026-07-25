@@ -1914,7 +1914,7 @@ function renderRecordRows(rows) {
       +'<td>'+esc(stationDisplay)+'</td>'
       +'<td>'+fmt(r.scanTime)+'</td>'
       +'<td><span style="font-size:.78rem;color:var(--muted)">'+esc(r.deviceName||'-')+'</span></td>'
-      +'<td><button class="btn btn-sm btn-danger" onclick="deleteRecord(\''+id+'\',\''+escJs(r.uniqueId||'')+'\',\''+escJs(stationDisplay||'')+'\')">刪除</button></td>'
+      +'<td><button class="btn btn-sm btn-ghost" onclick="editRecord(\''+id+'\')">編輯</button> <button class="btn btn-sm btn-danger" onclick="deleteRecord(\''+id+'\',\''+escJs(r.uniqueId||'')+'\',\''+escJs(stationDisplay||'')+'\')">刪除</button></td>'
       +'</tr>';
   }).join('');
 }
@@ -1959,6 +1959,166 @@ window.deleteRecord=async function(docId,uniqueId,station){
   if(!confirm('確定刪除此打卡記錄？\nID：'+uniqueId+'　站點：'+station))return;
   await deleteDoc(doc(db,'events',curRecordEventId,'records',docId));
   showToast('已刪除');
+}
+// ── 補登打卡記錄：給掃描App故障/沒訊號/選手漏掃時的人工備援用；也支援編輯既有記錄 ──
+let arCheckpointNameById={}, arGroupsById={}, arSelectedEntry=null, arEditDocId=null;
+window.showAddRecord=async function(){
+  if(!curRecordEventId){showToast('請先選擇賽事','error');return;}
+  arSelectedEntry=null;
+  arEditDocId=null;
+  document.getElementById('addRecordModalTitle').textContent='補登打卡記錄';
+  document.getElementById('addRecordSaveBtn').textContent='儲存';
+  document.getElementById('arSearchKw').value='';
+  document.getElementById('arSearchResults').innerHTML='';
+  document.getElementById('arSelectedRunner').style.display='none';
+  document.getElementById('arStation').innerHTML='<option value="">請先選擇選手...</option>';
+  const now=new Date(); now.setMinutes(now.getMinutes()-now.getTimezoneOffset());
+  document.getElementById('arTime').value=now.toISOString().slice(0,16);
+  document.getElementById('arDeviceName').value='後台手動補登';
+  const [gSnap,checkpointSnap]=await Promise.all([
+    getDocs(collection(db,'events',curRecordEventId,'groups')),
+    getDocs(collection(db,'events',curRecordEventId,'checkpoints'))
+  ]);
+  arCheckpointNameById={}; checkpointSnap.docs.forEach(d=>{arCheckpointNameById[d.id]=d.data().name||'';});
+  arGroupsById={}; gSnap.docs.forEach(d=>{arGroupsById[d.id]=d.data();});
+  document.getElementById('addRecordModal').style.display='flex';
+}
+window.editRecord=async function(docId){
+  const rec=_lastRecordsData.find(x=>x._id===docId);
+  if(!rec){showToast('找不到這筆記錄','error');return;}
+  if(!curRecordEventId){showToast('請先選擇賽事','error');return;}
+  arEditDocId=docId;
+  arSelectedEntry={uniqueId:rec.uniqueId,bibNumber:rec.bibNumber||'',group:rec.group||'',groupId:rec.groupId||'',name:rec.name||''};
+
+  document.getElementById('addRecordModalTitle').textContent='編輯打卡記錄';
+  document.getElementById('addRecordSaveBtn').textContent='儲存變更';
+  document.getElementById('arSearchKw').value='';
+  document.getElementById('arSearchResults').innerHTML='';
+  const box=document.getElementById('arSelectedRunner');
+  box.style.display='block';
+  box.innerHTML='<strong>'+esc(rec.bibNumber||'-')+'　'+esc(rec.name||'-')+'</strong>　'+esc(rec.group||'-')+'　<span class="mono" style="font-size:.75rem">'+esc(rec.uniqueId)+'</span>';
+
+  const [gSnap,checkpointSnap]=await Promise.all([
+    getDocs(collection(db,'events',curRecordEventId,'groups')),
+    getDocs(collection(db,'events',curRecordEventId,'checkpoints'))
+  ]);
+  arCheckpointNameById={}; checkpointSnap.docs.forEach(d=>{arCheckpointNameById[d.id]=d.data().name||'';});
+  arGroupsById={}; gSnap.docs.forEach(d=>{arGroupsById[d.id]=d.data();});
+
+  const sel=document.getElementById('arStation'); sel.innerHTML='';
+  const g=arGroupsById[rec.groupId];
+  const refs=g?.stationRefs||[];
+  refs.forEach(cid=>{
+    const o=document.createElement('option'); o.value=cid; o.textContent=arCheckpointNameById[cid]||'（已刪除的站點）';
+    if(cid===rec.stationId)o.selected=true;
+    sel.appendChild(o);
+  });
+  // 如果這筆記錄的站點已經不在目前的組別站序裡（例如站序後來被調整過），
+  // 額外保留一個選項，避免存檔時「不小心」把它改成別的站點
+  if(rec.stationId&&!refs.includes(rec.stationId)){
+    const o=document.createElement('option'); o.value=rec.stationId;
+    o.textContent=(arCheckpointNameById[rec.stationId]||rec.station||'（原站點）')+'（不在目前站序中）';
+    o.selected=true; sel.appendChild(o);
+  }
+  if(!sel.options.length){
+    sel.innerHTML='<option value="">（此選手所屬組別沒有設定站點）</option>';
+  }
+
+  const dt=rec.scanTime?.toDate?rec.scanTime.toDate():new Date();
+  dt.setMinutes(dt.getMinutes()-dt.getTimezoneOffset());
+  document.getElementById('arTime').value=dt.toISOString().slice(0,16);
+  document.getElementById('arDeviceName').value=rec.deviceName||'';
+  document.getElementById('addRecordModal').style.display='flex';
+}
+let arSearchTimer=null;
+window.searchRunnerForRecord=function(){
+  clearTimeout(arSearchTimer);
+  arSearchTimer=setTimeout(async()=>{
+    const kw=document.getElementById('arSearchKw').value.trim().toLowerCase();
+    const box=document.getElementById('arSearchResults');
+    if(!kw){box.innerHTML='';return;}
+    const entrySnap=await getDocs(collection(db,'events',curRecordEventId,'runners'));
+    const entries=entrySnap.docs.map(d=>d.data());
+    const rMap=await fetchRunnersByUniqueIds(entries.map(e=>e.uniqueId));
+    const matches=entries.filter(e=>{
+      const r=rMap[e.uniqueId]||{};
+      return (e.bibNumber||'').toLowerCase().includes(kw)||(e.uniqueId||'').toLowerCase().includes(kw)||(r.name||'').toLowerCase().includes(kw);
+    }).slice(0,20);
+    if(!matches.length){box.innerHTML='<div style="padding:6px 8px;color:var(--muted);font-size:.85rem">找不到符合的選手</div>';return;}
+    box.innerHTML=matches.map(e=>{
+      const r=rMap[e.uniqueId]||{};
+      const payload=esc(JSON.stringify({uniqueId:e.uniqueId,bibNumber:e.bibNumber||'',group:e.group||'',groupId:e.groupId||'',name:r.name||''}));
+      return '<div style="padding:6px 8px;cursor:pointer;border-bottom:1px solid var(--border)" onclick="selectRunnerForRecord(this.dataset.entry)" data-entry="'+payload+'">'
+        +esc(e.bibNumber||'-')+'　'+esc(r.name||'-')+'　<span class="mono" style="font-size:.75rem">'+esc(e.uniqueId)+'</span>　'+esc(e.group||'-')+'</div>';
+    }).join('');
+  },250);
+}
+window.selectRunnerForRecord=function(entryJson){
+  const e=JSON.parse(entryJson);
+  arSelectedEntry=e;
+  document.getElementById('arSearchResults').innerHTML='';
+  document.getElementById('arSearchKw').value='';
+  const box=document.getElementById('arSelectedRunner');
+  box.style.display='block';
+  box.innerHTML='已選擇：<strong>'+esc(e.bibNumber||'-')+'　'+esc(e.name||'-')+'</strong>　'+esc(e.group||'-')+'　<span class="mono" style="font-size:.75rem">'+esc(e.uniqueId)+'</span> <button type="button" class="btn btn-sm btn-ghost" onclick="clearRunnerForRecord()">重選</button>';
+
+  const sel=document.getElementById('arStation'); sel.innerHTML='<option value="">請選擇站點...</option>';
+  const g=arGroupsById[e.groupId];
+  const refs=g?.stationRefs||[];
+  if(!refs.length){
+    sel.innerHTML='<option value="">（此選手所屬組別沒有設定站點）</option>';
+    return;
+  }
+  refs.forEach(cid=>{
+    const o=document.createElement('option'); o.value=cid; o.textContent=arCheckpointNameById[cid]||'（已刪除的站點）'; sel.appendChild(o);
+  });
+}
+window.clearRunnerForRecord=function(){
+  arSelectedEntry=null;
+  document.getElementById('arSelectedRunner').style.display='none';
+  document.getElementById('arStation').innerHTML='<option value="">請先選擇選手...</option>';
+}
+window.saveManualRecord=async function(){
+  if(!arSelectedEntry){showToast('請先選擇選手','error');return;}
+  const stationId=document.getElementById('arStation').value;
+  if(!stationId){showToast('請選擇站點','error');return;}
+  const timeVal=document.getElementById('arTime').value;
+  if(!timeVal){showToast('請選擇時間','error');return;}
+  const deviceName=document.getElementById('arDeviceName').value.trim()||'後台手動補登';
+  const scanTime=Timestamp.fromDate(new Date(timeVal));
+  const stationName=arCheckpointNameById[stationId]||'';
+  const data={
+    uniqueId:arSelectedEntry.uniqueId, bibNumber:arSelectedEntry.bibNumber||'',
+    group:arSelectedEntry.group||'', groupId:arSelectedEntry.groupId||'',
+    station:stationName, stationId, scanTime, deviceName
+  };
+
+  // 檢查這位選手在這一站是否已經有「別筆」記錄（編輯模式下要排除正在編輯的這一筆自己）
+  const existSnap=await getDocs(query(
+    collection(db,'events',curRecordEventId,'records'),
+    where('uniqueId','==',arSelectedEntry.uniqueId),
+    where('stationId','==',stationId)
+  ));
+  const conflict=existSnap.docs.find(d=>d.id!==arEditDocId);
+
+  if(arEditDocId){
+    if(conflict){
+      if(!confirm('這位選手在這一站已經有另一筆記錄了，儲存後那一筆會被刪除、由這筆取代，確定嗎？'))return;
+      await deleteDoc(conflict.ref);
+    }
+    await updateDoc(doc(db,'events',curRecordEventId,'records',arEditDocId),data);
+    closeModal('addRecordModal');
+    showToast('已儲存變更');
+  } else {
+    if(conflict){
+      if(!confirm('這位選手在這一站已經有記錄了，是否要覆寫？'))return;
+      await updateDoc(conflict.ref,data);
+    } else {
+      await addDoc(collection(db,'events',curRecordEventId,'records'),data);
+    }
+    closeModal('addRecordModal');
+    showToast('已補登打卡記錄');
+  }
 }
 window.exportRecordsCSV=async function(){
   if(!curRecordEventId){showToast('請先選擇賽事','error');return;}
@@ -3590,6 +3750,7 @@ th[data-sort]:hover{color:var(--accent);}
         <div><div class="section-title">打卡記錄</div><div style="font-size:.82rem;color:var(--muted);margin-top:4px" id="recordsEventName"></div></div>
         <div class="section-actions">
           <button class="btn btn-danger" id="recordsBatchDeleteBtn" style="display:none" onclick="batchDeleteRecords()">🗑️ 批次刪除</button>
+          <button class="btn btn-primary" onclick="showAddRecord()">＋ 補登打卡記錄</button>
           <button class="btn btn-ghost" onclick="showVirtualStart()">🚩 虛擬起跑</button>
           <button class="btn btn-ghost" onclick="printRecords()">🖨️ 列印</button>
           <button class="btn btn-ghost" onclick="exportRecordsCSV()">📤 匯出 CSV</button>
@@ -4046,6 +4207,33 @@ th[data-sort]:hover{color:var(--accent);}
     </div>
     <div id="vstartPreview" style="font-size:.82rem;color:var(--muted);margin-bottom:8px"></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('vstartModal')">取消</button><button class="btn btn-primary" onclick="runVirtualStart()">執行</button></div>
+  </div>
+</div>
+
+<!-- 補登打卡記錄 Modal：手機App故障、沒訊號、或選手漏掃時，讓後台人員手動補一筆記錄 -->
+<div id="addRecordModal" class="modal-overlay">
+  <div class="modal" style="width:480px">
+    <div class="modal-title" id="addRecordModalTitle">補登打卡記錄</div>
+    <div class="csv-hint">給掃描App故障、現場沒訊號、或選手漏掃時的人工備援用——工作人員先用紙本記下編號跟時間，賽後再到這裡手動補登。</div>
+    <div class="input-group">
+      <label>搜尋選手（編號／ID／姓名）</label>
+      <input id="arSearchKw" type="text" class="input" placeholder="輸入編號、ID或姓名..." oninput="searchRunnerForRecord()">
+      <div id="arSearchResults" style="max-height:160px;overflow-y:auto;margin-top:6px"></div>
+    </div>
+    <div id="arSelectedRunner" style="display:none;margin-bottom:12px;padding:8px;background:var(--surface2);border-radius:8px;font-size:.85rem"></div>
+    <div class="input-group">
+      <label>站點 *</label>
+      <select id="arStation" class="input"><option value="">請先選擇選手...</option></select>
+    </div>
+    <div class="input-group">
+      <label>打卡時間 *</label>
+      <input id="arTime" type="datetime-local" class="input">
+    </div>
+    <div class="input-group">
+      <label>備註（存進「裝置名稱」欄位，方便之後追蹤這筆是誰、為什麼手動補登的）</label>
+      <input id="arDeviceName" type="text" class="input" placeholder="例：後台手動補登-王小明">
+    </div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('addRecordModal')">取消</button><button class="btn btn-primary" id="addRecordSaveBtn" onclick="saveManualRecord()">儲存</button></div>
   </div>
 </div>
 
