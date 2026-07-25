@@ -50,6 +50,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .about-row .about-value a{color:var(--accent);text-decoration:underline;}
 .about-divider{height:1px;background:var(--border);margin:14px 0;}
 </style>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -86,6 +87,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js";
 import { getFirestore, collection, doc, getDoc, getDocs, updateDoc, query, orderBy, where, serverTimestamp, runTransaction, deleteField } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
@@ -99,6 +101,12 @@ const firebaseConfig = {
   appId: "1:19800079371:web:157af22aa9f1533387db0e"
 };
 const app = initializeApp(firebaseConfig);
+// App Check：跟選手報名頁用同一組 reCAPTCHA v3 網站金鑰即可，
+// 換成 Firebase Console→App Check 註冊應用程式拿到的金鑰。
+initializeAppCheck(app, {
+  provider: new ReCaptchaV3Provider('6LeH82QtAAAAANl6-GvxdulgCoaBj1GoyKtfqSTR'),
+  isTokenAutoRefreshEnabled: true
+});
 const db = getFirestore(app);
 const auth = getAuth(app);
 // Cloud Functions（工作人員報名/查改的伺服器端處理，部署在 asia-east1）
@@ -333,10 +341,15 @@ async function selectSignupEvent(eventId,keepWrapper){
       formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input">'+descHtml+'</div>';
     }
   });
+  formHtml+='<div class="cf-turnstile" data-sitekey="0x4AAAAAAD9m_aLTaCTI6XIu" data-callback="onTurnstileToken" style="margin:12px 0;display:flex;justify-content:center"></div>';
   formHtml+='<button class="btn btn-primary btn-full" onclick="submitSignup()">送出報名</button></div>';
   if(keepWrapper){document.getElementById('signupForm').innerHTML=formHtml;}
   else{document.getElementById('signupContent').innerHTML=formHtml;}
 }
+
+// Turnstile 的 token 是一次性的，用 callback 追蹤目前這個「還沒用過」的 token
+let currentTurnstileToken='';
+window.onTurnstileToken=function(token){ currentTurnstileToken=token; };
 
 window.submitSignup=async function(){
   const eventId=curSignupEvent.id;
@@ -388,8 +401,9 @@ window.submitSignup=async function(){
     // 報名改走 Cloud Function（staffAction）：工作人員個資已從公開可讀的
     // 資料庫下架，伺服器端以「身分證當文件ID + transaction 不存在才寫入」
     // 防重複（與原本前端 transaction 的行為一致），並做欄位驗證。
+    if(!currentTurnstileToken){showToast('請稍候，人機驗證還在進行中，請幾秒後再試一次','error');btn.textContent='送出報名';btn.disabled=false;return;}
     const res=(await httpsCallable(functions,'staffAction')({
-      eventId,action:'signup',idNumber,
+      eventId,action:'signup',idNumber,turnstileToken:currentTurnstileToken,
       profile:{name,gender,birthday,phone,email,note},customData
     })).data;
     const reactivated=res.status==='reactivated';
@@ -403,6 +417,8 @@ window.submitSignup=async function(){
       +'<div class="csv-hint" style="margin-top:16px;text-align:left">如需查詢 / 修改，請至「查詢報名／修改」分頁輸入身分證字號查詢 / 修改。</div>'
       +'</div>';
   }catch(e){
+    currentTurnstileToken='';
+    if(typeof turnstile!=='undefined')turnstile.reset();
     if((e.message||'').includes('DUP_SIGNUP')||e.code==='functions/already-exists'){showToast('您已報名過此賽事','error');btn.textContent='送出報名';btn.disabled=false;return;}
     showToast('報名失敗：'+e.message,'error');btn.textContent='送出報名';btn.disabled=false;
   }

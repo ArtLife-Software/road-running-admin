@@ -98,6 +98,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   @page{size:landscape;margin:0;}
 }
 </style>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 
@@ -160,6 +161,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js";
 import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, query, orderBy, where, serverTimestamp, writeBatch, deleteField, runTransaction, getCountFromServer } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
@@ -173,6 +175,14 @@ const firebaseConfig = {
   appId: "1:19800079371:web:157af22aa9f1533387db0e"
 };
 const app = initializeApp(firebaseConfig);
+// App Check：確保呼叫Cloud Function的請求真的是從這個網頁發出的，擋掉繞過網頁畫面、
+// 直接寫程式呼叫API的機器人。TURNSTILE_SITE_KEY_PLACEHOLDER 換成 Firebase Console
+// →App Check→註冊應用程式(reCAPTCHA v3提供者)拿到的網站金鑰，換好之前這段不會生效
+// （reCAPTCHA v3驗證會失敗，但因為後端 enforceAppCheck 預設是 false，不影響報名功能）。
+initializeAppCheck(app, {
+  provider: new ReCaptchaV3Provider('6LeH82QtAAAAANl6-GvxdulgCoaBj1GoyKtfqSTR'),
+  isTokenAutoRefreshEnabled: true
+});
 const db = getFirestore(app);
 const auth = getAuth(app);
 // Cloud Functions（報名交易處理部署在 asia-east1 台灣區域）
@@ -557,6 +567,10 @@ async function selectSignupEvent(eventId, keepWrapper){
     +'</div>'
     +'</div>'
     +'</div>';
+  // Cloudflare Turnstile 人機驗證：TURNSTILE_SITE_KEY_PLACEHOLDER 換成 Cloudflare Dashboard
+  // 申請到的網站金鑰，換好之前這個元件會顯示錯誤圖示，但因為後端還沒有真的申請/設定
+  // secret key，暫時不影響報名功能（後端目前這段還沒部署到會擋人的狀態）。
+  formHtml+='<div class="cf-turnstile" data-sitekey="0x4AAAAAAD9m_aLTaCTI6XIu" data-callback="onTurnstileToken" style="margin:12px 0;display:flex;justify-content:center"></div>';
   formHtml+='<button class="btn btn-primary btn-full" onclick="submitSignup()">送出報名</button>';
   formHtml+='</div>';
 
@@ -669,6 +683,20 @@ window.checkBibAvailable=async function(){
   }
 }
 
+// Turnstile 的 token 是一次性的，用過一次就失效；用 callback 追蹤目前這個「還沒用過」的
+// token，「找到相似選手需要二次確認」重新送出時，要先 reset 拿一個新的 token 再送。
+let currentTurnstileToken='';
+window.onTurnstileToken=function(token){ currentTurnstileToken=token; };
+function waitForFreshTurnstileToken(timeoutMs=5000){
+  return new Promise(resolve=>{
+    const start=Date.now();
+    (function check(){
+      if(currentTurnstileToken){resolve(currentTurnstileToken);return;}
+      if(Date.now()-start>timeoutMs){resolve('');return;}
+      setTimeout(check,100);
+    })();
+  });
+}
 window.submitSignup=async function(){
   const eventId=curSignupEvent.id;
   const group=document.getElementById('suGroup').value;
@@ -810,11 +838,13 @@ window.submitSignup=async function(){
     //   - 重複報名檢查、流水號與號碼配發（不會撞號）
     // 上面的前端檢查只是使用體驗的預檢，把關以伺服器為準。
     // ══════════════════════════════════════════════════════════
+    if(!currentTurnstileToken){showToast('請稍候，人機驗證還在進行中，請幾秒後再試一次','error');btn.textContent='送出報名';btn.disabled=false;return;}
     const runnerSignupFn=httpsCallable(functions,'runnerSignup');
     const payload={
       eventId,groupId:group,name,gender,birthday,phone,email,idNumber,note,customData,
       inviteCode:document.getElementById('suInviteCode')?.value.trim()||'',
       customBib:customBib||'',
+      turnstileToken:currentTurnstileToken,
       parental:(parentalDataForSet.parentalConsentAgreed
         ?{consent:true,parentName:parentalDataForSet.parentName,parentPhone:parentalDataForSet.parentPhone}
         :null),
@@ -869,7 +899,10 @@ window.submitSignup=async function(){
       });
       if(choice==='refill') return;
       btn.textContent='送出中...'; btn.disabled=true;
-      res=(await runnerSignupFn({...payload,matchDecision:choice,matchDocId:res.matchDocId})).data;
+      currentTurnstileToken='';
+      if(typeof turnstile!=='undefined')turnstile.reset();
+      const freshToken=await waitForFreshTurnstileToken();
+      res=(await runnerSignupFn({...payload,turnstileToken:freshToken,matchDecision:choice,matchDocId:res.matchDocId})).data;
       // 極少見：兩次呼叫之間比對對象變了，伺服器要求重新確認
       if(res.status==='needs-confirmation'){
         showToast('資料剛有變動，請再送出一次確認','error');
@@ -888,6 +921,8 @@ window.submitSignup=async function(){
     showSignupSuccess({uniqueId:res.uniqueId,name,gender,group:g?.name||group,bibNumber:res.bibNumber,eventName:curSignupEvent.name,eventDate:curSignupEvent.date});
   }catch(e){
     showToast('報名失敗：'+e.message,'error');
+    currentTurnstileToken='';
+    if(typeof turnstile!=='undefined')turnstile.reset();
     const b=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
     if(b){b.textContent='送出報名';b.disabled=false;}
   }

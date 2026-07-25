@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js";
 import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, where, onSnapshot, serverTimestamp, writeBatch, runTransaction, Timestamp, deleteField } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
@@ -19,6 +20,12 @@ const firebaseConfig = {
   appId: "1:19800079371:web:157af22aa9f1533387db0e"
 };
 const app = initializeApp(firebaseConfig);
+// App Check：跟選手/工作人員報名頁用同一組 reCAPTCHA v3 網站金鑰即可，
+// 換成 Firebase Console→App Check 註冊應用程式拿到的金鑰。
+initializeAppCheck(app, {
+  provider: new ReCaptchaV3Provider('6LeH82QtAAAAANl6-GvxdulgCoaBj1GoyKtfqSTR'),
+  isTokenAutoRefreshEnabled: true
+});
 const db = getFirestore(app);
 const auth = getAuth(app);
 
