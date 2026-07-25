@@ -50,7 +50,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .about-row .about-value a{color:var(--accent);text-decoration:underline;}
 .about-divider{height:1px;background:var(--border);margin:14px 0;}
 </style>
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -341,15 +341,38 @@ async function selectSignupEvent(eventId,keepWrapper){
       formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input">'+descHtml+'</div>';
     }
   });
-  formHtml+='<div class="cf-turnstile" data-sitekey="0x4AAAAAAD9m_aLTaCTI6XIu" data-callback="onTurnstileToken" style="margin:12px 0;display:flex;justify-content:center"></div>';
+  formHtml+='<div id="turnstileContainer" style="margin:12px 0;display:flex;justify-content:center;min-height:65px"></div>';
   formHtml+='<button class="btn btn-primary btn-full" onclick="submitSignup()">送出報名</button></div>';
   if(keepWrapper){document.getElementById('signupForm').innerHTML=formHtml;}
   else{document.getElementById('signupContent').innerHTML=formHtml;}
+  renderTurnstileWidget('turnstileContainer');
 }
 
-// Turnstile 的 token 是一次性的，用 callback 追蹤目前這個「還沒用過」的 token
+// Turnstile 明確渲染：這個表單是動態插入畫面的，Turnstile預設的隱式渲染只在api.js
+// 載入當下掃描一次DOM，掃不到之後才出現的元素，會導致驗證元件永遠卡在初始化、
+// 拿不到token（畫面上就是「一直在驗證」）。改成表單插入DOM後主動呼叫render()。
 let currentTurnstileToken='';
+let turnstileWidgetId=null;
 window.onTurnstileToken=function(token){ currentTurnstileToken=token; };
+function renderTurnstileWidget(containerId){
+  currentTurnstileToken='';
+  turnstileWidgetId=null;
+  const tryRender=()=>{
+    const el=document.getElementById(containerId);
+    if(!el)return;
+    if(typeof turnstile==='undefined'){ setTimeout(tryRender,200); return; }
+    el.innerHTML='';
+    turnstileWidgetId=turnstile.render('#'+containerId,{
+      sitekey:'TURNSTILE_SITE_KEY_PLACEHOLDER',
+      callback:onTurnstileToken,
+    });
+  };
+  tryRender();
+}
+function resetTurnstileWidget(){
+  currentTurnstileToken='';
+  if(typeof turnstile!=='undefined'&&turnstileWidgetId!==null) turnstile.reset(turnstileWidgetId);
+}
 
 window.submitSignup=async function(){
   const eventId=curSignupEvent.id;
@@ -417,8 +440,7 @@ window.submitSignup=async function(){
       +'<div class="csv-hint" style="margin-top:16px;text-align:left">如需查詢 / 修改，請至「查詢報名／修改」分頁輸入身分證字號查詢 / 修改。</div>'
       +'</div>';
   }catch(e){
-    currentTurnstileToken='';
-    if(typeof turnstile!=='undefined')turnstile.reset();
+    resetTurnstileWidget();
     if((e.message||'').includes('DUP_SIGNUP')||e.code==='functions/already-exists'){showToast('您已報名過此賽事','error');btn.textContent='送出報名';btn.disabled=false;return;}
     showToast('報名失敗：'+e.message,'error');btn.textContent='送出報名';btn.disabled=false;
   }

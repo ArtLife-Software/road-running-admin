@@ -98,7 +98,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   @page{size:landscape;margin:0;}
 }
 </style>
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body>
 
@@ -567,10 +567,10 @@ async function selectSignupEvent(eventId, keepWrapper){
     +'</div>'
     +'</div>'
     +'</div>';
-  // Cloudflare Turnstile 人機驗證：TURNSTILE_SITE_KEY_PLACEHOLDER 換成 Cloudflare Dashboard
-  // 申請到的網站金鑰，換好之前這個元件會顯示錯誤圖示，但因為後端還沒有真的申請/設定
-  // secret key，暫時不影響報名功能（後端目前這段還沒部署到會擋人的狀態）。
-  formHtml+='<div class="cf-turnstile" data-sitekey="0x4AAAAAAD9m_aLTaCTI6XIu" data-callback="onTurnstileToken" style="margin:12px 0;display:flex;justify-content:center"></div>';
+  // Cloudflare Turnstile 人機驗證：改用「明確渲染」，因為這個表單是動態插入畫面的，
+  // Turnstile預設的隱式渲染只在api.js載入當下掃描一次DOM，掃不到之後才出現的元素，
+  // 會導致驗證元件永遠卡在初始化、拿不到token（畫面上就是「一直在驗證」）。
+  formHtml+='<div id="turnstileContainer" style="margin:12px 0;display:flex;justify-content:center;min-height:65px"></div>';
   formHtml+='<button class="btn btn-primary btn-full" onclick="submitSignup()">送出報名</button>';
   formHtml+='</div>';
 
@@ -579,6 +579,7 @@ async function selectSignupEvent(eventId, keepWrapper){
   }else{
     document.getElementById('signupContent').innerHTML=formHtml;
   }
+  renderTurnstileWidget('turnstileContainer');
   // 表單建好後立即初始化：重設上一筆報名殘留的家長旗標，並依目前
   // 預選的組別顯示限制提示／判斷家長區塊（不用等使用者動到欄位）
   curSignupNeedsParental=false;
@@ -683,11 +684,31 @@ window.checkBibAvailable=async function(){
   }
 }
 
-// Turnstile 的 token 是一次性的，用過一次就失效；用 callback 追蹤目前這個「還沒用過」的
-// token，「找到相似選手需要二次確認」重新送出時，要先 reset 拿一個新的 token 再送。
+// Turnstile 明確渲染：等api.js真的載入完成才呼叫render()，並記住widgetId供之後reset用。
+// 每次報名表單重新建立（換賽事/換組別重繪）都要重新render一次，因為舊的container已經被換掉了。
 let currentTurnstileToken='';
+let turnstileWidgetId=null;
 window.onTurnstileToken=function(token){ currentTurnstileToken=token; };
-function waitForFreshTurnstileToken(timeoutMs=5000){
+function renderTurnstileWidget(containerId){
+  currentTurnstileToken='';
+  turnstileWidgetId=null;
+  const tryRender=()=>{
+    const el=document.getElementById(containerId);
+    if(!el)return; // 使用者已經切換到別的畫面，這個container不存在了，不用再等
+    if(typeof turnstile==='undefined'){ setTimeout(tryRender,200); return; }
+    el.innerHTML='';
+    turnstileWidgetId=turnstile.render('#'+containerId,{
+      sitekey:'TURNSTILE_SITE_KEY_PLACEHOLDER',
+      callback:onTurnstileToken,
+    });
+  };
+  tryRender();
+}
+function resetTurnstileWidget(){
+  currentTurnstileToken='';
+  if(typeof turnstile!=='undefined'&&turnstileWidgetId!==null) turnstile.reset(turnstileWidgetId);
+}
+function waitForFreshTurnstileToken(timeoutMs=8000){
   return new Promise(resolve=>{
     const start=Date.now();
     (function check(){
@@ -899,8 +920,7 @@ window.submitSignup=async function(){
       });
       if(choice==='refill') return;
       btn.textContent='送出中...'; btn.disabled=true;
-      currentTurnstileToken='';
-      if(typeof turnstile!=='undefined')turnstile.reset();
+      resetTurnstileWidget();
       const freshToken=await waitForFreshTurnstileToken();
       res=(await runnerSignupFn({...payload,turnstileToken:freshToken,matchDecision:choice,matchDocId:res.matchDocId})).data;
       // 極少見：兩次呼叫之間比對對象變了，伺服器要求重新確認
@@ -921,8 +941,7 @@ window.submitSignup=async function(){
     showSignupSuccess({uniqueId:res.uniqueId,name,gender,group:g?.name||group,bibNumber:res.bibNumber,eventName:curSignupEvent.name,eventDate:curSignupEvent.date});
   }catch(e){
     showToast('報名失敗：'+e.message,'error');
-    currentTurnstileToken='';
-    if(typeof turnstile!=='undefined')turnstile.reset();
+    resetTurnstileWidget();
     const b=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
     if(b){b.textContent='送出報名';b.disabled=false;}
   }
