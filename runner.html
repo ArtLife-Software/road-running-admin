@@ -956,10 +956,13 @@ function showSignupSuccess(info){
   html+='<div class="runner-card-header" style="justify-content:center">';
   html+='<strong style="font-size:1.05rem">'+esc(info.name)+'</strong>';
   html+='<span class="badge">'+esc(info.group)+'</span>';
-  html+='<span class="badge">編號 '+esc(info.bibNumber)+'</span>';
+  html+='</div>';
+  html+='<div style="margin:14px 0">';
+  html+='<div style="font-size:.75rem;color:var(--muted);margin-bottom:2px">您的報名編號</div>';
+  html+='<div style="font-size:2.4rem;font-weight:900;color:var(--green);letter-spacing:1px;line-height:1.2">'+esc(info.bibNumber)+'</div>';
   html+='</div>';
   html+='<div id="signupQR" class="qr-box"></div>';
-  html+='<div class="csv-hint" style="text-align:left;margin-top:16px">請截圖保存此 QR Code，比賽當天報到時使用。或記得編號，於「查詢報名／修改」分頁重新查詢。</div>';
+  html+='<div class="csv-hint" style="text-align:left;margin-top:16px;color:var(--text)">請截圖保存此 QR Code，比賽當天報到時使用。或記得編號，於「查詢報名／修改」分頁重新查詢。</div>';
   html+='</div>';
   content.innerHTML=html;
   const qrText=[info.uniqueId,info.bibNumber].join('|');
