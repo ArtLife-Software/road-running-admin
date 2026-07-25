@@ -530,9 +530,10 @@ async function selectSignupEvent(eventId, keepWrapper){
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     formHtml+='<div id="su_cf_row_'+f.id+'">';
     if(f.type==='select'){
-      formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>';
+      formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"'+(f.allowOther?' onchange="document.getElementById(\''+id+'_other\').style.display=this.value===\'__other__\'?\'block\':\'none\'"':'')+'><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{formHtml+='<option value="'+esc(o)+'">'+esc(o)+'</option>';});
-      formHtml+='</select>'+descHtml+'</div>';
+      if(f.allowOther)formHtml+='<option value="__other__">其他（請輸入）</option>';
+      formHtml+='</select>'+(f.allowOther?'<input type="text" id="'+id+'_other" class="input" style="margin-top:6px;display:none" placeholder="請輸入...">':'')+descHtml+'</div>';
     } else if(f.type==='checkbox'){
       formHtml+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'"> '+esc(f.label)+reqMark+'</label>'+descHtml+'</div>';
     } else {
@@ -748,7 +749,10 @@ window.submitSignup=async function(){
       customData[f.id]=el.checked;
     }
     else{
-      const v=el.value.trim();
+      let v=el.value.trim();
+      if(f.type==='select'&&f.allowOther&&v==='__other__'){
+        v=document.getElementById('su_cf_'+f.id+'_other')?.value.trim()||'';
+      }
       if(f.required&&!v){showToast('「'+f.label+'」為必填','error');return;}
       customData[f.id]=v;
     }
@@ -1204,9 +1208,11 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     html+='<div id="'+cardId+'_ecf_row_'+f.id+'">';
     if(f.type==='select'){
-      html+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+fid+'" class="input"><option value="">請選擇...</option>';
+      const isOtherVal=f.allowOther&&customData[f.id]!==undefined&&customData[f.id]!==''&&!(f.options||[]).includes(customData[f.id]);
+      html+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+fid+'" class="input"'+(f.allowOther?' onchange="document.getElementById(\''+fid+'_other\').style.display=this.value===\'__other__\'?\'block\':\'none\'"':'')+'><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{html+='<option value="'+esc(o)+'"'+(customData[f.id]===o?' selected':'')+'>'+esc(o)+'</option>';});
-      html+='</select>'+descHtml+'</div>';
+      if(f.allowOther)html+='<option value="__other__"'+(isOtherVal?' selected':'')+'>其他（請輸入）</option>';
+      html+='</select>'+(f.allowOther?'<input type="text" id="'+fid+'_other" class="input" style="margin-top:6px;display:'+(isOtherVal?'block':'none')+'" placeholder="請輸入..." value="'+esc(isOtherVal?customData[f.id]:'')+'">':'')+descHtml+'</div>';
     }else if(f.type==='checkbox'){
       html+='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+fid+'" '+(customData[f.id]?'checked':'')+'> '+esc(f.label)+reqMark+'</label>'+descHtml+'</div>';
     }else{
@@ -1305,7 +1311,14 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
       if(f.required&&!el.checked){showToast('「'+f.label+'」為必填，請勾選','error');return;}
       customData[f.id]=el.checked;
     }
-    else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
+    else{
+      let v=el.value.trim();
+      if(f.type==='select'&&f.allowOther&&v==='__other__'){
+        v=document.getElementById(cardId+'_ecf_'+f.id+'_other')?.value.trim()||'';
+      }
+      if(f.required&&!v){showToast('「'+f.label+'」為必填','error');return;}
+      customData[f.id]=v;
+    }
   }
   // 家長陪同欄位：儲存前依「目前表單的組別＋生日」即時重算是否需要
   const editBox=document.getElementById(cardId+'_edit');

@@ -873,7 +873,7 @@ async function loadCustomFields(){
   list.innerHTML=fields.map((f,i)=>{
     const typeLabel={text:'文字',select:'下拉選單',checkbox:'是／否'}[f.type]||f.type;
     let detail=typeLabel+(f.required?'　必填':'　選填');
-    if(f.type==='select')detail+='　選項：'+esc((f.options||[]).join('、'));
+    if(f.type==='select')detail+='　選項：'+esc((f.options||[]).join('、'))+(f.allowOther?'　（可輸入其他）':'');
     if(curCFType==='runner')detail+='　適用組別：'+((f.groups&&f.groups.length)?esc(f.groups.map(resolveCFGroupLabel).join('、')):'全部組別');
     if(f.description)detail+='<br>說明：'+esc(f.description);
     return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">'
@@ -913,6 +913,7 @@ window.showAddCustomField=function(){
   document.getElementById('cfDescription').value='';
   document.getElementById('cfType').value='text';
   document.getElementById('cfRequired').checked=false;
+  document.getElementById('cfAllowOther').checked=false;
   document.getElementById('cfOptions').value='';
   onCfTypeChange();
   if(curCFType==='runner')renderCfGroupsCheckboxes([]);
@@ -929,13 +930,16 @@ window.editCustomField=async function(i){
   document.getElementById('cfDescription').value=f.description||'';
   document.getElementById('cfType').value=f.type||'text';
   document.getElementById('cfRequired').checked=!!f.required;
+  document.getElementById('cfAllowOther').checked=!!f.allowOther;
   document.getElementById('cfOptions').value=(f.options||[]).join('\n');
   onCfTypeChange();
   if(curCFType==='runner')renderCfGroupsCheckboxes(f.groups||[]);
   document.getElementById('cfForm').style.display='block';
 }
 window.onCfTypeChange=function(){
-  document.getElementById('cfOptionsRow').style.display=document.getElementById('cfType').value==='select'?'block':'none';
+  const isSelect=document.getElementById('cfType').value==='select';
+  document.getElementById('cfOptionsRow').style.display=isSelect?'block':'none';
+  document.getElementById('cfAllowOtherRow').style.display=isSelect?'block':'none';
   const isCheckbox=document.getElementById('cfType').value==='checkbox';
   document.getElementById('cfRequiredLabel').textContent=isCheckbox?'必填（必須勾選才能送出）':'必填';
 }
@@ -959,6 +963,7 @@ window.saveCustomField=async function(){
     const options=document.getElementById('cfOptions').value.split('\n').map(s=>s.trim()).filter(Boolean);
     if(!options.length){showToast('下拉選單請至少輸入一個選項','error');return;}
     field.options=options;
+    field.allowOther=document.getElementById('cfAllowOther').checked;
   }
   const fieldKey=curCFType==='staff'?'staffCustomFields':'customFields';
   const evDoc=await getDoc(doc(db,'events',curCFEvId));
@@ -1361,8 +1366,12 @@ function renderEntryCustomFields(values){
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     let inner;
     if(f.type==='select'){
+      const isOtherVal=f.allowOther&&values[f.id]!==undefined&&values[f.id]!==''&&!(f.options||[]).includes(values[f.id]);
       const opts=(f.options||[]).map(o=>'<option value="'+esc(o)+'"'+(values[f.id]===o?' selected':'')+'>'+esc(o)+'</option>').join('');
-      inner='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select>'+descHtml+'</div>';
+      const otherOpt=f.allowOther?'<option value="__other__"'+(isOtherVal?' selected':'')+'>其他（請輸入）</option>':'';
+      const otherToggle=f.allowOther?' onchange="document.getElementById(\''+id+'_other\').style.display=this.value===\'__other__\'?\'block\':\'none\'"':'';
+      const otherInput=f.allowOther?'<input type="text" id="'+id+'_other" class="input" style="margin-top:6px;display:'+(isOtherVal?'block':'none')+'" placeholder="請輸入..." value="'+esc(isOtherVal?values[f.id]:'')+'">':'';
+      inner='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"'+otherToggle+'><option value="">請選擇...</option>'+opts+otherOpt+'</select>'+otherInput+descHtml+'</div>';
     } else if(f.type==='checkbox'){
       inner='<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+esc(f.label)+reqMark+'</label>'+descHtml+'</div>';
     } else {
@@ -1391,7 +1400,12 @@ function collectEntryCustomData(){
     if(!applicable)continue; // 不適用目前組別：不收集，等同清除
     const el=document.getElementById('cfInput_'+f.id);
     if(!el)continue;
-    data[f.id]=f.type==='checkbox'?el.checked:el.value.trim();
+    if(f.type==='checkbox'){data[f.id]=el.checked;continue;}
+    let v=el.value.trim();
+    if(f.type==='select'&&f.allowOther&&v==='__other__'){
+      v=document.getElementById('cfInput_'+f.id+'_other')?.value.trim()||'';
+    }
+    data[f.id]=v;
   }
   return data;
 }
@@ -1403,8 +1417,12 @@ function validateEntryCustomFields(){
     if(!applicable)continue; // 不適用目前組別的欄位不需要驗證必填
     const el=document.getElementById('cfInput_'+f.id);
     if(!el)continue;
-    if(f.type==='checkbox'){ if(!el.checked)return f.label; }
-    else if(!el.value.trim())return f.label;
+    if(f.type==='checkbox'){ if(!el.checked)return f.label; continue; }
+    let v=el.value.trim();
+    if(f.type==='select'&&f.allowOther&&v==='__other__'){
+      v=document.getElementById('cfInput_'+f.id+'_other')?.value.trim()||'';
+    }
+    if(!v)return f.label;
   }
   return null;
 }
@@ -2800,8 +2818,12 @@ function renderStaffCustomFields(values){
     const reqMark=f.required?' *':'';
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     if(f.type==='select'){
+      const isOtherVal=f.allowOther&&values[f.id]!==undefined&&values[f.id]!==''&&!(f.options||[]).includes(values[f.id]);
       const opts=(f.options||[]).map(o=>'<option value="'+esc(o)+'"'+(values[f.id]===o?' selected':'')+'>'+esc(o)+'</option>').join('');
-      return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"><option value="">請選擇...</option>'+opts+'</select>'+descHtml+'</div>';
+      const otherOpt=f.allowOther?'<option value="__other__"'+(isOtherVal?' selected':'')+'>其他（請輸入）</option>':'';
+      const otherToggle=f.allowOther?' onchange="document.getElementById(\''+id+'_other\').style.display=this.value===\'__other__\'?\'block\':\'none\'"':'';
+      const otherInput=f.allowOther?'<input type="text" id="'+id+'_other" class="input" style="margin-top:6px;display:'+(isOtherVal?'block':'none')+'" placeholder="請輸入..." value="'+esc(isOtherVal?values[f.id]:'')+'">':'';
+      return '<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"'+otherToggle+'><option value="">請選擇...</option>'+opts+otherOpt+'</select>'+otherInput+descHtml+'</div>';
     } else if(f.type==='checkbox'){
       return '<div class="input-group"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="'+id+'" '+(values[f.id]?'checked':'')+'> '+esc(f.label)+reqMark+'</label>'+descHtml+'</div>';
     } else {
@@ -2889,8 +2911,14 @@ window.saveStaff=async function(){
     if(f.type==='checkbox'){
       if(f.required&&!el.checked){showToast('「'+f.label+'」為必填，請勾選','error');return;}
       customData[f.id]=el.checked;
+      continue;
     }
-    else{if(f.required&&!el.value.trim()){showToast('「'+f.label+'」為必填','error');return;}customData[f.id]=el.value.trim();}
+    let v=el.value.trim();
+    if(f.type==='select'&&f.allowOther&&v==='__other__'){
+      v=document.getElementById('scfInput_'+f.id+'_other')?.value.trim()||'';
+    }
+    if(f.required&&!v){showToast('「'+f.label+'」為必填','error');return;}
+    customData[f.id]=v;
   }
   const runnerData={name,gender,birthday,phone,email,idNumber,note};
   try{
@@ -3882,6 +3910,7 @@ th[data-sort]:hover{color:var(--accent);}
         <label>選項（每行一個）</label>
         <textarea id="cfOptions" class="input" rows="3" placeholder="S&#10;M&#10;L&#10;XL"></textarea>
       </div>
+      <div class="input-group" id="cfAllowOtherRow" style="display:none"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="cfAllowOther"> 允許選手輸入其他選項（下拉選單最後會多一個「其他」，選了會出現文字輸入框讓填表人自行輸入）</label></div>
       <div class="input-group" id="cfRequiredRow"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="cfRequired"> <span id="cfRequiredLabel">必填</span></label></div>
       <div class="input-group" id="cfGroupsRow">
         <label>適用組別（不勾選＝全部組別皆顯示）</label>
