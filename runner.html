@@ -176,9 +176,8 @@ const firebaseConfig = {
 };
 const app = initializeApp(firebaseConfig);
 // App Check：確保呼叫Cloud Function的請求真的是從這個網頁發出的，擋掉繞過網頁畫面、
-// 直接寫程式呼叫API的機器人。TURNSTILE_SITE_KEY_PLACEHOLDER 換成 Firebase Console
-// →App Check→註冊應用程式(reCAPTCHA v3提供者)拿到的網站金鑰，換好之前這段不會生效
-// （reCAPTCHA v3驗證會失敗，但因為後端 enforceAppCheck 預設是 false，不影響報名功能）。
+// 直接寫程式呼叫API的機器人。網站金鑰已換成 Firebase Console→App Check→
+// 註冊應用程式(reCAPTCHA v3提供者)拿到的真實金鑰。
 initializeAppCheck(app, {
   provider: new ReCaptchaV3Provider('6LeH82QtAAAAANl6-GvxdulgCoaBj1GoyKtfqSTR'),
   isTokenAutoRefreshEnabled: true
