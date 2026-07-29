@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2026蔬活盃路跑暨市集活動 | 天淵綠森林協會</title>
+<meta name="description" content="2026蔬活盃路跑暨市集活動，台中麗水海堤自行車道，2026/11/29 週日登場，5K親子健走、11K NFC晶片計時。">
+<link rel="icon" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Noto+Sans+TC:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:#0a2c45;
+    --navy-deep:#071e30;
+    --coral:#c8283f;
+    --coral-dark:#a11f33;
+    --teal:#17a889;
+    --teal-dark:#0e8a70;
+    --orange:#f0a020;
+    --sky:#bfe3f2;
+    --sand:#fdf8ef;
+    --sand-2:#f7ede1;
+    --line:rgba(10,44,69,0.12);
+    --shadow: 0 12px 32px rgba(10,44,69,0.14);
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    font-family:"Noto Sans TC", sans-serif;
+    background:var(--sand);
+    color:var(--navy);
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,.display{
+    font-family:"Baloo 2","Noto Sans TC",sans-serif;
+    font-weight:800;
+    letter-spacing:0.5px;
+  }
+  a{color:inherit;}
+  img{max-width:100%;display:block;}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 24px;}
+
+  /* ---------- NAV ---------- */
+  .topnav{
+    position:sticky;top:0;z-index:50;
+    background:rgba(253,248,239,0.9);
+    backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);
+  }
+  .topnav .wrap{display:flex;align-items:center;justify-content:space-between;padding:10px 24px;}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:1.05rem;color:var(--navy);text-decoration:none;}
+  .brand img{height:34px;width:auto;}
+  .navlinks{display:flex;gap:22px;font-size:0.92rem;font-weight:600;}
+  .navlinks a{text-decoration:none;color:var(--navy);opacity:0.75;transition:opacity .2s;}
+  .navlinks a:hover{opacity:1;}
+  .nav-cta{
+    background:var(--coral);color:#fff;padding:8px 18px;border-radius:100px;
+    font-weight:700;font-size:0.9rem;text-decoration:none;white-space:nowrap;
+    box-shadow:0 6px 16px rgba(200,40,63,0.35);
+  }
+  @media (max-width:720px){ .navlinks{display:none;} }
+
+  /* ---------- HERO ---------- */
+  .hero{
+    position:relative;
+    color:#fff;
+    overflow:hidden;
+    padding:70px 0 0;
+    background:linear-gradient(180deg, var(--navy) 0%, var(--navy) 55%, var(--navy-deep) 100%);
+  }
+  .hero::before{
+    content:"";position:absolute;inset:0;
+    background:
+      radial-gradient(ellipse 900px 500px at 15% 0%, rgba(191,227,242,0.18), transparent 60%),
+      radial-gradient(ellipse 700px 500px at 100% 10%, rgba(200,40,63,0.22), transparent 60%);
+    pointer-events:none;
+  }
+  .hero-inner{
+    position:relative;z-index:2;
+    display:grid;grid-template-columns:1.1fr 0.9fr;gap:40px;
+    align-items:center;
+    padding-bottom:50px;
+  }
+  @media (max-width:860px){ .hero-inner{grid-template-columns:1fr;} }
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:8px;
+    background:rgba(255,255,255,0.12);
+    border:1px solid rgba(255,255,255,0.25);
+    padding:6px 14px;border-radius:100px;
+    font-size:0.82rem;font-weight:600;letter-spacing:1px;
+    margin-bottom:18px;
+  }
+  .eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--orange);}
+  .hero h1{
+    font-size:clamp(2.2rem,5vw,3.4rem);
+    line-height:1.15;margin:0 0 8px;
+    color:#fff;
+  }
+  .hero h1 span{color:var(--coral);-webkit-text-stroke:0.5px rgba(255,255,255,0.4);}
+  .hero .sub-en{
+    font-size:1.05rem;font-style:italic;color:var(--sky);
+    margin:0 0 22px;font-weight:500;
+  }
+  .hero-meta{display:flex;flex-wrap:wrap;gap:14px 26px;margin:26px 0 30px;}
+  .hero-meta .item{display:flex;gap:10px;align-items:flex-start;font-size:0.95rem;}
+  .hero-meta .icon{
+    width:34px;height:34px;border-radius:10px;flex:none;
+    background:rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;
+    font-size:1.05rem;
+  }
+  .hero-meta b{display:block;font-size:0.75rem;opacity:0.65;font-weight:600;letter-spacing:0.5px;}
+  .hero-btns{display:flex;flex-wrap:wrap;gap:14px;}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:14px 26px;border-radius:100px;font-weight:700;font-size:0.98rem;
+    text-decoration:none;transition:transform .2s, box-shadow .2s;
+  }
+  .btn:hover{transform:translateY(-2px);}
+  .btn-primary{background:var(--coral);color:#fff;box-shadow:0 10px 24px rgba(200,40,63,0.4);}
+  .btn-ghost{background:rgba(255,255,255,0.08);color:#fff;border:1.5px solid rgba(255,255,255,0.4);}
+
+  .hero-art{position:relative;}
+  .hero-photo{
+    border-radius:22px;overflow:hidden;box-shadow:0 24px 50px rgba(0,0,0,0.4);
+    border:4px solid rgba(255,255,255,0.15);
+  }
+  .hero-photo img{width:100%;height:340px;object-fit:cover;}
+  .hero-badge{
+    position:absolute;bottom:-22px;left:-22px;
+    background:var(--teal);color:#fff;border-radius:16px;
+    padding:14px 18px;box-shadow:var(--shadow);
+    display:flex;align-items:center;gap:12px;
+    border:3px solid var(--sand);
+  }
+  .hero-badge img{height:40px;width:auto;filter:brightness(0) invert(1);}
+  .hero-badge .num{font-family:"Baloo 2";font-weight:800;font-size:1.3rem;line-height:1;}
+  .hero-badge .lbl{font-size:0.72rem;opacity:0.9;}
+  @media (max-width:860px){ .hero-badge{position:static;margin-top:-20px;display:inline-flex;} }
+
+  .wave{display:block;width:100%;line-height:0;margin-top:40px;}
+
+  /* ---------- COUNTDOWN ---------- */
+  .countdown-section{
+    background:var(--navy-deep);color:#fff;padding:34px 0 42px;position:relative;
+  }
+  .cd-head{text-align:center;margin-bottom:22px;}
+  .cd-head h2{margin:0 0 6px;font-size:1.5rem;color:#fff;}
+  .cd-head p{margin:0;opacity:0.7;font-size:0.92rem;}
+  .cd-grid{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;}
+  .cd-box{
+    background:rgba(255,255,255,0.07);
+    border:1px solid rgba(255,255,255,0.15);
+    border-radius:16px;padding:16px 10px;min-width:88px;text-align:center;
+  }
+  .cd-box .val{
+    font-family:"Baloo 2";font-weight:800;font-size:2.1rem;
+    color:var(--orange);line-height:1;font-variant-numeric:tabular-nums;
+  }
+  .cd-box .lab{font-size:0.75rem;opacity:0.7;margin-top:6px;letter-spacing:1px;}
+  .cd-done{
+    text-align:center;font-size:1.1rem;font-weight:700;color:var(--orange);
+    padding:20px;
+  }
+  .cd-note{text-align:center;margin-top:18px;font-size:0.85rem;opacity:0.6;}
+
+  /* ---------- SECTION GENERIC ---------- */
+  section{padding:64px 0;}
+  .section-head{text-align:center;max-width:640px;margin:0 auto 42px;}
+  .section-head .kicker{
+    color:var(--coral);font-weight:700;font-size:0.85rem;letter-spacing:2px;
+    text-transform:uppercase;margin-bottom:8px;display:block;
+  }
+  .section-head h2{font-size:clamp(1.6rem,3.2vw,2.1rem);margin:0 0 10px;color:var(--navy);}
+  .section-head p{color:#4b5f70;margin:0;}
+
+  /* ---------- CATEGORIES ---------- */
+  .cat-grid{display:grid;grid-template-columns:1fr 1fr;gap:26px;}
+  @media (max-width:720px){ .cat-grid{grid-template-columns:1fr;} }
+  .cat-card{
+    border-radius:22px;padding:32px 28px;color:#fff;position:relative;overflow:hidden;
+    box-shadow:var(--shadow);
+  }
+  .cat-card.k5{background:linear-gradient(150deg,#1fbb95,#0e7a63);}
+  .cat-card.k11{background:linear-gradient(150deg,#f5ac2e,#c9760f);}
+  .cat-card .tag{
+    display:inline-block;background:rgba(255,255,255,0.22);padding:4px 14px;border-radius:100px;
+    font-size:0.8rem;font-weight:700;margin-bottom:14px;
+  }
+  .cat-card h3{font-size:2.2rem;margin:0 0 6px;color:#fff;}
+  .cat-card .cat-name{font-size:1.05rem;font-weight:700;margin-bottom:16px;opacity:0.95;}
+  .cat-card .price{font-family:"Baloo 2";font-size:1.6rem;font-weight:800;margin-bottom:16px;}
+  .cat-card .price small{font-size:0.85rem;font-weight:600;opacity:0.85;}
+  .cat-card ul{margin:0;padding-left:20px;font-size:0.92rem;opacity:0.95;}
+  .cat-card ul li{margin-bottom:6px;}
+  .cat-card .deco{position:absolute;right:-30px;bottom:-30px;font-size:8rem;opacity:0.12;line-height:1;}
+
+  /* ---------- TIMELINE ---------- */
+  .tl{max-width:680px;margin:0 auto;}
+  .tl-item{
+    display:grid;grid-template-columns:96px 20px 1fr;gap:0;position:relative;
+  }
+  .tl-time{font-family:"Baloo 2";font-weight:700;color:var(--navy);padding:14px 12px 14px 0;text-align:right;font-size:0.95rem;}
+  .tl-line{position:relative;display:flex;justify-content:center;}
+  .tl-line::before{content:"";position:absolute;top:0;bottom:0;width:2px;background:var(--line);}
+  .tl-item:first-child .tl-line::before{top:20px;}
+  .tl-item:last-child .tl-line::before{bottom:calc(100% - 20px);}
+  .tl-dot{
+    position:relative;z-index:1;width:14px;height:14px;border-radius:50%;
+    background:var(--coral);margin-top:16px;border:3px solid var(--sand);
+  }
+  .tl-content{padding:12px 0 12px 20px;}
+  .tl-content .t{font-weight:700;color:var(--navy);margin-bottom:2px;}
+  .tl-content .p{font-size:0.88rem;color:#5a6d7c;}
+  .tl-item.mkt .tl-dot{background:var(--teal);}
+
+  /* ---------- MAPS ---------- */
+  .map-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;}
+  @media (max-width:800px){ .map-grid{grid-template-columns:1fr;} }
+  .map-card{background:#fff;border-radius:20px;overflow:hidden;box-shadow:var(--shadow);border:1px solid var(--line);}
+  .map-card .map-head{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:16px 20px;
+  }
+  .map-card.k5 .map-head{background:#e7f8f2;}
+  .map-card.k11 .map-head{background:#fdf1de;}
+  .map-card .map-head h4{margin:0;font-size:1.1rem;color:var(--navy);}
+  .map-card .map-head .qr-link{
+    display:flex;align-items:center;gap:8px;font-size:0.8rem;font-weight:700;
+    color:var(--navy);text-decoration:none;opacity:0.75;
+  }
+  .map-card .map-head .qr-link img{width:34px;height:34px;border-radius:6px;border:1px solid var(--line);}
+  .map-card img.shot{width:100%;height:260px;object-fit:cover;}
+  .map-card .map-foot{padding:14px 20px;font-size:0.85rem;color:#5a6d7c;}
+
+  /* ---------- MARKET ---------- */
+  .market-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;}
+  @media (max-width:720px){ .market-grid{grid-template-columns:1fr;} }
+  .market-card{
+    background:var(--sand-2);border-radius:20px;padding:28px;border:1px solid var(--line);
+  }
+  .market-card h4{margin:0 0 8px;font-size:1.15rem;color:var(--navy);}
+  .market-card .time{color:var(--coral);font-weight:700;font-size:0.9rem;margin-bottom:10px;}
+  .market-card p{margin:0;font-size:0.92rem;color:#4b5f70;}
+
+  /* ---------- INFO / QUERY ---------- */
+  .info-band{
+    background:linear-gradient(135deg,var(--navy),var(--navy-deep));
+    color:#fff;border-radius:28px;padding:48px;position:relative;overflow:hidden;
+  }
+  .info-band::after{
+    content:"";position:absolute;right:-60px;top:-60px;width:260px;height:260px;border-radius:50%;
+    background:radial-gradient(circle,rgba(23,168,137,0.35),transparent 70%);
+  }
+  .info-grid{display:grid;grid-template-columns:1.3fr 1fr;gap:36px;position:relative;z-index:1;}
+  @media (max-width:800px){ .info-grid{grid-template-columns:1fr;} }
+  .info-grid h3{color:#fff;font-size:1.5rem;margin:0 0 12px;}
+  .info-grid p{color:rgba(255,255,255,0.75);margin:0 0 22px;font-size:0.95rem;}
+  .info-list{list-style:none;padding:0;margin:0 0 26px;display:grid;gap:10px;}
+  .info-list li{display:flex;gap:10px;font-size:0.9rem;color:rgba(255,255,255,0.9);}
+  .info-list li b{color:var(--orange);}
+  .qr-card{
+    background:#fff;border-radius:18px;padding:20px;text-align:center;
+  }
+  .qr-card img{width:150px;margin:0 auto 10px;}
+  .qr-card p{color:var(--navy);font-weight:700;font-size:0.85rem;margin:0;}
+
+  /* ---------- FAQ / NOTE ---------- */
+  .notice{
+    display:flex;gap:14px;background:#fff4e3;border:1px solid #f3d9a3;
+    border-radius:16px;padding:18px 22px;font-size:0.9rem;color:#7a5a10;align-items:flex-start;
+  }
+
+  footer{
+    background:var(--navy-deep);color:rgba(255,255,255,0.7);padding:44px 0 30px;font-size:0.88rem;
+  }
+  .foot-grid{display:flex;justify-content:space-between;flex-wrap:wrap;gap:20px;align-items:center;}
+  .foot-brand{display:flex;align-items:center;gap:10px;color:#fff;font-weight:700;}
+  .foot-brand img{height:28px;filter:brightness(0) invert(1);opacity:0.9;}
+  footer a{color:rgba(255,255,255,0.75);text-decoration:none;}
+  footer .foot-links{display:flex;gap:18px;flex-wrap:wrap;}
+  .foot-bottom{border-top:1px solid rgba(255,255,255,0.1);margin-top:24px;padding-top:18px;font-size:0.8rem;opacity:0.6;}
+
+  ::selection{background:var(--coral);color:#fff;}
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/logo.png" alt="蔬活盃"> 2026蔬活盃</a>
+    <div class="navlinks">
+      <a href="#categories">組別費用</a>
+      <a href="#schedule">活動流程</a>
+      <a href="#routes">路線圖</a>
+      <a href="#market">市集</a>
+      <a href="#info">報名／查詢</a>
+    </div>
+    <a class="nav-cta" href="https://artlife-software.github.io/road-running-admin/runner.html" target="_blank" rel="noopener">立即報名</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap hero-inner">
+    <div>
+      <span class="eyebrow"><span class="dot"></span> 台中．龍井．麗水海堤自行車道</span>
+      <h1>2026蔬活盃<br>路跑<span>暨市集</span>活動</h1>
+      <p class="sub-en">Veggie Life Cup Road Race &amp; Marketplace</p>
+
+      <div class="hero-meta">
+        <div class="item">
+          <div class="icon">📅</div>
+          <div><b>活動日期</b>2026/11/29（日）08:30–13:30</div>
+        </div>
+        <div class="item">
+          <div class="icon">📍</div>
+          <div><b>活動地點</b>台中市龍井區．麗水漁港海堤</div>
+        </div>
+        <div class="item">
+          <div class="icon">🏃</div>
+          <div><b>組別</b>5K 親子健走／11K NFC晶片計時</div>
+        </div>
+      </div>
+
+      <div class="hero-btns">
+        <a class="btn btn-primary" href="https://artlife-software.github.io/road-running-admin/runner.html" target="_blank" rel="noopener">選手報名 →</a>
+        <a class="btn btn-ghost" href="https://artlife-software.github.io/road-running-admin/runner.html" target="_blank" rel="noopener">查詢成績</a>
+      </div>
+    </div>
+
+    <div class="hero-art">
+      <div class="hero-photo"><img src="assets/photo1.jpg" alt="麗水海堤自行車道路跑選手"></div>
+      <div class="hero-badge">
+        <img src="assets/logo.png" alt="">
+        <div><div class="num">天淵綠森林</div><div class="lbl">協會 主辦</div></div>
+      </div>
+    </div>
+  </div>
+
+  <svg class="wave" viewBox="0 0 1440 60" preserveAspectRatio="none" style="height:50px;">
+    <path d="M0,30 C 240,60 480,0 720,20 C 960,40 1200,10 1440,30 L1440,60 L0,60 Z" fill="#fdf8ef"></path>
+  </svg>
+</header>
+
+<section class="countdown-section" style="padding-top:0;margin-top:-1px;">
+  <div class="wrap">
+    <div class="cd-head">
+      <h2>⏳ 選手報名倒數計時</h2>
+      <p>報名期間：2026/09/10（四）～ 2026/10/10（六）23:59 截止</p>
+    </div>
+    <div id="countdown" class="cd-grid">
+      <div class="cd-box"><div class="val" id="cd-days">--</div><div class="lab">天 DAYS</div></div>
+      <div class="cd-box"><div class="val" id="cd-hours">--</div><div class="lab">時 HRS</div></div>
+      <div class="cd-box"><div class="val" id="cd-mins">--</div><div class="lab">分 MIN</div></div>
+      <div class="cd-box"><div class="val" id="cd-secs">--</div><div class="lab">秒 SEC</div></div>
+    </div>
+    <p class="cd-note">報名截止後將依現場號碼布及晶片數量開放候補，敬請把握時間完成報名。</p>
+  </div>
+</section>
+
+<section id="categories">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Race Categories</span>
+      <h2>選擇你的組別</h2>
+      <p>兩種距離、兩種節奏，全家大小都能一起參與麗水海堤的海風路跑。</p>
+    </div>
+    <div class="cat-grid">
+      <div class="cat-card k5">
+        <span class="deco">🚶</span>
+        <span class="tag">親子友善</span>
+        <h3>5K</h3>
+        <div class="cat-name">親子健走組</div>
+        <div class="price">NT$150 <small>／人</small></div>
+        <ul>
+          <li>全齡皆可參加，適合親子同行</li>
+          <li>沿海堤自行車道往返，欣賞海景與風車</li>
+          <li>完賽即享蔬食市集優惠</li>
+        </ul>
+      </div>
+      <div class="cat-card k11">
+        <span class="deco">🏅</span>
+        <span class="tag">競賽計時</span>
+        <h3>11K</h3>
+        <div class="cat-name">NFC 晶片計時組</div>
+        <div class="price">NT$500 <small>／人</small></div>
+        <ul>
+          <li>採用 NFC 晶片卡計時，成績即時查詢</li>
+          <li>12 歲以下須由家長或監護人陪同</li>
+          <li>前三名頒發獎盃／獎狀，完賽皆有電子證書</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="schedule" style="background:var(--sand-2);">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Event Schedule</span>
+      <h2>2026/11/29（日）活動流程</h2>
+      <p>報到、暖身、路跑到頒獎，市集則從上午延續到下午一路熱鬧。</p>
+    </div>
+    <div class="tl">
+      <div class="tl-item">
+        <div class="tl-time">08:30–09:00</div>
+        <div class="tl-line"><div class="tl-dot"></div></div>
+        <div class="tl-content"><div class="t">選手報到</div><div class="p">麗水里民交誼中心，領取號碼布與計時晶片</div></div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-time">09:00–09:30</div>
+        <div class="tl-line"><div class="tl-dot"></div></div>
+        <div class="tl-content"><div class="t">賽前暖身</div><div class="p">集合暖身操，準備出發</div></div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-time">09:30–11:30</div>
+        <div class="tl-line"><div class="tl-dot"></div></div>
+        <div class="tl-content"><div class="t">路跑鳴槍起跑</div><div class="p">麗水漁港海堤自行車道，5K／11K 分組出發</div></div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-time">11:30–12:00</div>
+        <div class="tl-line"><div class="tl-dot"></div></div>
+        <div class="tl-content"><div class="t">頒獎典禮</div><div class="p">麗水里民交誼中心，公布成績並頒發獎項</div></div>
+      </div>
+      <div class="tl-item mkt">
+        <div class="tl-time">10:00–13:30</div>
+        <div class="tl-line"><div class="tl-dot"></div></div>
+        <div class="tl-content"><div class="t">文創市集</div><div class="p">麗水里籃球場，在地文創與環保攤位</div></div>
+      </div>
+      <div class="tl-item mkt">
+        <div class="tl-time">10:30–13:30</div>
+        <div class="tl-line"><div class="tl-dot"></div></div>
+        <div class="tl-content"><div class="t">蔬食市集</div><div class="p">麗水里籃球場，健康蔬食輕鬆逛</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="routes">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Course Map</span>
+      <h2>路線地圖</h2>
+      <p>沿台中麗水海堤自行車道往返，海天一線、風車相伴。</p>
+    </div>
+    <div class="map-grid">
+      <div class="map-card k5">
+        <div class="map-head">
+          <h4>5K 親子健走路線</h4>
+          <a class="qr-link" href="#" onclick="return false;"><img src="assets/qr-5k.png" alt="5K路線圖QR code">掃碼看大圖</a>
+        </div>
+        <img class="shot" src="assets/map-5k.jpg" alt="5K路線地圖：大肚溪口濕地至麗水漁港往返">
+        <div class="map-foot">起點：大肚溪口濕地 → 折返點：麗水漁港希臘風情彩繪 → 原路折返，全程約 2.5 公里單程</div>
+      </div>
+      <div class="map-card k11">
+        <div class="map-head">
+          <h4>11K NFC晶片計時路線</h4>
+          <a class="qr-link" href="#" onclick="return false;"><img src="assets/qr-11k.png" alt="11K路線圖QR code">掃碼看大圖</a>
+        </div>
+        <img class="shot" src="assets/map-11k.jpg" alt="11K路線地圖：麗水漁港至埒子頂往返">
+        <div class="map-foot">起點：麗水漁港 → 折返點：龍井彩虹廊道方向 → 原路折返，全程約 5.5 公里單程</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="market" style="background:var(--sand-2);">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Marketplace</span>
+      <h2>文創市集 ＆ 蔬食市集</h2>
+      <p>路跑之外，麗水里籃球場也有滿滿的市集攤位等你來逛。</p>
+    </div>
+    <div class="market-grid">
+      <div class="market-card">
+        <h4>🎨 文創市集</h4>
+        <div class="time">10:00 – 13:30</div>
+        <p>在地文創與環保理念攤位齊聚，逛市集也能支持友善環境的手作與設計。</p>
+      </div>
+      <div class="market-card">
+        <h4>🥬 蔬食市集</h4>
+        <div class="time">10:30 – 13:30</div>
+        <p>完賽後別急著離開，蔬食攤位提供多樣輕食與蔬果，補充體力也吃得健康。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="info">
+  <div class="wrap">
+    <div class="info-band">
+      <div class="info-grid">
+        <div>
+          <h3>報名與成績查詢</h3>
+          <p>前往「Road Running Scanner」報名查詢網頁，完成選手報名、查看即時報到狀況與比賽成績。</p>
+          <ul class="info-list">
+            <li><b>報名時間：</b>2026/09/10 – 10/10（六）</li>
+            <li><b>組別費用：</b>5K NT$150．11K NT$500</li>
+            <li><b>必填資料：</b>組別、姓名、性別、生日、生命體；11K 12歲以下需監護人陪同聲明</li>
+            <li><b>晶片計時：</b>NFC 晶片卡（信用卡尺寸），比賽當日於報到處領取</li>
+          </ul>
+          <a class="btn btn-primary" href="https://artlife-software.github.io/road-running-admin/runner.html" target="_blank" rel="noopener">前往報名／查詢成績 →</a>
+        </div>
+        <div class="qr-card">
+          <img src="assets/qr-service.png" alt="選手服務QR code">
+          <p>掃描 QR Code<br>選手服務入口</p>
+        </div>
+      </div>
+    </div>
+
+    <div style="height:24px;"></div>
+
+    <div class="notice">
+      <span>ℹ️</span>
+      <span>計時服務為免費服務，但不擔保計時無瑕疵；如對成績有疑問，請於活動現場向工作人員反映。</span>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div class="foot-brand"><img src="assets/logo.png" alt="">天淵綠森林協會</div>
+      <div class="foot-links">
+        <a href="#categories">組別費用</a>
+        <a href="#schedule">活動流程</a>
+        <a href="#routes">路線圖</a>
+        <a href="https://artlife-software.github.io/road-running-admin/runner.html" target="_blank" rel="noopener">報名查詢</a>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      2026蔬活盃路跑暨市集活動．主辦單位：天淵綠森林協會．活動地點：台中市龍井區麗水漁港海堤自行車道
+    </div>
+  </div>
+</footer>
+
+<script>
+  // 報名截止倒數計時：2026/10/10 23:59:59 (GMT+8)
+  var deadline = new Date("2026-10-10T23:59:59+08:00").getTime();
+
+  function updateCountdown(){
+    var now = new Date().getTime();
+    var diff = deadline - now;
+    var box = document.getElementById('countdown');
+    if(diff <= 0){
+      box.innerHTML = '<div class="cd-done">🏁 報名時間已截止，感謝大家的熱情參與！</div>';
+      return;
+    }
+    var d = Math.floor(diff / (1000*60*60*24));
+    var h = Math.floor((diff % (1000*60*60*24)) / (1000*60*60));
+    var m = Math.floor((diff % (1000*60*60)) / (1000*60));
+    var s = Math.floor((diff % (1000*60)) / 1000);
+    document.getElementById('cd-days').textContent = d;
+    document.getElementById('cd-hours').textContent = String(h).padStart(2,'0');
+    document.getElementById('cd-mins').textContent = String(m).padStart(2,'0');
+    document.getElementById('cd-secs').textContent = String(s).padStart(2,'0');
+  }
+  updateCountdown();
+  setInterval(updateCountdown, 1000);
+</script>
+
+</body>
+</html>
