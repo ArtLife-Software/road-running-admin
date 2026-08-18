@@ -195,6 +195,12 @@
   .cat-card ul{margin:0;padding-left:20px;font-size:0.92rem;opacity:0.95;}
   .cat-card ul li{margin-bottom:6px;}
   .cat-card .deco{position:absolute;right:-30px;bottom:-30px;font-size:8rem;opacity:0.12;line-height:1;}
+  .nfc-preview{
+    position:relative;z-index:1;margin-top:20px;padding-top:18px;
+    border-top:1px solid rgba(255,255,255,0.3);
+  }
+  .nfc-preview img{width:100%;border-radius:12px;border:2px solid rgba(255,255,255,0.5);background:#fff;}
+  .nfc-preview span{display:block;margin-top:10px;font-size:0.85rem;opacity:0.95;font-weight:600;}
 
   /* ---------- TIMELINE ---------- */
   .tl{max-width:680px;margin:0 auto;}
@@ -216,33 +222,46 @@
   .tl-item.mkt .tl-dot{background:var(--teal);}
 
   /* ---------- MAPS ---------- */
-  .map-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;}
-  @media (max-width:800px){ .map-grid{grid-template-columns:1fr;} }
+  .map-grid{display:grid;grid-template-columns:1fr;gap:36px;}
   .map-card{background:#fff;border-radius:20px;overflow:hidden;box-shadow:var(--shadow);border:1px solid var(--line);}
   .map-card .map-head{
     display:flex;align-items:center;justify-content:space-between;
-    padding:16px 20px;
+    padding:18px 24px;
   }
   .map-card.k5 .map-head{background:#e7f8f2;}
   .map-card.k11 .map-head{background:#fdf1de;}
-  .map-card .map-head h4{margin:0;font-size:1.1rem;color:var(--navy);}
-  .map-card .map-head .qr-link{
-    display:flex;align-items:center;gap:8px;font-size:0.8rem;font-weight:700;
-    color:var(--navy);text-decoration:none;opacity:0.75;
+  .map-card.venue .map-head{background:#eaf1f7;}
+  .map-card .map-head h4{margin:0;font-size:1.25rem;color:var(--navy);}
+  .map-card img.shot{width:100%;max-height:640px;object-fit:contain;background:#0a2c45;display:block;}
+  .map-card .map-foot{padding:18px 24px 24px;font-size:0.92rem;color:#5a6d7c;}
+  .map-card .map-foot p{margin:0 0 16px;}
+  .map-link-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;}
+  .map-link{
+    display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:0.92rem;
+    color:var(--coral);text-decoration:none;word-break:break-word;
   }
-  .map-card .map-head .qr-link img{width:34px;height:34px;border-radius:6px;border:1px solid var(--line);}
-  .map-card img.shot{width:100%;height:260px;object-fit:cover;}
-  .map-card .map-foot{padding:14px 20px;font-size:0.85rem;color:#5a6d7c;}
+  .map-link:hover{text-decoration:underline;}
+  .map-qr{width:180px;height:auto;border-radius:10px;border:1px solid var(--line);flex:none;padding:6px;background:#fff;}
 
   /* ---------- MARKET ---------- */
-  .market-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;}
-  @media (max-width:720px){ .market-grid{grid-template-columns:1fr;} }
+  .market-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;}
+  @media (max-width:900px){ .market-grid{grid-template-columns:1fr 1fr;} }
+  @media (max-width:560px){ .market-grid{grid-template-columns:1fr;} }
   .market-card{
     background:var(--sand-2);border-radius:20px;padding:28px;border:1px solid var(--line);
   }
   .market-card h4{margin:0 0 8px;font-size:1.15rem;color:var(--navy);}
   .market-card .time{color:var(--coral);font-weight:700;font-size:0.9rem;margin-bottom:10px;}
   .market-card p{margin:0;font-size:0.92rem;color:#4b5f70;}
+  .eco-notice{
+    max-width:760px;margin:36px auto 0;background:#fff7e6;border:2px solid #f0b429;
+    border-radius:18px;padding:26px 30px;box-shadow:0 10px 30px rgba(240,180,41,0.18);
+  }
+  .eco-notice-head{font-size:1.15rem;font-weight:800;color:#9a5b00;margin-bottom:14px;}
+  .eco-notice ul{margin:0;padding-left:22px;}
+  .eco-notice li{margin-bottom:8px;font-size:0.96rem;color:#5a4300;line-height:1.6;}
+  .eco-notice li:last-child{margin-bottom:0;}
+  .eco-notice b{color:#c9760f;}
 
   /* ---------- INFO / QUERY ---------- */
   .info-band{
@@ -280,6 +299,9 @@
   .foot-brand img{height:28px;filter:brightness(0) invert(1);opacity:0.9;}
   footer a{color:rgba(255,255,255,0.75);text-decoration:none;}
   footer .foot-links{display:flex;gap:18px;flex-wrap:wrap;}
+  .foot-qr{display:flex;flex-direction:column;align-items:center;gap:6px;}
+  .foot-qr img{width:110px;height:auto;border-radius:8px;background:#fff;padding:4px;}
+  .foot-qr span{font-size:0.75rem;opacity:0.75;}
   .foot-bottom{border-top:1px solid rgba(255,255,255,0.1);margin-top:24px;padding-top:18px;font-size:0.8rem;opacity:0.6;}
 
   ::selection{background:var(--coral);color:#fff;}
@@ -293,7 +315,8 @@
     <div class="navlinks">
       <a href="#categories">組別費用</a>
       <a href="#schedule">活動流程</a>
-      <a href="#routes">路線圖</a>
+      <a href="#venue-map">區域配置圖</a>
+      <a href="#routes">路線規劃圖</a>
       <a href="#market">市集</a>
       <a href="#info">報名／查詢</a>
     </div>
@@ -311,7 +334,7 @@
       <div class="hero-meta">
         <div class="item">
           <div class="icon">📅</div>
-          <div><b>活動日期</b>2026/11/29（日）08:30–13:30</div>
+          <div><b>活動日期</b>2026/11/29（日）08:30–14:00</div>
         </div>
         <div class="item">
           <div class="icon">📍</div>
@@ -355,7 +378,7 @@
       <div class="cd-box"><div class="val" id="cd-mins">--</div><div class="lab">分 MIN</div></div>
       <div class="cd-box"><div class="val" id="cd-secs">--</div><div class="lab">秒 SEC</div></div>
     </div>
-    <p class="cd-note">報名截止後將依現場號碼布及晶片數量開放候補，敬請把握時間完成報名。</p>
+    <p class="cd-note">請於截止時間前完成報名，逾期恕不受理。</p>
   </div>
 </section>
 
@@ -376,7 +399,7 @@
         <ul>
           <li>全齡皆可參加，適合親子同行</li>
           <li>沿海堤自行車道往返，欣賞海景與風車</li>
-          <li>完賽即享蔬食市集優惠</li>
+          <li>起訖點鄰近大肚溪口濕地，坐擁河海交會景色</li>
         </ul>
       </div>
       <div class="cat-card k11">
@@ -390,6 +413,14 @@
           <li>12 歲以下須由家長或監護人陪同</li>
           <li>前三名頒發獎盃／獎狀，完賽皆有電子證書</li>
         </ul>
+        <div class="nfc-preview">
+          <img src="assets/nfc-card.png" alt="2026蔬活盃NFC晶片計時卡樣式，含11K路線圖QR Code與選手服務QR Code">
+          <span>👉 你的計時晶片卡長這樣，請於折返點、終點感應打卡</span>
+        </div>
+        <div class="nfc-preview">
+          <img src="assets/certificate-sample.png" alt="2026蔬活盃11K完賽證書範例，含姓名、組別、號碼布、完賽時間與名次">
+          <span>🏆 完賽即自動產生電子證書，可線上查詢並匯出圖片</span>
+        </div>
       </div>
     </div>
   </div>
@@ -414,24 +445,42 @@
         <div class="tl-content"><div class="t">賽前暖身</div><div class="p">集合暖身操，準備出發</div></div>
       </div>
       <div class="tl-item">
-        <div class="tl-time">09:30–11:30</div>
+        <div class="tl-time">09:30–11:00</div>
         <div class="tl-line"><div class="tl-dot"></div></div>
-        <div class="tl-content"><div class="t">路跑鳴槍起跑</div><div class="p">麗水漁港海堤自行車道，5K／11K 分組出發</div></div>
+        <div class="tl-content"><div class="t">路跑鳴槍起跑</div><div class="p">麗水漁港海堤自行車道．11K 09:30 起跑／5K 09:40 起跑</div></div>
       </div>
       <div class="tl-item">
-        <div class="tl-time">11:30–12:00</div>
+        <div class="tl-time">11:00–11:30</div>
         <div class="tl-line"><div class="tl-dot"></div></div>
-        <div class="tl-content"><div class="t">頒獎典禮</div><div class="p">麗水里民交誼中心，公布成績並頒發獎項</div></div>
+        <div class="tl-content"><div class="t">頒獎典禮＋摸彩</div><div class="p">麗水里民交誼中心，公布成績、頒發獎項並進行摸彩活動</div></div>
       </div>
       <div class="tl-item mkt">
-        <div class="tl-time">10:00–13:30</div>
+        <div class="tl-time">10:30–14:00</div>
         <div class="tl-line"><div class="tl-dot"></div></div>
-        <div class="tl-content"><div class="t">文創市集</div><div class="p">麗水里籃球場，在地文創與環保攤位</div></div>
+        <div class="tl-content"><div class="t">市集（文創／環保／蔬食）</div><div class="p">麗水里籃球場，在地文創、環保理念與健康蔬食攤位齊聚</div></div>
       </div>
-      <div class="tl-item mkt">
-        <div class="tl-time">10:30–13:30</div>
-        <div class="tl-line"><div class="tl-dot"></div></div>
-        <div class="tl-content"><div class="t">蔬食市集</div><div class="p">麗水里籃球場，健康蔬食輕鬆逛</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="venue-map">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Venue Map</span>
+      <h2>活動區域配置圖</h2>
+      <p>報到、暖身、頒獎典禮＋摸彩在麗水里民交誼中心；路跑起跑點在麗水海堤自行車道；市集在麗水籃球場，停車場、廁所、醫護站位置也一併標示。</p>
+    </div>
+    <div class="map-card venue">
+      <div class="map-head">
+        <h4>📍 麗水里民交誼中心｜活動區域配置</h4>
+      </div>
+      <img class="shot" src="assets/venue-map.jpg" alt="2026蔬活盃活動區域配置圖：麗水里民交誼中心（報到、暖身、頒獎、摸彩）、麗水海堤自行車道起跑點、麗水籃球場（市集），並標示停車場、廁所、醫護站位置">
+      <div class="map-foot">
+        <p>麗水里民交誼中心：臺中市龍井區麗水里龍港路349巷2號（報到、暖身、頒獎典禮＋摸彩地點）</p>
+        <div class="map-link-row">
+          <a class="map-link" href="https://maps.app.goo.gl/W9PivtaPm1gtnG8BA" target="_blank" rel="noopener">開啟 Google 地圖導航 →</a>
+          <img class="map-qr" src="assets/qr-livshui-center.png" alt="麗水里民交誼中心 Google Map QR Code">
+        </div>
       </div>
     </div>
   </div>
@@ -441,25 +490,35 @@
   <div class="wrap">
     <div class="section-head">
       <span class="kicker">Course Map</span>
-      <h2>路線地圖</h2>
-      <p>沿台中麗水海堤自行車道往返，海天一線、風車相伴。</p>
+      <h2>路線規劃圖</h2>
+      <p>沿台中麗水海堤自行車道往返，海天一線、風車相伴。點選連結或掃描 QR Code 可直接開啟 Google 地圖導航。</p>
     </div>
     <div class="map-grid">
       <div class="map-card k5">
         <div class="map-head">
-          <h4>5K 親子健走路線</h4>
-          <a class="qr-link" href="#" onclick="return false;"><img src="assets/qr-5k.png" alt="5K路線圖QR code">掃碼看大圖</a>
+          <h4>5K 親子健走路線規劃圖</h4>
         </div>
-        <img class="shot" src="assets/map-5k.jpg" alt="5K路線地圖：大肚溪口濕地至麗水漁港往返">
-        <div class="map-foot">起點：大肚溪口濕地 → 折返點：麗水漁港希臘風情彩繪 → 原路折返，全程約 2.5 公里單程</div>
+        <img class="shot" src="assets/map-5k.jpg" alt="5K路線規劃圖：起訖點大肚溪口濕地，經麗水漁港希臘風情彩繪補給站，折返點龍港路">
+        <div class="map-foot">
+          <p>起訖點：大肚溪口濕地 → 補給站：麗水漁港希臘風情彩繪 → 折返點：龍港路 → 原路折返，單程約 2.5 公里</p>
+          <div class="map-link-row">
+            <a class="map-link" href="https://www.google.com/maps/dir/%E5%A4%A7%E8%82%9A%E6%BA%AA%E5%8F%A3%E6%BF%95%E5%9C%B01+434%E8%87%BA%E4%B8%AD%E5%B8%82%E9%BE%8D%E4%BA%95%E5%8D%80%E9%BA%97%E6%B0%B4%E9%87%8C%E4%B8%AD62%E9%84%89%E9%81%9341%E8%99%9F/24.2033717,120.4886814/24.2065865,120.4903297/24.2050513,120.4951596/%E6%B0%B4%E8%A3%A1%E6%B8%AF%E5%85%AC%E5%9C%92+434%E8%87%BA%E4%B8%AD%E5%B8%82%E9%BE%8D%E4%BA%95%E5%8D%80%E9%BE%8D%E6%B8%AF%E8%B7%AF/@24.2036027,120.4930103,1014m/data=!3m1!1e3!4m17!4m16!1m5!1m1!1s0x34694100166d8b5b:0x33137513c46a881a!2m2!1d120.498154!2d24.198985!1m0!1m0!1m0!1m5!1m1!1s0x34696b0061b711f1:0xeb42f7b2f81938bf!2m2!1d120.4914419!2d24.2076917!3e2?authuser=0&amp;entry=ttu&amp;g_ep=EgoyMDI2MDcyMi4wIKXMDSoASAFQAw%3D%3D" target="_blank" rel="noopener">開啟 Google 地圖路線 →</a>
+            <img class="map-qr" src="assets/qr-5k.png" alt="5K路線規劃圖QR Code，掃描開啟Google地圖">
+          </div>
+        </div>
       </div>
       <div class="map-card k11">
         <div class="map-head">
-          <h4>11K NFC晶片計時路線</h4>
-          <a class="qr-link" href="#" onclick="return false;"><img src="assets/qr-11k.png" alt="11K路線圖QR code">掃碼看大圖</a>
+          <h4>11K NFC晶片計時路線規劃圖</h4>
         </div>
-        <img class="shot" src="assets/map-11k.jpg" alt="11K路線地圖：麗水漁港至埒子頂往返">
-        <div class="map-foot">起點：麗水漁港 → 折返點：龍井彩虹廊道方向 → 原路折返，全程約 5.5 公里單程</div>
+        <img class="shot" src="assets/map-11k.jpg" alt="11K路線規劃圖：起訖點大肚溪口濕地，折返點暨補給站埒子頂">
+        <div class="map-foot">
+          <p>起訖點：大肚溪口濕地 → 折返點暨補給站：埒子頂 → 原路折返，單程約 5.5 公里</p>
+          <div class="map-link-row">
+            <a class="map-link" href="https://www.google.com/maps/dir/24.1990094,120.4982335/24.1622561,120.5294167/@24.1991028,120.4975849,359m/data=!3m1!1e3!4m2!4m1!3e2?authuser=0&amp;entry=ttu&amp;g_ep=EgoyMDI2MDcxNS4wIKXMDSoASAFQAw%3D%3D" target="_blank" rel="noopener">開啟 Google 地圖路線 →</a>
+            <img class="map-qr" src="assets/qr-11k.png" alt="11K路線規劃圖QR Code，掃描開啟Google地圖">
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -469,20 +528,33 @@
   <div class="wrap">
     <div class="section-head">
       <span class="kicker">Marketplace</span>
-      <h2>文創市集 ＆ 蔬食市集</h2>
+      <h2>文創・環保・蔬食市集</h2>
       <p>路跑之外，麗水里籃球場也有滿滿的市集攤位等你來逛。</p>
     </div>
     <div class="market-grid">
       <div class="market-card">
         <h4>🎨 文創市集</h4>
-        <div class="time">10:00 – 13:30</div>
-        <p>在地文創與環保理念攤位齊聚，逛市集也能支持友善環境的手作與設計。</p>
+        <div class="time">10:30 – 14:00</div>
+        <p>在地文創手作與設計攤位齊聚，逛市集也能挖到獨一無二的小物。</p>
+      </div>
+      <div class="market-card">
+        <h4>♻️ 環保市集</h4>
+        <div class="time">10:30 – 14:00</div>
+        <p>友善環境理念攤位進駐，一起認識並支持永續生活的實踐方式。</p>
       </div>
       <div class="market-card">
         <h4>🥬 蔬食市集</h4>
-        <div class="time">10:30 – 13:30</div>
+        <div class="time">10:30 – 14:00</div>
         <p>完賽後別急著離開，蔬食攤位提供多樣輕食與蔬果，補充體力也吃得健康。</p>
       </div>
+    </div>
+    <div class="eco-notice">
+      <div class="eco-notice-head">🌱 環保無痕市集，請大家一起響應</div>
+      <ul>
+        <li><b>不提供免洗餐具</b>，請自備環保餐具／環保袋</li>
+        <li>市集設有<b>環保餐具租借攤位</b>，每副押金 100 元；歸還可退回 90 元（酌收 10 元清潔費）</li>
+        <li>自備環保餐具及環保袋者，<b>可享部分優惠活動</b></li>
+      </ul>
     </div>
   </div>
 </section>
@@ -493,11 +565,11 @@
       <div class="info-grid">
         <div>
           <h3>報名與成績查詢</h3>
-          <p>前往「Road Running Scanner」報名查詢網頁，完成選手報名、查看即時報到狀況與比賽成績。</p>
+          <p>前往「路跑打卡系統」選手服務網頁，完成選手報名、查看即時報到狀況與比賽成績。</p>
           <ul class="info-list">
             <li><b>報名時間：</b>2026/09/10 – 10/10（六）</li>
             <li><b>組別費用：</b>5K NT$150．11K NT$500</li>
-            <li><b>必填資料：</b>組別、姓名、性別、生日、生命體；11K 12歲以下需監護人陪同聲明</li>
+            <li><b>必填資料：</b>組別、姓名、性別、生日、生命體；11K 12歲以下另需監護人陪同聲明、聯絡人姓名、手機號碼</li>
             <li><b>晶片計時：</b>NFC 晶片卡（信用卡尺寸），比賽當日於報到處領取</li>
           </ul>
           <a class="btn btn-primary" href="https://artlife-software.github.io/road-running-admin/runner.html" target="_blank" rel="noopener">前往報名／查詢成績 →</a>
@@ -525,8 +597,12 @@
       <div class="foot-links">
         <a href="#categories">組別費用</a>
         <a href="#schedule">活動流程</a>
-        <a href="#routes">路線圖</a>
+        <a href="#routes">路線規劃圖</a>
         <a href="https://artlife-software.github.io/road-running-admin/runner.html" target="_blank" rel="noopener">報名查詢</a>
+      </div>
+      <div class="foot-qr">
+        <img src="assets/qr-site.png" alt="2026蔬活盃賽事資訊網頁QR Code">
+        <span>掃描收藏本頁</span>
       </div>
     </div>
     <div class="foot-bottom">
