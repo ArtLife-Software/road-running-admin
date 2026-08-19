@@ -276,9 +276,19 @@
   @media (max-width:800px){ .info-grid{grid-template-columns:1fr;} }
   .info-grid h3{color:#fff;font-size:1.5rem;margin:0 0 12px;}
   .info-grid p{color:rgba(255,255,255,0.75);margin:0 0 22px;font-size:0.95rem;}
-  .info-list{list-style:none;padding:0;margin:0 0 26px;display:grid;gap:10px;}
-  .info-list li{display:flex;gap:10px;font-size:0.9rem;color:rgba(255,255,255,0.9);}
-  .info-list li b{color:var(--orange);}
+  .info-list{list-style:none;padding:0;margin:0 0 26px;display:flex;flex-direction:column;gap:0;border-top:1px solid rgba(255,255,255,0.14);}
+  .info-list li{
+    display:flex;align-items:baseline;gap:16px;
+    padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.14);
+    font-size:0.9rem;color:rgba(255,255,255,0.9);
+  }
+  .info-list li .k{flex:0 0 96px;color:var(--orange);font-weight:700;white-space:nowrap;}
+  .info-list li .v{flex:1 1 auto;color:rgba(255,255,255,0.9);}
+  .info-list li .v b{color:#fff;}
+  @media (max-width:420px){
+    .info-list li{flex-direction:column;align-items:flex-start;gap:2px;}
+    .info-list li .k{font-size:0.82rem;opacity:0.85;}
+  }
   .qr-card{
     background:#fff;border-radius:18px;padding:20px;text-align:center;
   }
@@ -565,12 +575,12 @@
       <div class="info-grid">
         <div>
           <h3>報名與成績查詢</h3>
-          <p>前往「路跑打卡系統」選手服務網頁，完成選手報名、查看即時報到狀況與比賽成績。</p>
+          <p>前往「路跑打卡系統」選手服務網頁，完成選手報名、查看即時統計與比賽成績。</p>
           <ul class="info-list">
-            <li><b>報名時間：</b>2026/09/10 – 10/10（六）</li>
-            <li><b>組別費用：</b>5K NT$150．11K NT$500</li>
-            <li><b>必填資料：</b>組別、姓名、性別、生日、生命體；11K 12歲以下另需監護人陪同聲明、聯絡人姓名、手機號碼</li>
-            <li><b>晶片計時：</b>NFC 晶片卡（信用卡尺寸），比賽當日於報到處領取</li>
+            <li><span class="k">報名時間</span><span class="v">2026/09/10 – 10/10（六）</span></li>
+            <li><span class="k">組別費用</span><span class="v">5K NT$150．11K NT$500</span></li>
+            <li><span class="k">必填資料</span><span class="v">組別、姓名、性別、生日、生命體；11K 12歲以下另需監護人陪同聲明、聯絡人姓名、手機號碼</span></li>
+            <li><span class="k">晶片計時</span><span class="v">NFC 晶片卡（信用卡尺寸），比賽當日於報到處領取，<b>賽後請於終點繳回</b></span></li>
           </ul>
           <a class="btn btn-primary" href="https://artlife-software.github.io/road-running-admin/runner.html" target="_blank" rel="noopener">前往報名／查詢成績 →</a>
         </div>
@@ -597,8 +607,10 @@
       <div class="foot-links">
         <a href="#categories">組別費用</a>
         <a href="#schedule">活動流程</a>
+        <a href="#venue-map">區域配置圖</a>
         <a href="#routes">路線規劃圖</a>
-        <a href="https://artlife-software.github.io/road-running-admin/runner.html" target="_blank" rel="noopener">報名查詢</a>
+        <a href="#market">市集</a>
+        <a href="https://artlife-software.github.io/road-running-admin/runner.html" target="_blank" rel="noopener">報名／查詢</a>
       </div>
       <div class="foot-qr">
         <img src="assets/qr-site.png" alt="2026蔬活盃賽事資訊網頁QR Code">
