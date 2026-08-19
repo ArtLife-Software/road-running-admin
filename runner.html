@@ -83,8 +83,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .cert-stat .v{font-family:'Cinzel',serif;font-size:1.3rem;font-weight:700;color:#7a4a12;}
 .cert-stat .l{font-family:'Noto Sans TC',sans-serif;font-size:.68rem;color:#a9793a;letter-spacing:.1em;text-transform:uppercase;margin-top:2px;}
 .cert-footer{position:absolute;bottom:44px;left:60px;right:60px;display:flex;justify-content:space-between;align-items:flex-end;}
-.cert-sign{text-align:center;font-family:'Noto Sans TC',sans-serif;}
+.cert-sign{text-align:center;font-family:'Noto Sans TC',sans-serif;width:150px;}
 .cert-sign .line{width:150px;border-top:1px solid #a9793a;margin-bottom:4px;}
+.cert-sign .name{font-size:.78rem;color:#5a3b1e;font-weight:700;min-height:1.1em;line-height:1.1;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .cert-sign .label{font-size:.68rem;color:#a9793a;letter-spacing:.05em;}
 .cert-seal{font-size:2.2rem;opacity:.85;}
 .cert-actions{display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap;}
@@ -1473,7 +1474,7 @@ window.doLookup=async function(){
   // 依賽事分組（同一場找到多筆時，提示同時輸入 ID 和身分證）
   const byEvent=new Map();
   matched.forEach(m=>{
-    if(!byEvent.has(m.eventId))byEvent.set(m.eventId,{evName:m.evName,evDate:m.evDate,items:[]});
+    if(!byEvent.has(m.eventId))byEvent.set(m.eventId,{evName:m.evName,evDate:m.evDate,evOrganizer:m.evOrganizer,items:[]});
     byEvent.get(m.eventId).items.push(m);
   });
   let html='';
@@ -1482,7 +1483,7 @@ window.doLookup=async function(){
       html+='<div class="card"><div style="font-size:.85rem;color:var(--muted)">'+esc(grp.evName)+'（'+esc(grp.evDate||'日期不詳')+'）</div><div style="color:var(--accent);font-size:.85rem;margin-top:4px">找到多筆符合資料，請同時輸入 ID 和身分證字號</div></div>';
       continue;
     }
-    html+=await buildLookupCard(grp.items[0].entry, evId, isAll?{name:grp.evName,date:grp.evDate}:null);
+    html+=await buildLookupCard(grp.items[0].entry, evId, isAll?{name:grp.evName,date:grp.evDate,organizer:grp.evOrganizer}:null);
   }
   result.innerHTML=html;
 }
@@ -1490,7 +1491,7 @@ async function buildLookupCard(e, eventId, evData){
   let certEventInfo = evData;
   if (!certEventInfo) {
     const evSnap = await getDoc(doc(db,'events',eventId));
-    certEventInfo = evSnap.exists() ? {name:evSnap.data().name||'', date:evSnap.data().date||''} : {name:'',date:''};
+    certEventInfo = evSnap.exists() ? {name:evSnap.data().name||'', date:evSnap.data().date||'', organizer:evSnap.data().organizer||''} : {name:'',date:'',organizer:''};
   }
   const recSnap=await getDocs(query(collection(db,'events',eventId,'records'),orderBy('scanTime','asc')));
   const groupRecs=recSnap.docs.map(d=>d.data()); // 整個賽事的打卡記錄（不含個資，選手端可讀）
@@ -1590,7 +1591,7 @@ async function buildLookupCard(e, eventId, evData){
     if (withinLimit) {
       const certIdx = certDataStore.push({
         name: e.name||'', bibNumber: e.bibNumber||'-', group: e.group||'-',
-        eventName: certEventInfo.name||'', eventDate: certEventInfo.date||'',
+        eventName: certEventInfo.name||'', eventDate: certEventInfo.date||'', organizer: certEventInfo.organizer||'',
         finishTime: finishTimeStr, rank: finalRank||null
       }) - 1;
       html += '<div style="margin-top:14px;text-align:center">'
@@ -1621,16 +1622,16 @@ function certificateHtml(c){
     +'  <div class="cert-title-sub">Certificate of Completion</div>'
     +'  <div class="cert-presented">茲證明</div>'
     +'  <div class="cert-name">'+esc(c.name)+'</div>'
-    +'  <div class="cert-desc">已完成 <strong>'+esc(c.eventName||'本次賽事')+'</strong>'+(c.eventDate?'（'+esc(c.eventDate)+'）':'')+' <strong>'+esc(c.group)+'</strong> 組別全程賽事，通過全部檢查站完成打卡，特頒此證，以茲鼓勵。</div>'
+    +'  <div class="cert-desc">已完成 <strong>'+esc(c.eventName||'本次賽事')+'</strong> <strong>'+esc(c.group)+'</strong> 組別全程賽事，通過全部檢查站完成打卡，特頒此證，以茲鼓勵。</div>'
     +'  <div class="cert-stats">'
     +'    <div class="cert-stat"><div class="v">'+esc(c.bibNumber)+'</div><div class="l">Bib Number</div></div>'
     +'    <div class="cert-stat"><div class="v">'+esc(c.finishTime)+'</div><div class="l">Finish Time</div></div>'
     +      rankHtml
     +'  </div>'
     +'  <div class="cert-footer">'
-    +'    <div class="cert-sign"><div class="line"></div><div class="label">主辦單位</div></div>'
+    +'    <div class="cert-sign"><div class="line"></div><div class="name">'+esc(c.organizer||'\u00A0')+'</div><div class="label">主辦單位</div></div>'
     +'    <div class="cert-seal">🏁</div>'
-    +'    <div class="cert-sign"><div class="line"></div><div class="label">'+esc(c.eventDate||'')+'</div></div>'
+    +'    <div class="cert-sign"><div class="line"></div><div class="name">'+esc(c.eventDate||'\u00A0')+'</div><div class="label">比賽日期</div></div>'
     +'  </div>'
     +'</div>';
 }

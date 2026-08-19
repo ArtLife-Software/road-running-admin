@@ -510,6 +510,7 @@ window.editEvent = async function(id) {
   document.getElementById('eventDocId').value=id;
   document.getElementById('evName').value=ev.name||'';
   document.getElementById('evDate').value=ev.date||'';
+  document.getElementById('evOrganizer').value=ev.organizer||'';
   // 報名時間欄位：拆成日期（yyyy/mm/dd 文字）+ 時間（hh:mm 文字）
   setDateTimeFields('evRegStart', ev.registrationStartAt);
   setDateTimeFields('evRegEnd', ev.registrationEndAt);
@@ -581,6 +582,7 @@ window.saveEvent = async function() {
   const data = {
     name:document.getElementById('evName').value.trim(),
     date:document.getElementById('evDate').value,
+    organizer:document.getElementById('evOrganizer').value.trim(),
     registrationStartAt: dtFieldsToTs('evRegStart'),
     registrationEndAt:   dtFieldsToTs('evRegEnd'),
     registrationCapacity: regCapacity,
@@ -3860,6 +3862,7 @@ th[data-sort]:hover{color:var(--accent);}
       <input type="hidden" id="eventDocId">
       <div class="input-group"><label>賽事名稱 *</label><input id="evName" type="text" class="input" placeholder="2026 台北馬拉松"></div>
       <div class="input-group"><label>比賽日期</label><input id="evDate" type="date" class="input"></div>
+      <div class="input-group"><label>主辦單位</label><input id="evOrganizer" type="text" class="input" placeholder="例：中華民國路跑協會（會顯示在完賽證書上）"></div>
       <!-- 選手報名時間設定 -->
       <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
         <div style="font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:12px;letter-spacing:.05em">🏃 選手報名時間設定</div>
