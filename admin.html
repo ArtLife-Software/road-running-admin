@@ -1982,7 +1982,7 @@ window.showAddRecord=async function(){
   document.getElementById('arSelectedRunner').style.display='none';
   document.getElementById('arStation').innerHTML='<option value="">請先選擇選手...</option>';
   const now=new Date(); now.setMinutes(now.getMinutes()-now.getTimezoneOffset());
-  document.getElementById('arTime').value=now.toISOString().slice(0,16);
+  document.getElementById('arTime').value=now.toISOString().slice(0,19);
   document.getElementById('arDeviceName').value='後台手動補登';
   const [gSnap,checkpointSnap]=await Promise.all([
     getDocs(collection(db,'events',curRecordEventId,'groups')),
@@ -2035,7 +2035,7 @@ window.editRecord=async function(docId){
 
   const dt=rec.scanTime?.toDate?rec.scanTime.toDate():new Date();
   dt.setMinutes(dt.getMinutes()-dt.getTimezoneOffset());
-  document.getElementById('arTime').value=dt.toISOString().slice(0,16);
+  document.getElementById('arTime').value=dt.toISOString().slice(0,19);
   document.getElementById('arDeviceName').value=rec.deviceName||'';
   document.getElementById('addRecordModal').style.display='flex';
 }
@@ -4237,7 +4237,7 @@ th[data-sort]:hover{color:var(--accent);}
     </div>
     <div class="input-group">
       <label>打卡時間 *</label>
-      <input id="arTime" type="datetime-local" class="input">
+      <input id="arTime" type="datetime-local" step="1" class="input">
     </div>
     <div class="input-group">
       <label>備註（存進「裝置名稱」欄位，方便之後追蹤這筆是誰、為什麼手動補登的）</label>
