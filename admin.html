@@ -584,8 +584,21 @@ window.saveEvent = async function() {
   const customBibRangeMaxRaw=document.getElementById('evCustomBibRangeMax').value.trim();
   const customBibRangeMin=customBibRangeMinRaw===''?0:parseInt(customBibRangeMinRaw)||0;
   const customBibRangeMax=customBibRangeMaxRaw===''?0:parseInt(customBibRangeMaxRaw)||0;
+  // 四個欄位如果有填，一定要是正整數（≥1）——留空才代表「不限制」，
+  // 不能讓「打0」或負數混進去被誤判成「不限制」或完全沒被檢查到
+  const bibRangeFields=[
+    {raw:bibRangeMinRaw, val:bibRangeMin, label:'自動號碼最小值'},
+    {raw:bibRangeMaxRaw, val:bibRangeMax, label:'自動號碼最大值'},
+    {raw:customBibRangeMinRaw, val:customBibRangeMin, label:'自選最小值'},
+    {raw:customBibRangeMaxRaw, val:customBibRangeMax, label:'自選最大值'},
+  ];
+  for(const f of bibRangeFields){
+    if(f.raw!==''&&f.val<1){
+      showToast(f.label+'必須是正整數（1以上），留空才代表不限制','error'); return;
+    }
+  }
   if(bibRangeMin>0&&bibRangeMax>0&&bibRangeMin>bibRangeMax){
-    showToast('號碼最小值不能大於最大值','error'); return;
+    showToast('自動號碼最小值不能大於最大值','error'); return;
   }
   if(customBibRangeMin>0&&customBibRangeMax>0&&customBibRangeMin>customBibRangeMax){
     showToast('自選號碼最小值不能大於最大值','error'); return;
@@ -593,10 +606,10 @@ window.saveEvent = async function() {
   // 範圍不能超出「編號位數」能表示的上限（例如3位＝最大999），避免號碼位數跟實際範圍互相矛盾
   const bibPadMax=Math.pow(10,bibPadLength)-1;
   if(bibRangeMax>bibPadMax){
-    showToast('號碼最大值（'+bibRangeMax+'）超出「選手編號位數」可表示的範圍（'+bibPadLength+'位最大到 '+bibPadMax+'），請調高位數或調低最大值','error'); return;
+    showToast('自動號碼最大值（'+bibRangeMax+'）超出「選手編號位數」可表示的範圍（'+bibPadLength+'位最大到 '+bibPadMax+'），請調高位數或調低最大值','error'); return;
   }
   if(bibRangeMin>bibPadMax){
-    showToast('號碼最小值（'+bibRangeMin+'）超出「選手編號位數」可表示的範圍（'+bibPadLength+'位最大到 '+bibPadMax+'），請調高位數或調低最小值','error'); return;
+    showToast('自動號碼最小值（'+bibRangeMin+'）超出「選手編號位數」可表示的範圍（'+bibPadLength+'位最大到 '+bibPadMax+'），請調高位數或調低最小值','error'); return;
   }
   if(customBibRangeMax>bibPadMax){
     showToast('自選號碼最大值（'+customBibRangeMax+'）超出「選手編號位數」可表示的範圍（'+bibPadLength+'位最大到 '+bibPadMax+'），請調高位數或調低最大值','error'); return;
@@ -4106,20 +4119,20 @@ th[data-sort]:hover{color:var(--accent);}
           </div>
         </div>
         <div style="margin-top:12px">
-          <div style="font-size:.75rem;color:var(--muted);margin-bottom:6px">號碼範圍限制（留空＝不限制，用位數上限）：管理後台自動配號、後台手動輸入、CSV匯入補號，都用這個範圍（範圍滿後繼續往外配，不會因此配不出號碼）。</div>
+          <div style="font-size:.75rem;color:var(--muted);margin-bottom:6px">自動號碼範圍限制（留空＝不限制，用位數上限）：自動編號依序選擇「自訂號碼範圍→這裡的自動號碼範圍→位數範圍」，額滿才換下一個，都由小到大選（不會因此配不出號碼）。後台手動輸入不受這裡限制，只受位數範圍限制。</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
             <div class="input-group" style="margin:0">
-              <label>號碼最小值</label>
+              <label>自動號碼最小值</label>
               <input id="evBibRangeMin" type="number" min="1" class="input" placeholder="例：1">
             </div>
             <div class="input-group" style="margin:0">
-              <label>號碼最大值</label>
+              <label>自動號碼最大值</label>
               <input id="evBibRangeMax" type="number" min="1" class="input" placeholder="例：200">
             </div>
           </div>
         </div>
         <div style="margin-top:12px">
-          <div style="font-size:.75rem;color:var(--muted);margin-bottom:6px">自訂號碼範圍（留空＝比照上面的「號碼範圍」）：只限制「選手自選號碼」跟「選手自助改號碼」，可以跟上面的號碼範圍不同（例如自動配1~500、開放選手自選501~999）。後台手動輸入跟自動配號不受這裡影響。</div>
+          <div style="font-size:.75rem;color:var(--muted);margin-bottom:6px">自訂號碼範圍（留空＝比照上面的自動號碼範圍）：選手可選填號碼，額滿為止；自動編號也會優先選這個範圍，額滿才換自動號碼範圍。後台手動輸入不受這裡限制，只受位數範圍限制。</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
             <div class="input-group" style="margin:0">
               <label>自選最小值</label>
