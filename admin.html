@@ -579,6 +579,14 @@ window.saveEvent = async function() {
   if(bibRangeMin>0&&bibRangeMax>0&&bibRangeMin>bibRangeMax){
     showToast('號碼最小值不能大於最大值','error'); return;
   }
+  // 範圍不能超出「編號位數」能表示的上限（例如3位＝最大999），避免號碼位數跟實際範圍互相矛盾
+  const bibPadMax=Math.pow(10,bibPadLength)-1;
+  if(bibRangeMax>bibPadMax){
+    showToast('號碼最大值（'+bibRangeMax+'）超出「選手編號位數」可表示的範圍（'+bibPadLength+'位最大到 '+bibPadMax+'），請調高位數或調低最大值','error'); return;
+  }
+  if(bibRangeMin>bibPadMax){
+    showToast('號碼最小值（'+bibRangeMin+'）超出「選手編號位數」可表示的範圍（'+bibPadLength+'位最大到 '+bibPadMax+'），請調高位數或調低最小值','error'); return;
+  }
   const data = {
     name:document.getElementById('evName').value.trim(),
     date:document.getElementById('evDate').value,
@@ -1905,19 +1913,19 @@ window.onRecordEventChange=async function(){
 }
 let _lastRecordsData = []; // 儲存最新打卡記錄供排序重渲染用
 let curRecGroupNameById={}, curRecCheckpointNameById={}; // 目前賽事的組別/站點目前名稱對照（即時查詢，改名不受影響）
+let curRecBibByUid={}, curRecNameByUid={}; // 目前賽事的選手目前編號/姓名對照（即時查詢，改編號/改姓名不受影響）
 function reRenderRecords() {
   renderRecordRows(getSorted('recordsTableBody', _lastRecordsData));
 }
 function renderRecordRows(rows) {
   const tbody = document.getElementById('recordsTableBody');
-  tbody.innerHTML = rows.map(({d, name}) => {
+  tbody.innerHTML = rows.map(({d, name, bibNumber, group}) => {
     const r = d.data ? d.data() : d;
     const id = d.id || d._id;
-    const groupDisplay = curRecGroupNameById[r.groupId] || r.group || '-';
     const stationDisplay = curRecCheckpointNameById[r.stationId] || r.station;
     return '<tr><td><input type="checkbox" class="row-cb" data-id="'+id+'" onchange="onRowCbChange(\'recordsBatchDeleteBtn\',\'recordsTableBody\',\'recordsSelectAll\')"></td>'
-      +'<td><strong>'+esc(r.bibNumber||'-')+'</strong></td>'
-      +'<td><span class="badge">'+esc(groupDisplay)+'</span></td>'
+      +'<td><strong>'+esc(bibNumber||'-')+'</strong></td>'
+      +'<td><span class="badge">'+esc(group||'-')+'</span></td>'
       +'<td><span class="mono">'+esc(r.uniqueId||'')+'</span></td>'
       +'<td>'+esc(name)+'</td>'
       +'<td>'+esc(stationDisplay)+'</td>'
@@ -1933,14 +1941,23 @@ async function loadRecords(){
   if(evDoc.exists())document.getElementById('recordsEventName').textContent=evDoc.data().name;
   if(recordsUnsub)recordsUnsub();
 
-  // 姓名對照表只在「選擇賽事」時讀取一次，不在每次打卡（onSnapshot觸發）時重新下載整個runners集合，
+  // 選手編號/姓名對照表只在「選擇賽事」時讀取一次，不在每次打卡（onSnapshot觸發）時重新下載整個runners集合，
   // 否則比賽當天多站連續掃描、加上公開統計頁多人同時觀看，會被讀取成本壓垮。
-  // 範圍只涵蓋此賽事已報名的選手；若某筆打卡記錄的uniqueId不在報名清單中（異常資料），姓名會顯示「-」。
+  // 範圍只涵蓋此賽事已報名的選手；若某筆打卡記錄的uniqueId不在報名清單中（異常資料／選手報名已被刪除），
+  // 編號/姓名會退回顯示這筆打卡記錄當初寫入時存的舊值。
   const entrySnap=await getDocs(collection(db,'events',curRecordEventId,'runners'));
   const entryNameMap={};
   const uniqueIds=[];
-  entrySnap.docs.forEach(d=>{const e=d.data(); uniqueIds.push(e.uniqueId); if(e.name)entryNameMap[e.uniqueId]=e.name;});
+  curRecBibByUid={};
+  entrySnap.docs.forEach(d=>{
+    const e=d.data();
+    uniqueIds.push(e.uniqueId);
+    if(e.name)entryNameMap[e.uniqueId]=e.name;
+    curRecBibByUid[e.uniqueId]=e.bibNumber||'';
+  });
   const rMap=await fetchRunnersByUniqueIds(uniqueIds);
+  curRecNameByUid={};
+  uniqueIds.forEach(uid=>{curRecNameByUid[uid]=entryNameMap[uid]||rMap[uid]?.name||'';});
 
   // 組別/站點名稱對照表：只在切換賽事時讀一次，畫面上一律顯示「目前」的名稱
   const [gSnap,checkpointSnap]=await Promise.all([
@@ -1957,8 +1974,12 @@ async function loadRecords(){
       if(snap.empty){tbody.innerHTML='<tr><td colspan="9" class="loading-cell">尚無打卡記錄</td></tr>';_lastRecordsData=[];return;}
       _lastRecordsData=snap.docs.map(d=>{
         const r=d.data();
-        const name=r.name||entryNameMap[r.uniqueId]||rMap[r.uniqueId]?.name||'-';
-        return {...r, _id:d.id, name, d};
+        // 編號/姓名/組別一律優先顯示「目前」資料（用uniqueId/groupId現查），
+        // 只有選手報名或組別已被刪除查不到時，才退回顯示這筆記錄當初存的舊值。
+        const name=curRecNameByUid[r.uniqueId]||r.name||'-';
+        const bibNumber=curRecBibByUid[r.uniqueId]||r.bibNumber||'-';
+        const group=curRecGroupNameById[r.groupId]||r.group||'-';
+        return {...r, _id:d.id, name, bibNumber, group, d};
       });
       renderRecordRows(getSorted('recordsTableBody',_lastRecordsData));
     }
@@ -2138,9 +2159,9 @@ window.exportRecordsCSV=async function(){
   const sorted=getSorted('recordsTableBody',_lastRecordsData);
   let csv='ID,姓名,編號,組別,站點,掃描時間\n';
   sorted.forEach(r=>{
-    const groupDisplay=curRecGroupNameById[r.groupId]||r.group;
+    // r.name/r.bibNumber/r.group 已在 loadRecords() 解析成「目前」的值，這裡直接用即可
     const stationDisplay=curRecCheckpointNameById[r.stationId]||r.station;
-    csv+=[r.uniqueId,r.name,r.bibNumber,groupDisplay,stationDisplay,fmtDT(r.scanTime)].map(csvCell).join(',')+'\n';
+    csv+=[r.uniqueId,r.name,r.bibNumber,r.group,stationDisplay,fmtDT(r.scanTime)].map(csvCell).join(',')+'\n';
   });
   downloadCSV(csv,evFileName(evName,evDate)+'_打卡記錄_'+fmtFileDateTime()+'.csv');
   showToast('CSV已下載');
@@ -2152,9 +2173,12 @@ window.printRecords=async function(){
   const snap=await getDocs(query(collection(db,'events',curRecordEventId,'records'),orderBy('scanTime','asc')));
   const rows=snap.docs.map(d=>{
     const r=d.data();
+    // 這裡是另外重新查一次 records，不是走 _lastRecordsData，所以編號/姓名/組別要自己現查一次「目前」的值
+    const bibDisplay=curRecBibByUid[r.uniqueId]||r.bibNumber||'';
+    const nameDisplay=curRecNameByUid[r.uniqueId]||r.name||'';
     const groupDisplay=curRecGroupNameById[r.groupId]||r.group||'';
     const stationDisplay=curRecCheckpointNameById[r.stationId]||r.station;
-    return '<tr><td>'+esc(r.bibNumber||'')+'</td><td>'+esc(groupDisplay)+'</td><td>'+esc(r.uniqueId||'')+'</td><td>'+esc(r.name||'')+'</td><td>'+esc(stationDisplay)+'</td><td>'+fmt(r.scanTime)+'</td><td>'+esc(r.deviceName||'-')+'</td></tr>';
+    return '<tr><td>'+esc(bibDisplay)+'</td><td>'+esc(groupDisplay)+'</td><td>'+esc(r.uniqueId||'')+'</td><td>'+esc(nameDisplay)+'</td><td>'+esc(stationDisplay)+'</td><td>'+fmt(r.scanTime)+'</td><td>'+esc(r.deviceName||'-')+'</td></tr>';
   }).join('');
   const win=window.open('','_blank');
   win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+esc(evName)+'</title><style>body{font-family:sans-serif;padding:20px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f0f0f0;padding:6px;border:1px solid #ddd}td{padding:5px 6px;border:1px solid #ddd}@media print{button{display:none}}</style></head><body>'
