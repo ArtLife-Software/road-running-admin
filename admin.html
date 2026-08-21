@@ -2917,12 +2917,14 @@ function renderStatsContent(roster, records, checkinIds){
     gStations.forEach((s,i)=>{
       const cnt=new Set(recs.filter(r=>r.stationId===s.id&&ents.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size;
       const pct=baseCount>0?Math.round(cnt/baseCount*100):0;
+      card+='<div class="station-block">';
       card+='<div class="station-stat-row"><div class="station-stat-label"><span class="station-num">'+(i+1)+'</span><span>'+esc(s.name)+(i===0?' <span style="font-size:.68rem;color:var(--muted)">(起跑站)</span>':'')+'</span></div><div class="station-stat-bar"><div class="station-stat-fill" style="width:'+pct+'%"></div></div><div class="station-stat-count">'+cnt+'人</div></div>';
-      // 每一站（起跑站除外）下方列出前幾名，名次數量由賽事編輯的「各站前幾名」設定決定
+      // 每一站（起跑站除外）下方列出前幾名，名次數量由賽事編輯的「統計各站前幾名」設定決定
       if(i>0){
         const top=computeTopAtStation(ents,recs,gStations[0],s,topFinishersCount);
         card+=renderTopFinishersHtml(top);
       }
+      card+='</div>';
     });
     card+='</div>';
     card+='</div>';
@@ -3791,14 +3793,18 @@ th[data-sort]{cursor:pointer;user-select:none;white-space:nowrap;}
 th[data-sort]:hover{color:var(--accent);}
 .sort-icon{font-size:.7rem;color:var(--muted);}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;}
-.station-stats{display:flex;flex-direction:column;gap:10px;}
+.station-stats{display:flex;flex-direction:column;}
+.station-block{padding:10px 0;}
+.station-block:first-child{padding-top:0;}
+.station-block:last-child{padding-bottom:0;}
+.station-block+.station-block{border-top:1px dashed var(--border);}
 .station-stat-row{display:grid;grid-template-columns:160px 1fr 55px;align-items:center;gap:10px;}
 .station-stat-label{display:flex;align-items:center;gap:8px;font-size:.85rem;}
 .station-num{background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0;}
 .station-stat-bar{background:var(--surface2);border-radius:4px;height:8px;overflow:hidden;}
 .station-stat-fill{background:var(--accent);height:100%;border-radius:4px;transition:width .5s;}
 .station-stat-count{font-family:var(--mono);font-size:.82rem;color:var(--muted);text-align:right;}
-.top-finishers{margin-top:12px;padding-top:10px;border-top:1px dashed var(--border);}
+.top-finishers{margin-top:8px;margin-left:170px;}
 .top-finishers-title{font-size:.75rem;color:var(--muted);margin-bottom:6px;}
 .top-finisher-row{display:flex;align-items:flex-start;gap:8px;padding:3px 0;font-size:.85rem;}
 .top-finisher-rank{flex-shrink:0;font-size:1rem;line-height:1.3;}
@@ -3820,6 +3826,7 @@ th[data-sort]:hover{color:var(--accent);}
   .sidebar{display:none!important;}
   .main{margin-left:0;padding:16px;padding-bottom:80px;}
   .station-stat-row{grid-template-columns:110px 1fr 45px;}
+  .top-finishers{margin-left:120px;}
   .section-header{flex-direction:column;align-items:flex-start;}
   .top-bar{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);margin:-16px -16px 16px;}
   .top-bar-title{font-size:1rem;font-weight:900;white-space:nowrap;}
