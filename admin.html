@@ -143,6 +143,17 @@ function deleteBibMarker(batchOrNull,eventId,bibNumber){
   if(batchOrNull){batchOrNull.delete(ref);}
   else{deleteDoc(ref).catch(()=>{});} // 標記本來就不存在也沒關係
 }
+// 後台（新增報名／編輯報名改號碼／CSV匯入）指定或改變一個號碼時，也要同步建立這個標記，
+// 否則選手端的原子防撞號機制（t.create）形同虛設——因為標記根本不存在，選手端會誤以為號碼沒人用。
+// 用 setDoc（不是 t.create）單純確保標記存在，不做原子搶號（後台是管理員在用，人少、頻率低，
+// 這個極端情況先不處理，跟你確認過範圍）。
+function setBibMarker(batchOrNull,eventId,bibNumber,uniqueId){
+  if(!bibNumber)return;
+  const ref=doc(db,'events',eventId,'bibs',bibNumber);
+  const data={uniqueId:uniqueId||'',createdAt:serverTimestamp()};
+  if(batchOrNull){batchOrNull.set(ref,data);}
+  else{setDoc(ref,data).catch(()=>{});}
+}
 
 // ── 只查指定 uniqueId 的選手主檔，取代整個 runners 集合全表掃描 ──
 // Firestore 'in' 查詢上限30個，超過自動分批、平行查詢
@@ -252,18 +263,32 @@ function setFieldError(id, hasError) {
   el.style.borderColor = hasError ? 'var(--red)' : '';
 }
 
-// ── 選手比對三步驟 ──
-function isSamePerson(a, b) {
-  if (a.idNumber && b.idNumber) return a.idNumber === b.idNumber;
-  if (a.gender && b.gender && a.gender !== b.gender) return false;
-  if (a.birthday && b.birthday && a.birthday !== b.birthday) return false;
-  const nameMatch = a.name && b.name && a.name === b.name;
-  const phoneMatch = a.phone && b.phone && a.phone === b.phone;
-  const emailMatch = a.email && b.email && a.email === b.email;
-  if (nameMatch && (phoneMatch || emailMatch)) return true;
+// ── 選手比對：回傳三種狀態而不是true/false──
+// 'same'（身分證號相同，直接確定同一人，不用問）｜
+// 'different'（性別或生日不同、或模糊比對門檻沒到，直接確定非同一人，不用問）｜
+// 'ambiguous'（其餘模糊相符的情況，無法確定，需要跳確認對話框讓使用者自己選）
+function matchPersonStatus(a, b) {
+  // 第一階段：身分證號都有填 → 直接確定
+  if (a.idNumber && b.idNumber) return a.idNumber === b.idNumber ? 'same' : 'different';
+  // 第二階段：性別或生日不同 → 直接確定非同一人（性別、生日是必填欄位，走到這裡代表雙方都已相同）
+  if (a.gender && b.gender && a.gender !== b.gender) return 'different';
+  if (a.birthday && b.birthday && a.birthday !== b.birthday) return 'different';
+  // 第三階段：性別+生日已經算2分，姓名/手機/Email三選一再相符（湊到cnt>=3）就算「不確定」需要人工確認
   let cnt = 0;
   ['name','gender','birthday','phone','email'].forEach(f => { if (a[f]&&b[f]&&a[f]===b[f]) cnt++; });
-  return cnt >= 3;
+  return cnt >= 3 ? 'ambiguous' : 'different';
+}
+// 從候選清單裡找出比對結果：'same' 優先（不管有沒有其他ambiguous候選都直接採用，
+// 因為身分證號相同是鐵證），沒有same才看有沒有ambiguous，都沒有就沒比對到
+function findPersonMatch(candidates, target, excludeId) {
+  let match = null, status = null;
+  for (const r of candidates) {
+    if (excludeId && r.docId === excludeId) continue;
+    const s = matchPersonStatus(r, target);
+    if (s === 'same') { match = r; status = 'same'; break; }
+    if (s === 'ambiguous' && status !== 'same') { match = r; status = 'ambiguous'; }
+  }
+  return { match, status };
 }
 
 // ── 登入 ──
@@ -1382,8 +1407,8 @@ window.handleEntryCSV=async function(e){
     const note=vals[8]||'';
     const runnerData={name,gender,birthday,phone,email,idNumber,note};
 
-    // 比對選手資料庫
-    const match=existingRunners.find(r=>isSamePerson(r,runnerData));
+    // 比對選手資料庫（批次匯入沒辦法跳確認對話框，'same'／'ambiguous' 都當作同一人，跟改版前行為一致）
+    const {match}=findPersonMatch(existingRunners,runnerData);
     let uniqueId;
     if(match){
       // 更新選手資料
@@ -1454,6 +1479,8 @@ window.handleEntryCSV=async function(e){
     const entryRef=doc(collection(db,'events',eventId,'runners'));
     const groupId=groupIdByName[group]||'';
     await bop(b=>b.set(entryRef,{uniqueId,name,bibNumber:finalBib,group,groupId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}));
+    // 同步建立號碼佔用標記，選手端的原子防撞號機制才能正確涵蓋這個號碼（不然標記不存在等於沒鎖住）
+    await bop(b=>setBibMarker(b,eventId,finalBib,uniqueId));
     existingEntries.push({docId:entryRef.id,uniqueId,bibNumber:finalBib,group,groupId});
     addedEntries++;
   }
@@ -1464,6 +1491,7 @@ window.handleEntryCSV=async function(e){
   if(skippedEntries)msg+='，略過重複'+skippedEntries+'筆';
   if(fixedBibs)msg+='，修正重複編號'+fixedBibs+'筆';
   showToast(msg);
+  availBibSetAdmin=null; // 匯入可能配掉很多號碼，「查看可用號碼」快取要清掉，不然要重整頁面才會反映
   loadEntries(); e.target.value='';
 }
 
@@ -1769,7 +1797,11 @@ window.validateEntryField=async function(field){
       const snap=await getDocs(collection(db,'events',eventId,'runners'));
       const dup=snap.docs.find(d=>d.data().bibNumber===bib&&d.id!==docId);
       setFieldError('eBib',!!dup);
-      if(dup)showToast('編號已被使用','error');
+      if(dup){
+        showToast('編號已被使用','error');
+        // 偵測到衝突代表現在可能有很多人同時在搶報名，快取可能已經整批過期，直接作廢，下次重新完整查詢
+        availBibSetAdmin=null;
+      }
     }
   }
   if(field==='birthday') setFieldError('eBirthday',!validateBirthday(document.getElementById('eBirthday').value.trim()));
@@ -1935,63 +1967,77 @@ window.saveEntry=async function(){
   // 編號重複檢查
   const snap=await getDocs(collection(db,'events',eventId,'runners'));
   const dup=snap.docs.find(d=>d.data().bibNumber===bibNumber&&d.id!==id);
-  if(dup){setFieldError('eBib',true);showToast('編號已被使用','error');return;}
+  if(dup){
+    setFieldError('eBib',true);showToast('編號已被使用','error');
+    // 偵測到衝突代表現在可能有很多人同時在搶報名，快取可能已經整批過期，直接作廢，下次重新完整查詢
+    availBibSetAdmin=null;
+    return;
+  }
   setFieldError('eBib',false);
-  // 若未選擇現有選手，比對資料庫
+  // 若未選擇現有選手，比對資料庫（新增報名專用：決定沿用既有選手還是建立新選手）
   if(!uniqueId){
     const runnerData={name,gender,birthday,phone,email,idNumber:idNum,note};
     const runnerSnap=await getDocs(collection(db,'runners'));
     const existingRunners=runnerSnap.docs.map(d=>({docId:d.id,...d.data()}));
-    const match=existingRunners.find(r=>isSamePerson(r,runnerData));
-    if(match){
-      const fields=[
-        {label:'姓名',old:match.name||'',new:name},
-        {label:'性別',old:match.gender||'',new:gender},
-        {label:'生日',old:match.birthday||'',new:birthday},
-        {label:'手機',old:match.phone||'',new:phone},
-        {label:'Email',old:match.email||'',new:email},
-        {label:'身分證',old:match.idNumber||'',new:idNum},
-      ];
-      const hasDiff=fields.some(f=>f.old!==f.new);
-      if(hasDiff){
-        const result=await showSimilarPersonDialog(match,runnerData);
-        if(result==='refill') return;
-        if(result==='same'){
-          uniqueId=match.uniqueId;
-          await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
-        } else {
-          // 非同一人：建立新選手（計數器配號，與線上報名共用、不會撞號）
-          uniqueId=await allocateUniqueId();
-          await setDoc(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
-        }
-      } else {
-        // 完全相同，直接沿用
+    const {match,status}=findPersonMatch(existingRunners,runnerData);
+    if(match&&status==='same'){
+      // 身分證號相同，確定同一人，不用問，直接沿用並同步最新資料
+      uniqueId=match.uniqueId;
+      await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
+    }else if(match&&status==='ambiguous'){
+      const result=await showSimilarPersonDialog(match,runnerData);
+      if(result==='refill')return;
+      if(result==='same'){
         uniqueId=match.uniqueId;
+        await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
+      }else{
+        // 非同一人：建立新選手（計數器配號，與線上報名共用、不會撞號）
+        uniqueId=await allocateUniqueId();
+        await setDoc(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
       }
-    } else {
-      // 無比對結果，建立新選手（計數器配號，與線上報名共用、不會撞號）
+    }else{
+      // 確定非同一人／無比對結果：建立新選手（計數器配號，與線上報名共用、不會撞號）
       uniqueId=await allocateUniqueId();
       await setDoc(doc(collection(db,'runners')),{...runnerData,uniqueId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
     }
   }
-  // 已報名檢查（新增時才需要，編輯時跳過）
+  // 已報名檢查（新增時才需要，編輯時跳過）——已報名過此賽事就直接拒絕，不要靜默更新，
+  // 請管理員直接去編輯既有那筆記錄（靜默更新會漏改編號，而且不透明，容易搞混是新增還是更新）
   if(!id){
     const existingEntry=await getDocs(query(collection(db,'events',eventId,'runners'),where('uniqueId','==',uniqueId)));
     if(!existingEntry.empty){
-      const exDoc=existingEntry.docs[0];
-      const exData=exDoc.data();
-      const entryUpdate={bibNumber,group,groupId,customData,name,updatedAt:serverTimestamp()};
-      if(exData.cancelRequested){
-        entryUpdate.cancelRequested=deleteField();
-        entryUpdate.cancelRequestedAt=deleteField();
-      }
-      // 已報名：更新 bibNumber、group、customData（若原本申請取消中，順便撤回），同時同步個人資料到 runners 主檔
-      await updateDoc(doc(db,'events',eventId,'runners',exDoc.id),entryUpdate);
-      await updateDoc(doc(db,'runners',(await getDocs(query(collection(db,'runners'),where('uniqueId','==',uniqueId)))).docs[0].id),
-        {name,gender,birthday,phone,email,idNumber:idNum,note,updatedAt:serverTimestamp()});
-      showToast(exData.cancelRequested?'此選手原本申請取消，已重新啟用報名':'此選手已報名過此賽事，資料已更新');
-      closeModal('entryModal'); loadEntries();
+      const exData=existingEntry.docs[0].data();
+      showToast(exData.cancelRequested
+        ?'此選手已報名過此賽事，目前申請取消中，請至該筆記錄點「駁回取消申請」或直接編輯，不要重新新增'
+        :'此選手已報名過此賽事（編號 '+(exData.bibNumber||'-')+'），請直接編輯該筆既有記錄，不要重新新增','error');
       return;
+    }
+  }
+  // 身分欄位（姓名/性別/生日/手機/Email/身分證）若有變更，要跟其他選手比對，避免改成撞到別人的身分
+  // （編輯既有報名記錄、或新增報名時選了既有選手，都算是要把這份修改寫回既有選手主檔，都要檢查）
+  const bindingExistingRunner=id||document.getElementById('entryUniqueId').value;
+  if(bindingExistingRunner){
+    const rSnap=await getDocs(query(collection(db,'runners'),where('uniqueId','==',uniqueId)));
+    const oldProfile=rSnap.empty?{}:rSnap.docs[0].data();
+    const newIdentity={name,gender,birthday,phone,email,idNumber:idNum};
+    const identityChanged=['name','gender','birthday','phone','email','idNumber']
+      .some(f=>(oldProfile[f]||'')!==(newIdentity[f]||''));
+    if(identityChanged){
+      const allRunnerSnap=await getDocs(collection(db,'runners'));
+      const candidates=allRunnerSnap.docs.map(d=>({docId:d.id,...d.data()})).filter(r=>r.uniqueId!==uniqueId);
+      const {match,status}=findPersonMatch(candidates,newIdentity);
+      const conflictMsg='此身分資料與另一筆報名重複，如需異動請聯繫主辦單位，或請該選手申請取消後重新報名';
+      if(match&&status==='same'){
+        showToast(conflictMsg,'error');return;
+      }
+      if(match&&status==='ambiguous'){
+        const result=await showSimilarPersonDialog(match,newIdentity,{
+          showRefillButton:false,
+          warningText:'⚠️ 若選「同一人」，這次存檔會被拒絕（身分資料不能跟別人重複）；選「非同一人」才會繼續存檔。'
+        });
+        if(result==='same'){showToast(conflictMsg,'error');return;}
+        // result==='new' → 放行，繼續往下走
+      }
     }
   }
   // 只要綁定到既有選手（編輯，或新增時選了現有選手），就把表單上的個人資料同步寫回 runners 主檔
@@ -2003,8 +2049,23 @@ window.saveEntry=async function(){
     }
   }
   const data={uniqueId,name,bibNumber,group,groupId,customData,...parentalData,updatedAt:serverTimestamp()};
-  if(id){await updateDoc(doc(db,'events',eventId,'runners',id),data);showToast('已更新');}
-  else{data.createdAt=serverTimestamp();await addDoc(collection(db,'events',eventId,'runners'),data);showToast('已新增');}
+  if(id){
+    const oldBib=document.getElementById('eBib').dataset.oldBib||'';
+    await updateDoc(doc(db,'events',eventId,'runners',id),data);
+    showToast('已更新');
+    // 號碼有變動的話，要同步「號碼佔用標記」——刪掉舊的、建立新的，
+    // 選手端的原子防撞號機制（t.create）才能正確涵蓋這個號碼，不然標記不存在等於沒鎖住
+    if(bibNumber!==oldBib){
+      if(oldBib)deleteBibMarker(null,eventId,oldBib);
+      setBibMarker(null,eventId,bibNumber,uniqueId);
+    }
+  }else{
+    data.createdAt=serverTimestamp();
+    await addDoc(collection(db,'events',eventId,'runners'),data);
+    showToast('已新增');
+    setBibMarker(null,eventId,bibNumber,uniqueId);
+  }
+  availBibSetAdmin=null; // 這次可能用掉/改掉一個號碼，「查看可用號碼」快取要清掉，不然要重整頁面才會反映
   closeModal('entryModal'); loadEntries();
 }
 window.deleteEntry=async function(id,name){
@@ -2014,6 +2075,7 @@ window.deleteEntry=async function(id,name){
   const entryObj=allEntries.find(x=>x.docId===id||x.id===id);
   await deleteDoc(doc(db,'events',eventId,'runners',id));
   deleteBibMarker(null,eventId,entryObj&&entryObj.bibNumber);
+  availBibSetAdmin=null; // 刪除後空出一個號碼，「查看可用號碼」快取要清掉，不然要重整頁面才會反映
   showToast('已刪除'); loadEntries();
 }
 // 駁回取消申請：只清除標記，報名資料不受影響
@@ -3296,7 +3358,8 @@ window.exportStaff=async function(){
 }
 
 // ── 相似選手確認對話框（管理員用：完整顯示新舊資料）──
-function showSimilarPersonDialog(match, runnerData){
+function showSimilarPersonDialog(match, runnerData, opts){
+  opts=opts||{};
   return new Promise(resolve=>{
     const fields=[
       {label:'姓名',  old:match.name,      cur:runnerData.name},
@@ -3317,6 +3380,10 @@ function showSimilarPersonDialog(match, runnerData){
         +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+esc(curVal||'')+'</td>'
         +'</tr>';
     }).join('');
+    const warningText=opts.warningText||'⚠️ 若選「同一人」，則以新資料取代舊資料！';
+    let btnsHtml='<button id="dlgSame" class="btn btn-primary btn-sm">✅ 同一人</button>'
+      +'<button id="dlgNew" class="btn btn-ghost btn-sm">👤 非同一人</button>';
+    if(opts.showRefillButton!==false)btnsHtml+='<button id="dlgRefill" class="btn btn-ghost btn-sm">✏️ 重填</button>';
     const dialog=document.createElement('div');
     dialog.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box';
     dialog.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:480px;width:100%;box-sizing:border-box;overflow:hidden">'
@@ -3330,16 +3397,13 @@ function showSimilarPersonDialog(match, runnerData){
       +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left;border:none">填寫的</th>'
       +'</tr></thead>'
       +'<tbody>'+rows+'</tbody></table>'
-      +'<div style="font-size:.75rem;color:var(--accent);margin-bottom:12px">⚠️ 若選「同一人」，則以新資料取代舊資料！</div>'
-      +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
-      +'<button id="dlgSame" class="btn btn-primary btn-sm">✅ 同一人</button>'
-      +'<button id="dlgNew" class="btn btn-ghost btn-sm">👤 非同一人</button>'
-      +'<button id="dlgRefill" class="btn btn-ghost btn-sm">✏️ 重填</button>'
-      +'</div></div>';
+      +'<div style="font-size:.75rem;color:var(--accent);margin-bottom:12px">'+warningText+'</div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap">'+btnsHtml+'</div></div>';
     document.body.appendChild(dialog);
     dialog.querySelector('#dlgSame').onclick=()=>{dialog.remove();resolve('same');};
     dialog.querySelector('#dlgNew').onclick=()=>{dialog.remove();resolve('new');};
-    dialog.querySelector('#dlgRefill').onclick=()=>{dialog.remove();resolve('refill');};
+    const refillBtn=dialog.querySelector('#dlgRefill');
+    if(refillBtn)refillBtn.onclick=()=>{dialog.remove();resolve('refill');};
   });
 }
 
@@ -3482,6 +3546,7 @@ window.batchDeleteEntries=async function(){
   }
   if(opCount>0) await batch.commit();
   showToast('已刪除 '+ids.length+' 筆報名資料');
+  availBibSetAdmin=null; // 批次刪除會空出多個號碼，「查看可用號碼」快取要清掉，不然要重整頁面才會反映
   resetBatchUI('entriesTableBody','entriesSelectAll','entriesBatchDeleteBtn','entriesBatchRejectBtn');
   loadEntries();
 }
