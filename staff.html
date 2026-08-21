@@ -6,7 +6,7 @@
 <title>路跑打卡系統｜工作人員服務</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2e3349;--accent:#f97316;--accent2:#fb923c;--green:#22c55e;--red:#ef4444;--text:#e8eaf0;--muted:#6b7280;--mono:'DM Mono',monospace;--sans:'Noto Sans TC',sans-serif;}
+:root{--bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2e3349;--accent:#f97316;--accent2:#fb923c;--green:#22c55e;--red:#ef4444;--text:#e8eaf0;--muted:#9aa1b5;--mono:'DM Mono',monospace;--sans:'Noto Sans TC',sans-serif;}
 *{box-sizing:border-box;margin:0;padding:0;}
 body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;}
 .wrap{max-width:560px;margin:0 auto;padding:20px;padding-bottom:90px;}
@@ -23,6 +23,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .input:focus{border-color:var(--accent);}
 .input-group{margin-bottom:14px;}
 .input-group label{display:block;font-size:.75rem;color:var(--muted);margin-bottom:5px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;}
+.required-star{color:var(--red);text-transform:none;}
 .input-row{display:flex;gap:8px;align-items:flex-start;}
 .input-row .input{flex:1;}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:13px 18px;border-radius:8px;border:none;font-family:var(--sans);font-size:.92rem;font-weight:700;cursor:pointer;transition:all .15s;white-space:nowrap;}
@@ -310,25 +311,25 @@ async function selectSignupEvent(eventId,keepWrapper){
     +(regInfo?'<div style="margin-top:8px;text-align:left">'+regInfo+'</div>':'')
     +'</div>';
   formHtml+='<div class="card">';
-  formHtml+='<div class="input-group"><label>姓名 *</label><input id="suName" type="text" class="input" placeholder="王小明"></div>';
-  formHtml+='<div class="input-group"><label>性別 *</label><select id="suGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>';
-  formHtml+='<div class="input-group"><label>生日（yyyy/mm/dd）*</label>';
+  formHtml+='<div class="input-group"><label>姓名 <span class="required-star">*</span></label><input id="suName" type="text" class="input" placeholder="王小明"></div>';
+  formHtml+='<div class="input-group"><label>性別 <span class="required-star">*</span></label><select id="suGender" class="input"><option value="">請選擇...</option><option value="男">男</option><option value="女">女</option></select></div>';
+  formHtml+='<div class="input-group"><label>生日（yyyy/mm/dd）<span class="required-star">*</span></label>';
   formHtml+='<div class="input-row"><input id="suBirthday" data-fmt="ymd" type="text" class="input" placeholder="yyyy/mm/dd" onblur="setFieldError(\'suBirthday\',!validateBirthday(this.value.trim()))">';
   formHtml+='<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\'suBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>';
   formHtml+='<input type="date" id="suBirthdayPicker" style="display:none" onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\'suBirthday\').value=y+\'/\'+m+\'/\'+d;setFieldError(\'suBirthday\',false);this.value=\'\'}"></div></div>';
-  formHtml+='<div class="input-group"><label>身分證字號（1英文+9數字）*</label><input id="suIdNumber" type="text" class="input" placeholder="A123456789" onblur="setFieldError(\'suIdNumber\',!validateId(this.value.trim()))"></div>';
+  formHtml+='<div class="input-group"><label>身分證字號（1英文+9數字）<span class="required-star">*</span></label><input id="suIdNumber" type="text" class="input" placeholder="A123456789" onblur="setFieldError(\'suIdNumber\',!validateId(this.value.trim()))"></div>';
   // staffFieldSettings 控制手機和 Email 的顯示與必填
   const sfs=curSignupEvent.staffFieldSettings||{};
   const sPhoneShow=sfs.phone?.show!==false;
   const sPhoneReq=sfs.phone?.required===true;
   const sEmailShow=sfs.email?.show!==false;
   const sEmailReq=sfs.email?.required===true;
-  if(sPhoneShow) formHtml+='<div class="input-group"><label>手機號碼'+(sPhoneReq?' *':'')+'</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="if(this.value.trim())setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
-  if(sEmailShow) formHtml+='<div class="input-group"><label>E-Mail'+(sEmailReq?' *':'')+'</label><input id="suEmail" type="email" class="input" placeholder="example@email.com" onblur="if(this.value.trim())setFieldError(\'suEmail\',!validateEmail(this.value.trim()))"></div>';
+  if(sPhoneShow) formHtml+='<div class="input-group"><label>手機號碼'+(sPhoneReq?' <span class="required-star">*</span>':'')+'</label><input id="suPhone" type="tel" class="input" placeholder="0912345678" onblur="if(this.value.trim())setFieldError(\'suPhone\',!validatePhone(this.value.trim()))"></div>';
+  if(sEmailShow) formHtml+='<div class="input-group"><label>E-Mail'+(sEmailReq?' <span class="required-star">*</span>':'')+'</label><input id="suEmail" type="email" class="input" placeholder="example@email.com" onblur="if(this.value.trim())setFieldError(\'suEmail\',!validateEmail(this.value.trim()))"></div>';
   formHtml+='<div class="input-group"><label>備註</label><input id="suNote" type="text" class="input"></div>';
   // 自訂欄位
   curSignupCustomFields.forEach(f=>{
-    const id='su_cf_'+f.id; const reqMark=f.required?' *':'';
+    const id='su_cf_'+f.id; const reqMark=f.required?' <span class="required-star">*</span>':'';
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     if(f.type==='select'){
       formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"'+(f.allowOther?' onchange="document.getElementById(\''+id+'_other\').style.display=this.value===\'__other__\'?\'block\':\'none\'"':'')+'><option value="">請選擇...</option>';
@@ -596,22 +597,22 @@ window.showEditForm=async function(eventId,staffDocId,cardId){
   const cd=e.customData||{};
   let html='<div class="card" style="background:var(--surface2);margin-top:12px">';
   html+='<div class="csv-hint">如需修改身分證字號，請直接填入正確號碼。</div>';
-  html+='<div class="input-group"><label>姓名 *</label><input id="'+cardId+'_name" type="text" class="input" value="'+esc(e.name||'')+'"></div>';
-  html+='<div class="input-group"><label>性別 *</label><select id="'+cardId+'_gender" class="input"><option value="男"'+(e.gender==='男'?' selected':'')+'>男</option><option value="女"'+(e.gender==='女'?' selected':'')+'>女</option></select></div>';
-  html+='<div class="input-group"><label>生日 *</label>'
+  html+='<div class="input-group"><label>姓名 <span class="required-star">*</span></label><input id="'+cardId+'_name" type="text" class="input" value="'+esc(e.name||'')+'"></div>';
+  html+='<div class="input-group"><label>性別 <span class="required-star">*</span></label><select id="'+cardId+'_gender" class="input"><option value="男"'+(e.gender==='男'?' selected':'')+'>男</option><option value="女"'+(e.gender==='女'?' selected':'')+'>女</option></select></div>';
+  html+='<div class="input-group"><label>生日 <span class="required-star">*</span></label>'
     +'<div class="input-row">'
     +'<input id="'+cardId+'_birthday" data-fmt="ymd" type="text" class="input" value="'+esc(e.birthday||'')+'" oninput="applyHalf(this)">'
     +'<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\''+cardId+'_birthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>'
     +'<input type="date" id="'+cardId+'_birthdayPicker" style="display:none" '
     +'onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\''+cardId+'_birthday\').value=y+\'/\'+m+\'/\'+d;this.value=\'\'}">'
     +'</div></div>';
-  html+='<div class="input-group"><label>身分證字號 *</label><input id="'+cardId+'_idNumber" type="text" class="input" value="'+esc(e.idNumber||'')+'" oninput="applyHalf(this)"></div>';
+  html+='<div class="input-group"><label>身分證字號 <span class="required-star">*</span></label><input id="'+cardId+'_idNumber" type="text" class="input" value="'+esc(e.idNumber||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>手機</label><input id="'+cardId+'_phone" type="tel" class="input" value="'+esc(e.phone||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>Email</label><input id="'+cardId+'_email" type="email" class="input" value="'+esc(e.email||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_note" type="text" class="input" value="'+esc(e.note||'')+'"></div>';
   customFields.forEach(f=>{
     const fid=cardId+'_cf_'+f.id;
-    const reqMark=f.required?' *':'';
+    const reqMark=f.required?' <span class="required-star">*</span>':'';
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     if(f.type==='select'){
       const isOtherVal=f.allowOther&&cd[f.id]!==undefined&&cd[f.id]!==''&&!(f.options||[]).includes(cd[f.id]);
