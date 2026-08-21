@@ -2884,7 +2884,7 @@ function renderStatsContent(roster, records, checkinIds){
       +top.map((f,i)=>'<div class="top-finisher-row">'
         +'<span class="top-finisher-rank">'+(medals[i]||(i+1)+'.')+'</span>'
         +'<span class="top-finisher-info">'
-        +'<span class="top-finisher-bib">編號 '+esc(f.e.bibNumber||'-')+'</span>'
+        +'<span class="top-finisher-bib">'+esc(f.e.bibNumber||'-')+'</span>'
         +'<span class="top-finisher-name">'+esc(f.e.name||'-')+'</span>'
         +'</span></div>').join('')
       +'</div>';
@@ -4200,14 +4200,6 @@ th[data-sort]:hover{color:var(--accent);}
         <div style="font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:12px;letter-spacing:.05em">⚙️ 賽事設定</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <div class="input-group" style="margin:0">
-            <label>選手編號位數</label>
-            <select id="evBibPadLength" class="input">
-              <option value="2">2 位（01）</option>
-              <option value="3" selected>3 位（001）</option>
-              <option value="4">4 位（0001）</option>
-            </select>
-          </div>
-          <div class="input-group" style="margin:0">
             <label>統計百分比基準</label>
             <select id="evStatsBasis" class="input">
               <option value="registered" selected>報名人數</option>
@@ -4215,7 +4207,7 @@ th[data-sort]:hover{color:var(--accent);}
             </select>
           </div>
           <div class="input-group" style="margin:0">
-            <label>各站前幾名</label>
+            <label>統計各站前幾名</label>
             <input id="evTopFinishersCount" type="number" min="0" class="input" placeholder="例：3（0＝不顯示）">
           </div>
           <div class="input-group" style="margin:0">
@@ -4230,6 +4222,14 @@ th[data-sort]:hover{color:var(--accent);}
             <select id="evAllowBibChange" class="input">
               <option value="0" selected>否</option>
               <option value="1">是（報名期間內可修改）</option>
+            </select>
+          </div>
+          <div class="input-group" style="margin:0">
+            <label>選手編號位數</label>
+            <select id="evBibPadLength" class="input">
+              <option value="2">2 位（01）</option>
+              <option value="3" selected>3 位（001）</option>
+              <option value="4">4 位（0001）</option>
             </select>
           </div>
         </div>
