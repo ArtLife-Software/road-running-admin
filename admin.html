@@ -2839,12 +2839,18 @@ function renderStatsContent(roster, records, checkinIds){
     return expectedCount?Math.round(scannedCount/expectedCount*100):0;
   }
 
+  // 算組內抵達終點人數（只算「這個組別自己的」報名者，避免多組共用同一個終點站時算錯/算重複）
+  // 這個函式同時給「上方總人數統計」跟「各組卡片自己的完賽人數」共用，兩處才不會各自維護一套邏輯、悄悄長歪
+  function computeGroupFinishers(gEntries, recs, gStations){
+    const lastStation=gStations[gStations.length-1];
+    if(!lastStation)return 0;
+    return new Set(recs.filter(r=>r.stationId===lastStation.id&&gEntries.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size;
+  }
+
   // 上方資訊框
   const totalFinishers=groups.reduce((acc,g)=>{
-    const stations=groupStationsMap[g.id]||[];
-    const lastStation=stations[stations.length-1];
-    if(!lastStation)return acc;
-    return acc+new Set(records.filter(r=>r.stationId===lastStation.id&&entries.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size;
+    const gEntries=entries.filter(e=>e.groupId===g.id);
+    return acc+computeGroupFinishers(gEntries, records, groupStationsMap[g.id]||[]);
   },0);
   const overallProgress=calcProgress(entries, records);
   const maleCount=entries.filter(e=>(rMap[e.uniqueId]?.gender)==='男').length;
@@ -2893,8 +2899,7 @@ function renderStatsContent(roster, records, checkinIds){
   // 繪製一個組別統計卡的函式；gStations 是 [{id,name}]（依站序）
   function renderGroupCard(label, ents, recs, gStations){
     if(!ents.length)return '';
-    const lastStation=gStations[gStations.length-1];
-    const finishers=lastStation?new Set(recs.filter(r=>r.stationId===lastStation.id&&ents.find(e=>e.uniqueId===r.uniqueId)).map(r=>r.uniqueId)).size:0;
+    const finishers=computeGroupFinishers(ents, recs, gStations);
     const progress=calcProgress(ents,recs);
     const gMale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='男').length;
     const gFemale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='女').length;
