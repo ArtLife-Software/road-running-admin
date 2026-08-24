@@ -495,6 +495,7 @@ async function selectSignupEvent(eventId, keepWrapper){
     formHtml+='<option value="未分組">未分組</option>';
   }
   formHtml+='</select>'
+    +'<div id="suGroupNote" style="font-size:.8rem;margin-top:6px;color:var(--text);white-space:pre-line"></div>'
     +'<div id="suGroupHint" style="font-size:.75rem;margin-top:4px;min-height:16px;color:var(--muted)"></div>'
     +'</div>';
   // 邀請碼（由 onSignupGroupChange 動態顯示）
@@ -609,6 +610,8 @@ window.onSignupGroupChange=function(){
   const inviteRow=document.getElementById('suInviteCodeRow');
   const parentalBlock=document.getElementById('suParentalBlock');
   const hint=document.getElementById('suGroupHint');
+  const noteEl=document.getElementById('suGroupNote');
+  if(noteEl)noteEl.textContent=g?.note||'';
   refreshSignupBibField(g);
   if(inviteRow){inviteRow.style.display='none';document.getElementById('suInviteCode').value='';}
   // 家長區塊的顯示與旗標一律交給 updateParentalBlock 統一維護

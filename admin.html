@@ -746,6 +746,7 @@ window.onGBibOverrideChange=function(){
 window.showAddGroup=function(){
   document.getElementById('groupFormTitle').textContent='新增組別';
   document.getElementById('groupDocId').value=''; document.getElementById('gName').value='';
+  document.getElementById('gNote').value='';
   document.getElementById('gStationList').innerHTML=''; addGStationRow();
   document.getElementById('gGenderLimit').value='';
   document.getElementById('gGroupCapacity').value='0';
@@ -770,6 +771,7 @@ window.editGroup=async function(id){
   const g=snap.data();
   document.getElementById('groupFormTitle').textContent='編輯組別';
   document.getElementById('groupDocId').value=id; document.getElementById('gName').value=g.name||'';
+  document.getElementById('gNote').value=g.note||'';
   document.getElementById('gStationList').innerHTML='';
   const refs=g.stationRefs||[];
   if(refs.length)refs.forEach(cid=>addGStationRow(cid));
@@ -823,6 +825,7 @@ function refreshAllStationSelectOptions(){
 window.saveGroup=async function(){
   const id=document.getElementById('groupDocId').value;
   const name=document.getElementById('gName').value.trim();
+  const note=document.getElementById('gNote').value.trim();
   const stationRefs=Array.from(document.querySelectorAll('#gStationList .g-station-select')).map(s=>s.value).filter(Boolean);
   if(!name){showToast('組別名稱為必填','error');return;}
   if(!stationRefs.length){showToast('請至少選擇一個站點','error');return;}
@@ -868,7 +871,7 @@ window.saveGroup=async function(){
     if(gCustomBibRangeMax>gBibPadMax){showToast('自選號碼最大值（'+gCustomBibRangeMax+'）超出賽事「選手編號位數」可表示的範圍（'+gBibPadLength+'位最大到 '+gBibPadMax+'）','error'); return;}
     if(gCustomBibRangeMin>gBibPadMax){showToast('自選號碼最小值（'+gCustomBibRangeMin+'）超出賽事「選手編號位數」可表示的範圍（'+gBibPadLength+'位最大到 '+gBibPadMax+'）','error'); return;}
   }
-  const data={name,stationRefs,genderLimit,groupCapacity,ageMin,ageMax,parentalAge,finishTimeLimit,
+  const data={name,note,stationRefs,genderLimit,groupCapacity,ageMin,ageMax,parentalAge,finishTimeLimit,
     bibOverride,allowCustomBib,allowBibChange,bibRangeMin:gBibRangeMin,bibRangeMax:gBibRangeMax,
     customBibRangeMin:gCustomBibRangeMin,customBibRangeMax:gCustomBibRangeMax,
     updatedAt:serverTimestamp()};
@@ -4381,6 +4384,7 @@ th[data-sort]:hover{color:var(--accent);}
       <div class="modal-title" id="groupFormTitle" style="font-size:.95rem;margin-bottom:16px">新增組別</div>
       <input type="hidden" id="groupDocId">
       <div class="input-group"><label>組別名稱 *</label><input id="gName" type="text" class="input" placeholder="全馬、半馬、10K..."></div>
+      <div class="input-group"><label>組別註解（選填，會顯示在選手報名表單的組別選單下方）</label><textarea id="gNote" class="input" rows="2" placeholder="例：全馬需具備完賽半馬以上經驗"></textarea></div>
       <div class="input-group">
         <label>站點順序（依序挑選，兩個組別要共用同一個檢查點時，選同一個站點即可）</label>
         <div id="gStationList"></div>
