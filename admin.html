@@ -738,6 +738,11 @@ async function loadGroups() {
       +'<td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="editGroup(\''+d.id+'\')">編輯</button> <button class="btn btn-sm btn-danger" onclick="deleteGroup(\''+d.id+'\',\''+escJs(g.name)+'\')">刪除</button></td></tr>';
   }).join('');
 }
+// 組別「號碼規則」開關：沒勾選就把底下欄位隱藏＋清空，避免使用者以為填了就有作用
+window.onGBibOverrideChange=function(){
+  const on=document.getElementById('gBibOverride').checked;
+  document.getElementById('gBibOverrideFields').style.display=on?'':'none';
+}
 window.showAddGroup=function(){
   document.getElementById('groupFormTitle').textContent='新增組別';
   document.getElementById('groupDocId').value=''; document.getElementById('gName').value='';
@@ -750,6 +755,14 @@ window.showAddGroup=function(){
   document.getElementById('gInviteCode').value='';
   document.getElementById('gInviteCode').placeholder='例：VIP2026';
   document.getElementById('gFinishTimeLimit').value='0';
+  document.getElementById('gBibOverride').checked=false;
+  document.getElementById('gAllowCustomBib').value='0';
+  document.getElementById('gAllowBibChange').value='0';
+  document.getElementById('gBibRangeMin').value='';
+  document.getElementById('gBibRangeMax').value='';
+  document.getElementById('gCustomBibRangeMin').value='';
+  document.getElementById('gCustomBibRangeMax').value='';
+  onGBibOverrideChange();
   document.getElementById('groupForm').style.display='block';
 }
 window.editGroup=async function(id){
@@ -771,6 +784,15 @@ window.editGroup=async function(id){
   const gInv=document.getElementById('gInviteCode');
   gInv.value='';
   gInv.placeholder=groupHasInvite(g)?'已設定（輸入新碼可更換；輸入「清除」可移除）':'例：VIP2026';
+  // 號碼規則：沒開啟過就全部顯示空白/預設值，開啟過就回填組別自己的設定
+  document.getElementById('gBibOverride').checked=!!g.bibOverride;
+  document.getElementById('gAllowCustomBib').value=g.allowCustomBib?'1':'0';
+  document.getElementById('gAllowBibChange').value=g.allowBibChange?'1':'0';
+  document.getElementById('gBibRangeMin').value=g.bibRangeMin||'';
+  document.getElementById('gBibRangeMax').value=g.bibRangeMax||'';
+  document.getElementById('gCustomBibRangeMin').value=g.customBibRangeMin||'';
+  document.getElementById('gCustomBibRangeMax').value=g.customBibRangeMax||'';
+  onGBibOverrideChange();
   document.getElementById('groupForm').style.display='block';
 }
 // 站序的每一列是一個「選擇站點」下拉選單，選項來自這場賽事共用的站點清單（curCheckpoints）。
@@ -813,7 +835,43 @@ window.saveGroup=async function(){
   const finishTimeLimit=parseInt(document.getElementById('gFinishTimeLimit').value)||0;
   const inviteInput=document.getElementById('gInviteCode').value.trim();
   if(ageMin>0&&ageMax>0&&ageMin>ageMax){showToast('年齡下限不能大於上限','error');return;}
-  const data={name,stationRefs,genderLimit,groupCapacity,ageMin,ageMax,parentalAge,finishTimeLimit,updatedAt:serverTimestamp()};
+  // 號碼規則（組別覆寫，開關沒勾就不驗證、也不採用底下欄位）
+  const bibOverride=document.getElementById('gBibOverride').checked;
+  const allowCustomBib=document.getElementById('gAllowCustomBib').value==='1';
+  const allowBibChange=document.getElementById('gAllowBibChange').value==='1';
+  const gBibRangeMinRaw=document.getElementById('gBibRangeMin').value.trim();
+  const gBibRangeMaxRaw=document.getElementById('gBibRangeMax').value.trim();
+  const gBibRangeMin=gBibRangeMinRaw===''?0:parseInt(gBibRangeMinRaw)||0;
+  const gBibRangeMax=gBibRangeMaxRaw===''?0:parseInt(gBibRangeMaxRaw)||0;
+  const gCustomBibRangeMinRaw=document.getElementById('gCustomBibRangeMin').value.trim();
+  const gCustomBibRangeMaxRaw=document.getElementById('gCustomBibRangeMax').value.trim();
+  const gCustomBibRangeMin=gCustomBibRangeMinRaw===''?0:parseInt(gCustomBibRangeMinRaw)||0;
+  const gCustomBibRangeMax=gCustomBibRangeMaxRaw===''?0:parseInt(gCustomBibRangeMaxRaw)||0;
+  if(bibOverride){
+    const gBibFields=[
+      {raw:gBibRangeMinRaw, val:gBibRangeMin, label:'自動號碼最小值'},
+      {raw:gBibRangeMaxRaw, val:gBibRangeMax, label:'自動號碼最大值'},
+      {raw:gCustomBibRangeMinRaw, val:gCustomBibRangeMin, label:'自選最小值'},
+      {raw:gCustomBibRangeMaxRaw, val:gCustomBibRangeMax, label:'自選最大值'},
+    ];
+    for(const f of gBibFields){
+      if(f.raw!==''&&f.val<1){showToast(f.label+'必須是正整數（1以上），留空才代表不限制','error'); return;}
+    }
+    if(gBibRangeMin>0&&gBibRangeMax>0&&gBibRangeMin>gBibRangeMax){showToast('自動號碼最小值不能大於最大值','error'); return;}
+    if(gCustomBibRangeMin>0&&gCustomBibRangeMax>0&&gCustomBibRangeMin>gCustomBibRangeMax){showToast('自選號碼最小值不能大於最大值','error'); return;}
+    // 位數固定跟賽事一致，範圍不能超出賽事「選手編號位數」能表示的上限
+    const evDocForPad=await getDoc(doc(db,'events',curGEvId));
+    const gBibPadLength=evDocForPad.data()?.bibPadLength||3;
+    const gBibPadMax=Math.pow(10,gBibPadLength)-1;
+    if(gBibRangeMax>gBibPadMax){showToast('自動號碼最大值（'+gBibRangeMax+'）超出賽事「選手編號位數」可表示的範圍（'+gBibPadLength+'位最大到 '+gBibPadMax+'）','error'); return;}
+    if(gBibRangeMin>gBibPadMax){showToast('自動號碼最小值（'+gBibRangeMin+'）超出賽事「選手編號位數」可表示的範圍（'+gBibPadLength+'位最大到 '+gBibPadMax+'）','error'); return;}
+    if(gCustomBibRangeMax>gBibPadMax){showToast('自選號碼最大值（'+gCustomBibRangeMax+'）超出賽事「選手編號位數」可表示的範圍（'+gBibPadLength+'位最大到 '+gBibPadMax+'）','error'); return;}
+    if(gCustomBibRangeMin>gBibPadMax){showToast('自選號碼最小值（'+gCustomBibRangeMin+'）超出賽事「選手編號位數」可表示的範圍（'+gBibPadLength+'位最大到 '+gBibPadMax+'）','error'); return;}
+  }
+  const data={name,stationRefs,genderLimit,groupCapacity,ageMin,ageMax,parentalAge,finishTimeLimit,
+    bibOverride,allowCustomBib,allowBibChange,bibRangeMin:gBibRangeMin,bibRangeMax:gBibRangeMax,
+    customBibRangeMin:gCustomBibRangeMin,customBibRangeMax:gCustomBibRangeMax,
+    updatedAt:serverTimestamp()};
   // 編輯既有組別時，先讀出「改之前」的名稱，儲存後才能判斷組別是否改名，
   // 進而自動同步歷史報名資料的顯示名稱。站點改名不需要處理——站點名稱只存在
   // checkpoints 集合裡的單一一份，所有引用它的地方本來就是即時查詢，不會過時。
@@ -1080,6 +1138,33 @@ let curCustomBibRange={min:0,max:0}; // 0=不限制（「自訂號碼範圍」�
 function bibEffRange(rMin,rMax,pad){
   return {min:rMin>0?rMin:1, max:rMax>0?rMax:(Math.pow(10,pad)-1)};
 }
+// 依組別解析「有效」號碼設定：組別有開啟「自訂號碼規則」(bibOverride) 就用組別自己的設定，
+// 沒開啟就退回賽事設定（curBibPadLength/curBibRange/curCustomBibRange，loadEntries() 時已載入）。
+// 位數固定用賽事層級，不受組別影響。groupData 是組別文件本身（不是只有id）。
+// min/max＝「號碼範圍」（自動配號優先池，沒填退回位數上限）；
+// customMin/customMax＝「自訂號碼範圍」，沒填退回「號碼範圍」——這是自動配號/CSV補號用的四階段優先序。
+function getEffBibConfigForGroup(groupData){
+  const pad=curBibPadLength;
+  const useGroup=!!(groupData&&groupData.bibOverride);
+  const rMin=useGroup?(groupData.bibRangeMin||0):curBibRange.min;
+  const rMax=useGroup?(groupData.bibRangeMax||0):curBibRange.max;
+  const cMin=useGroup?(groupData.customBibRangeMin||0):curCustomBibRange.min;
+  const cMax=useGroup?(groupData.customBibRangeMax||0):curCustomBibRange.max;
+  const {min,max}=bibEffRange(rMin,rMax,pad);
+  const customMin=cMin>0?cMin:min; // 自訂範圍沒填就退回已解析好的「號碼範圍」
+  const customMax=cMax>0?cMax:max;
+  return {pad,min,max,customMin,customMax};
+}
+// 後台「查看可用號碼」面板專用：刻意只看「自訂號碼範圍」，沒填就直接退回位數上限（不經過「號碼範圍」），
+// 因為後台手動輸入本來就只受位數範圍限制，這個面板是給管理員瀏覽「自選池」用的，跟自動配號的四階段優先序是不同用途。
+function getAdminAvailBibRange(groupData){
+  const pad=curBibPadLength;
+  const useGroup=!!(groupData&&groupData.bibOverride);
+  const cMin=useGroup?(groupData.customBibRangeMin||0):curCustomBibRange.min;
+  const cMax=useGroup?(groupData.customBibRangeMax||0):curCustomBibRange.max;
+  const {min,max}=bibEffRange(cMin,cMax,pad);
+  return {pad,min,max};
+}
 async function loadEntriesSection() { await loadLockedEntryEventSelect(); }
 async function loadLockedEntryEventSelect() {
   const select=document.getElementById('entryEventSelect'); if(!select)return;
@@ -1236,13 +1321,11 @@ window.doEntrySearch=function(){
 // 取得下一個未使用編號：第0階段優先在「自訂號碼範圍」內找，第一階段（自訂範圍用完）改在「號碼範圍」內找，
 // 第二階段（範圍用完）改成搜尋「整個位數能表示的範圍」（含範圍以下閒置的號碼），
 // 第三階段（連整個位數範圍都用完）才真的超出位數往上配
-async function getNextBibNumber(eventId) {
+async function getNextBibNumber(eventId,groupId) {
   const snap=await getDocs(collection(db,'events',eventId,'runners'));
   const bibs=snap.docs.map(d=>parseInt(d.data().bibNumber)||0);
-  const pad=curBibPadLength;
-  const {min:cMin,max:cMax}=bibEffRange(curCustomBibRange.min,curCustomBibRange.max,pad);
+  const {pad,min,max,customMin:cMin,customMax:cMax}=getEffBibConfigForGroup(curEntryGroupMap[groupId]);
   for(let n=cMin;n<=cMax;n++){if(!bibs.includes(n))return String(n).padStart(pad,'0');}
-  const {min,max}=bibEffRange(curBibRange.min,curBibRange.max,pad);
   for(let n=min;n<=max;n++){
     if(n>=cMin&&n<=cMax)continue;
     if(!bibs.includes(n))return String(n).padStart(pad,'0');
@@ -1257,7 +1340,8 @@ async function getNextBibNumber(eventId) {
   return String(next).padStart(pad,'0');
 }
 
-// ── 後台「查看可用號碼」（用「號碼範圍」，跟自動配號同一個池子，後台是管理性質不用另外的自訂範圍）
+// ── 後台「查看可用號碼」（刻意只看「自訂號碼範圍」，沒填就直接退回位數上限，不經過「號碼範圍」——
+// 後台手動輸入本來就只受位數範圍限制，這裡是給管理員瀏覽「自選池」用，跟自動配號的四階段優先序不同）
 // 一次抓「已使用」的號碼集合，本地算出可用號碼，範圍太大就分批顯示，換一批不用再打一次Firestore ──
 let availBibSetAdmin=null, availBibSetAdminEventId='', availBibCursorAdmin=1;
 const AVAIL_BIB_BATCH_ADMIN=30;
@@ -1277,16 +1361,16 @@ window.toggleAvailableBibsAdmin=async function(){
   panel.style.display='block';
   panel.innerHTML='<div style="font-size:.75rem;color:var(--muted)">查詢可用號碼中...</div>';
   await getUsedBibSetAdmin(eventId);
-  const pad=curBibPadLength;
-  const {min}=bibEffRange(curCustomBibRange.min,curCustomBibRange.max,pad);
+  const groupId=document.getElementById('eGroup').value;
+  const {min}=getAdminAvailBibRange(curEntryGroupMap[groupId]);
   availBibCursorAdmin=min;
   renderAvailBibBatchAdmin();
 }
 function renderAvailBibBatchAdmin(){
   const panel=document.getElementById('eBibAvailPanel');
   if(!panel||!availBibSetAdmin)return;
-  const pad=curBibPadLength;
-  const {min,max}=bibEffRange(curCustomBibRange.min,curCustomBibRange.max,pad);
+  const groupId=document.getElementById('eGroup').value;
+  const {pad,min,max}=getAdminAvailBibRange(curEntryGroupMap[groupId]);
   let usedInRange=0; availBibSetAdmin.forEach(b=>{const n=parseInt(b,10); if(!isNaN(n)&&n>=min&&n<=max)usedInRange++;});
   const totalAvail=(max-min+1)-usedInRange;
   if(totalAvail<=0){
@@ -1361,7 +1445,8 @@ window.handleEntryCSV=async function(e){
   // 這樣即使之後組別改名，這批匯入的報名資料仍然關聯得到正確組別。
   const groupsForImportSnap=await getDocs(collection(db,'events',eventId,'groups'));
   const groupIdByName={};
-  groupsForImportSnap.docs.forEach(d=>{groupIdByName[d.data().name]=d.id;});
+  const groupDataById={}; // 供每列判斷該組別是否有自訂號碼規則（bibOverride）
+  groupsForImportSnap.docs.forEach(d=>{groupIdByName[d.data().name]=d.id; groupDataById[d.id]=d.data();});
   const entrySnap=await getDocs(collection(db,'events',eventId,'runners'));
   const existingEntries=entrySnap.docs.map(d=>({docId:d.id,...d.data()}));
   const usedBibs=new Set(existingEntries.map(e=>e.bibNumber));
@@ -1450,33 +1535,34 @@ window.handleEntryCSV=async function(e){
     }
 
     // CSV欄位自選的號碼比照後台手動輸入：只受「位數範圍」限制，超出才視同無效、交給自動配號處理
-    const bibPadMax=Math.pow(10,curBibPadLength)-1;
+    // （這一列所屬組別若有開啟「自訂號碼規則」，自動配號的範圍要依組別，沒開啟才依賽事）
+    const rowGroupId=groupIdByName[group]||'';
+    const {pad:rowPad,min:bibMin,max:bibMax,customMin:cMin,customMax:cMax}=getEffBibConfigForGroup(groupDataById[rowGroupId]);
+    const bibPadMax=Math.pow(10,rowPad)-1;
     const bibNumberAsInt=parseInt(bibNumber,10);
     const bibOutOfRange=bibNumber&&(isNaN(bibNumberAsInt)||bibNumberAsInt<1||bibNumberAsInt>bibPadMax);
     let finalBib=bibOutOfRange?'':bibNumber;
     if(!finalBib||usedBibs.has(finalBib)){
       // 自動配號：第0階段自訂範圍→第一階段號碼範圍→第二階段整個位數範圍→第三階段才真的超出位數往外配
-      const {min:cMin,max:cMax}=bibEffRange(curCustomBibRange.min,curCustomBibRange.max,curBibPadLength);
-      const {min:bibMin,max:bibMax}=bibEffRange(curBibRange.min,curBibRange.max,curBibPadLength);
       let n;
       for(let i=cMin;i<=cMax;i++){
-        if(!usedBibs.has(String(i).padStart(curBibPadLength,'0'))){n=i;break;}
+        if(!usedBibs.has(String(i).padStart(rowPad,'0'))){n=i;break;}
       }
       if(n===undefined){
         for(let i=bibMin;i<=bibMax;i++){
           if(i>=cMin&&i<=cMax)continue;
-          if(!usedBibs.has(String(i).padStart(curBibPadLength,'0'))){n=i;break;}
+          if(!usedBibs.has(String(i).padStart(rowPad,'0'))){n=i;break;}
         }
       }
       if(n===undefined){
         for(let i=1;i<=bibPadMax;i++){
           if((i>=cMin&&i<=cMax)||(i>=bibMin&&i<=bibMax))continue;
-          if(!usedBibs.has(String(i).padStart(curBibPadLength,'0'))){n=i;break;}
+          if(!usedBibs.has(String(i).padStart(rowPad,'0'))){n=i;break;}
         }
       }
       if(n===undefined)n=bibPadMax+1; // 連整個位數範圍都用完，才真的超出位數往外配
-      while(usedBibs.has(String(n).padStart(curBibPadLength,'0')))n++;
-      finalBib=String(n).padStart(curBibPadLength,'0'); fixedBibs++;
+      while(usedBibs.has(String(n).padStart(rowPad,'0')))n++;
+      finalBib=String(n).padStart(rowPad,'0'); fixedBibs++;
     }
     usedBibs.add(finalBib);
 
@@ -1777,7 +1863,8 @@ function applyEntryFieldSettings(fs){
 window.autoFillBib=async function(){
   const eventId=document.getElementById('entryEventSelect').value;
   if(!eventId)return;
-  const next=await getNextBibNumber(eventId);
+  const groupId=document.getElementById('eGroup').value;
+  const next=await getNextBibNumber(eventId,groupId);
   document.getElementById('eBib').value=next;
   setFieldError('eBib',false);
 }
@@ -4337,6 +4424,46 @@ th[data-sort]:hover{color:var(--accent);}
           </div>
         </div>
         <div style="font-size:.72rem;color:var(--muted);margin-top:8px">年齡以賽事日期為基準計算；完賽時間限制以「起跑站到終點站」的累積時間計算，超過限制者仍可查詢成績，但不會產生完賽證書。</div>
+      </div>
+      <!-- 組別號碼規則 -->
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:.78rem;font-weight:700;color:var(--accent);margin-bottom:10px">🔢 號碼規則</div>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.85rem;margin-bottom:10px">
+          <input type="checkbox" id="gBibOverride" onchange="onGBibOverrideChange()"> 此組別自訂號碼規則（不勾＝跟賽事設定一致）
+        </label>
+        <div id="gBibOverrideFields" style="display:none">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="input-group" style="margin:0">
+              <label>允許選手自選號碼</label>
+              <select id="gAllowCustomBib" class="input">
+                <option value="0">否（系統自動配號）</option>
+                <option value="1">是（選手可自填號碼）</option>
+              </select>
+            </div>
+            <div class="input-group" style="margin:0">
+              <label>允許選手修改號碼</label>
+              <select id="gAllowBibChange" class="input">
+                <option value="0">否</option>
+                <option value="1">是（報名期間內可修改）</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-top:12px">
+            <div style="font-size:.72rem;color:var(--muted);margin-bottom:6px">自動號碼範圍（留空＝不限制，用位數上限）；位數固定跟賽事設定一致。</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div class="input-group" style="margin:0"><label>自動號碼最小值</label><input id="gBibRangeMin" type="number" min="1" class="input" placeholder="例：100"></div>
+              <div class="input-group" style="margin:0"><label>自動號碼最大值</label><input id="gBibRangeMax" type="number" min="1" class="input" placeholder="例：500"></div>
+            </div>
+          </div>
+          <div style="margin-top:12px">
+            <div style="font-size:.72rem;color:var(--muted);margin-bottom:6px">自訂號碼範圍（留空＝比照上面的自動號碼範圍）。</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div class="input-group" style="margin:0"><label>自選最小值</label><input id="gCustomBibRangeMin" type="number" min="1" class="input" placeholder="例：100"></div>
+              <div class="input-group" style="margin:0"><label>自選最大值</label><input id="gCustomBibRangeMax" type="number" min="1" class="input" placeholder="例：300"></div>
+            </div>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:8px">各組範圍請自行規劃避免重疊——號碼在整場賽事是共用同一個空間，不分組別。</div>
+        </div>
       </div>
       <div class="modal-actions" style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="cancelGroupForm()">取消</button><button class="btn btn-primary btn-sm" onclick="saveGroup()">儲存組別</button></div>
     </div>

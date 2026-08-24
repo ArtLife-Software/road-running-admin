@@ -521,19 +521,14 @@ async function selectSignupEvent(eventId, keepWrapper){
   if(emailShow) formHtml+='<div class="input-group"><label>E-Mail'+(emailReq?' <span class="required-star">*</span>':'')+'</label><input id="suEmail" type="email" class="input" placeholder="example@email.com" onblur="setFieldError(\'suEmail\',!validateEmail(this.value.trim()))"></div>';
   if(idShow) formHtml+='<div class="input-group"><label>身分證字號（1英文+9數字）'+(idReq?' <span class="required-star">*</span>':'')+'</label><input id="suIdNumber" type="text" class="input" placeholder="A123456789" onblur="setFieldError(\'suIdNumber\',!validateId(this.value.trim()))"></div>';
   formHtml+='<div class="input-group"><label>備註</label><input id="suNote" type="text" class="input"></div>';
-  // 允許自選號碼時才顯示號碼欄位
-  if(curSignupEvent.allowCustomBib){
-    const pad=curSignupEvent.bibPadLength||3;
-    const {min:effMin,max:effMax}=resolveSelfSelectBibRange(curSignupEvent.customBibRangeMin||0,curSignupEvent.customBibRangeMax||0,curSignupEvent.bibRangeMin||0,curSignupEvent.bibRangeMax||0,pad);
-    const rangeHint='號碼須在 '+effMin+'～'+effMax+' 之間，留空系統自動配號';
-    const bibPlaceholder=String(effMin).padStart(pad,'0')+'～'+String(effMax).padStart(pad,'0');
-    formHtml+='<div class="input-group"><label>選手號碼（選填，'+rangeHint+'）</label>'
-      +'<div class="input-row"><input id="suBib" type="text" class="input" placeholder="例：'+bibPlaceholder+'" oninput="applyHalf(this)" onfocus="checkBibExhausted()" onblur="checkBibAvailable()">'
-      +'<button type="button" class="btn btn-ghost btn-sm" onclick="toggleAvailableBibs()">查看可用號碼</button></div>'
-      +'<div id="suBibHint" style="font-size:.75rem;margin-top:4px;min-height:18px"></div>'
-      +'<div id="suBibAvailPanel" style="display:none;margin-top:6px;padding:8px;background:var(--surface2);border-radius:8px"></div>'
-      +'</div>';
-  }
+  // 選手號碼欄位：是否顯示、範圍依「目前選到的組別」而定（組別有開啟自訂號碼規則就依組別，
+  // 沒開啟就依賽事），所以容器永遠先建出來，內容交給 refreshSignupBibField()（在 onSignupGroupChange 呼叫）動態填。
+  formHtml+='<div class="input-group" id="suBibRow" style="display:none"><label id="suBibLabel">選手號碼（選填）</label>'
+    +'<div class="input-row"><input id="suBib" type="text" class="input" oninput="applyHalf(this)" onfocus="checkBibExhausted()" onblur="checkBibAvailable()">'
+    +'<button type="button" class="btn btn-ghost btn-sm" onclick="toggleAvailableBibs()">查看可用號碼</button></div>'
+    +'<div id="suBibHint" style="font-size:.75rem;margin-top:4px;min-height:18px"></div>'
+    +'<div id="suBibAvailPanel" style="display:none;margin-top:6px;padding:8px;background:var(--surface2);border-radius:8px"></div>'
+    +'</div>';
 
   // 自訂欄位（依「適用組別」決定顯示/隱藏，由 onSignupGroupChange 動態切換）
   curSignupCustomFields.forEach(f=>{
@@ -588,6 +583,25 @@ async function selectSignupEvent(eventId, keepWrapper){
   onSignupGroupChange();
 }
 
+// 選手號碼欄位：依目前選到的組別（有開啟自訂號碼規則就依組別，沒開啟就依賽事）決定
+// 顯示/隱藏、標籤上的範圍提示、輸入框 placeholder。組別切換時呼叫一次。
+function refreshSignupBibField(g){
+  const row=document.getElementById('suBibRow');
+  if(!row)return;
+  const {pad,allowCustomBib,min,max}=getEffBibSettings(g);
+  if(!allowCustomBib){row.style.display='none';return;}
+  row.style.display='';
+  const label=document.getElementById('suBibLabel');
+  if(label)label.textContent='選手號碼（選填，號碼須在 '+min+'～'+max+' 之間，留空系統自動配號）';
+  const el=document.getElementById('suBib');
+  if(el)el.placeholder='例：'+String(min).padStart(pad,'0')+'～'+String(max).padStart(pad,'0');
+  // 換組別代表範圍可能變了，先清掉「號碼是否用完」的快取檢查旗標，讓下次focus重新檢查一次
+  if(el){el.dataset.exhaustChecked='';}
+  const hint=document.getElementById('suBibHint');
+  if(hint)hint.textContent='';
+  const panel=document.getElementById('suBibAvailPanel');
+  if(panel)panel.style.display='none';
+}
 // ── 組別切換時動態顯示限制欄位 ──
 window.onSignupGroupChange=function(){
   const group=document.getElementById('suGroup')?.value;
@@ -595,6 +609,7 @@ window.onSignupGroupChange=function(){
   const inviteRow=document.getElementById('suInviteCodeRow');
   const parentalBlock=document.getElementById('suParentalBlock');
   const hint=document.getElementById('suGroupHint');
+  refreshSignupBibField(g);
   if(inviteRow){inviteRow.style.display='none';document.getElementById('suInviteCode').value='';}
   // 家長區塊的顯示與旗標一律交給 updateParentalBlock 統一維護
   //（放在提早 return 之前，「未選組別」時旗標也會被正確重設為 false）
@@ -660,6 +675,22 @@ function resolveSelfSelectBibRange(customMin,customMax,generalMin,generalMax,pad
   const general=bibEffRange(generalMin,generalMax,pad);
   return {min:customMin>0?customMin:general.min, max:customMax>0?customMax:general.max};
 }
+// 依組別解析「有效」號碼設定：組別有開啟「自訂號碼規則」(bibOverride) 就用組別自己的設定，
+// 沒開啟就退回賽事設定。位數固定用賽事層級，不受組別影響。
+// evOverride：選填，不傳就用目前報名表單的 curSignupEvent（自助改號碼那裡查的是別的賽事文件，會自己傳進來）。
+function getEffBibSettings(g,evOverride){
+  const ev=evOverride||curSignupEvent||{};
+  const pad=ev.bibPadLength||3;
+  const useGroup=!!(g&&g.bibOverride);
+  const allowCustomBib=useGroup?!!g.allowCustomBib:!!ev.allowCustomBib;
+  const allowBibChange=useGroup?!!g.allowBibChange:!!ev.allowBibChange;
+  const rMin=useGroup?(g.bibRangeMin||0):(ev.bibRangeMin||0);
+  const rMax=useGroup?(g.bibRangeMax||0):(ev.bibRangeMax||0);
+  const cMin=useGroup?(g.customBibRangeMin||0):(ev.customBibRangeMin||0);
+  const cMax=useGroup?(g.customBibRangeMax||0):(ev.customBibRangeMax||0);
+  const {min,max}=resolveSelfSelectBibRange(cMin,cMax,rMin,rMax,pad);
+  return {pad,allowCustomBib,allowBibChange,min,max};
+}
 
 // ── 即時號碼重複檢查（自選號碼用）──
 window.checkBibAvailable=async function(){
@@ -675,9 +706,9 @@ window.checkBibAvailable=async function(){
     return;
   }
   if(!curSignupEvent){return;}
-  const pad=curSignupEvent.bibPadLength||3;
+  const curG=window._signupGroupMap?.[document.getElementById('suGroup')?.value];
+  const {pad,min:effMin,max:effMax}=getEffBibSettings(curG);
   // 範圍檢查
-  const {min:effMin,max:effMax}=resolveSelfSelectBibRange(curSignupEvent.customBibRangeMin||0,curSignupEvent.customBibRangeMax||0,curSignupEvent.bibRangeMin||0,curSignupEvent.bibRangeMax||0,pad);
   if(n<effMin||n>effMax){
     el.style.borderColor='var(--red)';
     hint.innerHTML='<span style="color:var(--red)">❌ 號碼須在 '+effMin+'～'+effMax+' 之間</span>';
@@ -801,14 +832,14 @@ window.pickAvailableBib=function(inputId,hintId,panelId,b){
 // 「自訂範圍」優先，沒設就退回「號碼範圍」，再退回位數上限，解析完的值傳給下面共用函式） ──
 window.checkBibExhausted=async function(){
   if(!curSignupEvent)return;
-  const pad=curSignupEvent.bibPadLength||3;
-  const {min,max}=resolveSelfSelectBibRange(curSignupEvent.customBibRangeMin||0,curSignupEvent.customBibRangeMax||0,curSignupEvent.bibRangeMin||0,curSignupEvent.bibRangeMax||0,pad);
+  const curG=window._signupGroupMap?.[document.getElementById('suGroup')?.value];
+  const {pad,min,max}=getEffBibSettings(curG);
   await checkBibExhaustedGeneric(curSignupEvent.id,min,max,pad,'suBib','suBibHint');
 }
 window.toggleAvailableBibs=async function(){
   if(!curSignupEvent)return;
-  const pad=curSignupEvent.bibPadLength||3;
-  const {min,max}=resolveSelfSelectBibRange(curSignupEvent.customBibRangeMin||0,curSignupEvent.customBibRangeMax||0,curSignupEvent.bibRangeMin||0,curSignupEvent.bibRangeMax||0,pad);
+  const curG=window._signupGroupMap?.[document.getElementById('suGroup')?.value];
+  const {pad,min,max}=getEffBibSettings(curG);
   await openAvailBibPanel(curSignupEvent.id,min,max,pad,'suBib','suBibHint','suBibAvailPanel');
 }
 // ── 選手自助改號碼專用的包裝（帶入該筆記錄的 eventId／範圍設定） ──
@@ -1019,8 +1050,7 @@ window.submitSignup=async function(){
   if(customBibRaw){
     const n=parseInt(customBibRaw);
     if(isNaN(n)||n<1){showToast('號碼請輸入正整數','error');return;}
-    const pad=curSignupEvent.bibPadLength||3;
-    const {min:effMin,max:effMax}=resolveSelfSelectBibRange(curSignupEvent.customBibRangeMin||0,curSignupEvent.customBibRangeMax||0,curSignupEvent.bibRangeMin||0,curSignupEvent.bibRangeMax||0,pad);
+    const {pad,min:effMin,max:effMax}=getEffBibSettings(g);
     if(n<effMin||n>effMax){
       showToast('號碼須在 '+effMin+'～'+effMax+' 之間','error');
       if(customBibEl)customBibEl.style.borderColor='var(--red)';
@@ -1372,14 +1402,16 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   const gMapJson=JSON.stringify(Object.fromEntries(groupList.map(g=>[g.id,{parentalAge:g.parentalAge||0}])));
 
   let html='<div class="card" style="background:var(--surface2)">';
-  const canChangeBib=evDoc.data()?.allowBibChange&&isRunnerRegOpen(evDoc.data(),0);
+  // 號碼規則依「這筆報名目前所屬的組別」判斷（組別有開啟自訂號碼規則就依組別，沒開啟就依賽事）
+  const editG=groupMap[e.groupId];
+  const editBibCfg=getEffBibSettings(editG,evDoc.data());
+  const canChangeBib=editBibCfg.allowBibChange&&isRunnerRegOpen(evDoc.data(),0);
   html+='<div class="csv-hint">'+(canChangeBib?'可修改以下資料，包含選手號碼。':'可修改以下資料，ID 與編號無法變更。')+'</div>';
   if(canChangeBib){
-    const editPad=evDoc.data()?.bibPadLength||3;
-    // 選手自助改號碼＝「選手自選」，範圍用 resolveSelfSelectBibRange 解析（自訂範圍優先，
-    // 沒設就退回號碼範圍，再退回位數上限），解析好的值直接存進 hidden dataset，
+    const editPad=editBibCfg.pad;
+    // 選手自助改號碼＝「選手自選」，範圍依組別/賽事解析好的 editBibCfg，解析好的值直接存進 hidden dataset，
     // 下面所有函式（checkEditBibAvailable／checkBibExhaustedEdit／toggleAvailableBibsEdit／送出驗證）都讀這裡，不用各自重算
-    const {min:editEffMin,max:editEffMax}=resolveSelfSelectBibRange(evDoc.data()?.customBibRangeMin||0,evDoc.data()?.customBibRangeMax||0,evDoc.data()?.bibRangeMin||0,evDoc.data()?.bibRangeMax||0,editPad);
+    const editEffMin=editBibCfg.min, editEffMax=editBibCfg.max;
     const rangeLabel='（號碼須在 '+editEffMin+'～'+editEffMax+' 之間，留空可重新自動配號）';
     html+='<div class="input-group"><label>選手號碼'+rangeLabel+'</label>'
       +'<div class="input-row"><input id="'+cardId+'_eBib" type="text" class="input" value="'+esc(e.bibNumber||'')+'" data-old-bib="'+esc(e.bibNumber||'')+'" oninput="applyHalf(this)" onfocus="checkBibExhaustedEdit(\''+eventId+'\',\''+cardId+'\')" onblur="checkEditBibAvailable(\''+eventId+'\',\''+entryDocId+'\',\''+cardId+'\')">'
