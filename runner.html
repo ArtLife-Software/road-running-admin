@@ -475,6 +475,9 @@ async function selectSignupEvent(eventId, keepWrapper){
   if(curSignupEvent.bannerUrl){
     formHtml+='<div style="margin-bottom:12px"><img src="'+esc(curSignupEvent.bannerUrl)+'" style="max-width:100%;border-radius:12px;display:block" onerror="this.style.display=\'none\'"></div>';
   }
+  if(curSignupEvent.bannerLinkUrl){
+    formHtml+='<div style="text-align:center;margin-bottom:12px"><a href="'+esc(curSignupEvent.bannerLinkUrl)+'" target="_blank" rel="noopener noreferrer" style="font-size:1rem;font-weight:700;color:var(--accent);text-decoration:underline">'+esc(curSignupEvent.bannerLinkText||curSignupEvent.bannerLinkUrl)+'</a></div>';
+  }
   // 賽事資訊卡（單賽事時用 card，多賽事時在 signupForm 內補一個資訊區塊）
   const regInfo=buildRegInfoHtml(curSignupEvent, curSignupEvent._entryCount||0);
   const infoCardHtml='<div class="card" style="text-align:center;margin-bottom:12px"><strong>'+esc(curSignupEvent.name)+'</strong>'

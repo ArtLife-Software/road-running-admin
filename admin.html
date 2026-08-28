@@ -956,6 +956,10 @@ window.manageCustomFields=async function(eid,ename,type){
   const bPreview=document.getElementById('cfBannerPreview');
   if(bUrl){document.getElementById('cfBannerImg').src=bUrl;bPreview.style.display='block';}
   else bPreview.style.display='none';
+  const linkTextKey=curCFType==='staff'?'staffBannerLinkText':'bannerLinkText';
+  const linkUrlKey=curCFType==='staff'?'staffBannerLinkUrl':'bannerLinkUrl';
+  document.getElementById('cfBannerLinkText').value=evDocForBanner.data()?.[linkTextKey]||'';
+  document.getElementById('cfBannerLinkUrl').value=evDocForBanner.data()?.[linkUrlKey]||'';
   await loadFieldSettings();
   await loadCustomFields();
   document.getElementById('customFieldsModal').style.display='flex';
@@ -972,8 +976,12 @@ document.addEventListener('DOMContentLoaded',()=>{
 });
 window.saveCfBanner=async function(){
   const bannerKey=curCFType==='staff'?'staffBannerUrl':'bannerUrl';
+  const linkTextKey=curCFType==='staff'?'staffBannerLinkText':'bannerLinkText';
+  const linkUrlKey=curCFType==='staff'?'staffBannerLinkUrl':'bannerLinkUrl';
   const bannerUrl=document.getElementById('cfBannerUrl').value.trim();
-  await updateDoc(doc(db,'events',curCFEvId),{[bannerKey]:bannerUrl,updatedAt:serverTimestamp()});
+  const bannerLinkText=document.getElementById('cfBannerLinkText').value.trim();
+  const bannerLinkUrl=document.getElementById('cfBannerLinkUrl').value.trim();
+  await updateDoc(doc(db,'events',curCFEvId),{[bannerKey]:bannerUrl,[linkTextKey]:bannerLinkText,[linkUrlKey]:bannerLinkUrl,updatedAt:serverTimestamp()});
   showToast('已儲存宣傳圖片設定');
 }
 async function loadFieldSettings(){
@@ -4484,6 +4492,10 @@ th[data-sort]:hover{color:var(--accent);}
       <div style="font-size:.75rem;font-weight:700;color:var(--muted);margin-bottom:10px;letter-spacing:.04em">宣傳圖片</div>
       <div class="input-group" style="margin:0"><label id="cfBannerLabel">宣傳圖片 URL（選填）</label><input id="cfBannerUrl" type="url" class="input" placeholder="https://..."></div>
       <div id="cfBannerPreview" style="display:none;margin-top:8px"><img id="cfBannerImg" style="max-width:100%;border-radius:8px;display:block"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
+        <div class="input-group" style="margin:0"><label>連結文字（選填）</label><input id="cfBannerLinkText" type="text" class="input" placeholder="例：查看活動詳情"></div>
+        <div class="input-group" style="margin:0"><label>連結網址（選填）</label><input id="cfBannerLinkUrl" type="url" class="input" placeholder="https://..."></div>
+      </div>
       <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="saveCfBanner()">儲存宣傳圖片設定</button>
     </div>
     <div id="cfStdFieldsBlock" style="margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">

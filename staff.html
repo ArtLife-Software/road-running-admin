@@ -304,6 +304,9 @@ async function selectSignupEvent(eventId,keepWrapper){
   if(curSignupEvent.staffBannerUrl){
     formHtml+='<div style="margin-bottom:12px"><img src="'+esc(curSignupEvent.staffBannerUrl)+'" style="max-width:100%;border-radius:12px;display:block" onerror="this.style.display=\'none\'"></div>';
   }
+  if(curSignupEvent.staffBannerLinkUrl){
+    formHtml+='<div style="text-align:center;margin-bottom:12px"><a href="'+esc(curSignupEvent.staffBannerLinkUrl)+'" target="_blank" rel="noopener noreferrer" style="font-size:1rem;font-weight:700;color:var(--accent);text-decoration:underline">'+esc(curSignupEvent.staffBannerLinkText||curSignupEvent.staffBannerLinkUrl)+'</a></div>';
+  }
   // 賽事資訊卡（含報名時間，無論單/多賽事都顯示）
   const regInfo=buildStaffRegInfoHtml(curSignupEvent);
   formHtml+='<div class="card" style="text-align:center;margin-bottom:12px"><strong>'+esc(curSignupEvent.name)+'</strong>'
