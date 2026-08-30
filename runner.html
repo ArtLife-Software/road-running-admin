@@ -947,6 +947,14 @@ async function showSamePersonDialog(fields,curValues,opts){
 }
 
 window.submitSignup=async function(){
+  // 防止快速連點：從點擊到真正鎖住按鈕之間，中間有好幾個 await（邀請碼檢查、名額查詢等），
+  // 使用者若在這段空檔又點一次，之前沒有任何防護，會導致同一份資料被送出好幾次
+  // （報名管理頁看到同一人建立好幾筆記錄，多半就是這樣來的）。
+  if(window._suSubmitting)return;
+  window._suSubmitting=true;
+  const btn=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
+  if(btn){btn.textContent='送出中...';btn.disabled=true;}
+  try{
   const eventId=curSignupEvent.id;
   const group=document.getElementById('suGroup').value;
   const name=document.getElementById('suName').value.trim();
@@ -1076,8 +1084,6 @@ window.submitSignup=async function(){
     }
   }
 
-  const btn=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
-  btn.textContent='送出中...'; btn.disabled=true;
   try{
     // ══════════════════════════════════════════════════════════
     // 報名的所有「真正的檢查與寫入」已搬進 Cloud Function
@@ -1131,6 +1137,12 @@ window.submitSignup=async function(){
     resetTurnstileWidget();
     const b=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
     if(b){b.textContent='送出報名';b.disabled=false;}
+  }
+  } finally {
+    // 不管上面驗證中途 return、成功、還是失敗，這裡都會執行，
+    // 確保鎖一定會解開、按鈕一定會恢復，不會卡死
+    window._suSubmitting=false;
+    if(btn){btn.disabled=false;btn.textContent='送出報名';}
   }
 }
 
