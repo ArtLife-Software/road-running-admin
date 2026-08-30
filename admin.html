@@ -278,6 +278,11 @@ function matchPersonStatus(a, b) {
   ['name','gender','birthday','phone','email'].forEach(f => { if (a[f]&&b[f]&&a[f]===b[f]) cnt++; });
   return cnt >= 3 ? 'ambiguous' : 'different';
 }
+// 列出兩筆資料中「有填且相同」的欄位（供記錄相似選手確認結果時，顯示判定依據）
+function matchedFieldsOf(a, b) {
+  const map = [['name','姓名'],['gender','性別'],['birthday','生日'],['phone','手機'],['email','Email'],['idNumber','身分證']];
+  return map.filter(([f]) => a[f] && b[f] && a[f] === b[f]).map(([,label]) => label);
+}
 // 從候選清單裡找出比對結果：'same' 優先（不管有沒有其他ambiguous候選都直接採用，
 // 因為身分證號相同是鐵證），沒有same才看有沒有ambiguous，都沒有就沒比對到
 function findPersonMatch(candidates, target, excludeId) {
@@ -1200,7 +1205,7 @@ let curEntryCustomFields=[];
 window.loadEntries=async function(){
   const eventId=document.getElementById('entryEventSelect').value;
   const tbody=document.getElementById('entriesTableBody');
-  const baseCols=12; // 加了報到欄
+  const baseCols=13; // 加了報到欄
   if(!eventId){tbody.innerHTML='<tr><td colspan="'+baseCols+'" class="loading-cell">請先選擇賽事</td></tr>';return;}
   tbody.innerHTML='<tr><td colspan="'+baseCols+'" class="loading-cell">載入中...</td></tr>';
   const evDoc=await getDoc(doc(db,'events',eventId));
@@ -1223,6 +1228,7 @@ window.loadEntries=async function(){
       :'<th>'+h+'</th>'
     ).join('')
     +curEntryCustomFields.map(f=>'<th data-sort="customData.'+f.id+'" onclick="sortTable(\'entriesTableBody\',\'customData.'+f.id+'\')">'+esc(f.label)+'<span class="sort-icon"> ⇅</span></th>').join('')
+    +'<th data-sort="createdAt" onclick="sortTable(\'entriesTableBody\',\'createdAt\')">報名時間<span class="sort-icon"> ⇅</span></th>'
     +'<th data-sort="checkin.checkedInAt" onclick="sortTable(\'entriesTableBody\',\'checkin.checkedInAt\')">報到<span class="sort-icon"> ⇅</span></th>'
     +'<th>操作</th>';
   const snap=await getDocs(collection(db,'events',eventId,'runners'));
@@ -1254,7 +1260,7 @@ window.loadEntries=async function(){
 }
 function renderEntries(list){
   const tbody=document.getElementById('entriesTableBody');
-  const totalCols=16+curEntryCustomFields.length;
+  const totalCols=17+curEntryCustomFields.length;
   if(!list.length){tbody.innerHTML='<tr><td colspan="'+totalCols+'" class="loading-cell">尚無報名資料</td></tr>';return;}
   const eventId=document.getElementById('entryEventSelect').value;
   tbody.innerHTML=list.map(e=>{
@@ -1273,12 +1279,16 @@ function renderEntries(list){
       :'<td><button class="btn btn-sm btn-ghost" onclick="manualCheckin(\''+eventId+'\',\''+e.uniqueId+'\')">標記報到</button></td>';
     const cancelBadge=e.cancelRequested?' <span class="badge" style="background:rgba(239,68,68,.1);color:var(--red);border-color:rgba(239,68,68,.3)">⚠️ 申請取消中</span>':'';
     const rejectBtn=e.cancelRequested?'<button class="btn btn-sm btn-ghost" onclick="rejectCancelRequest(\''+e.id+'\')">駁回申請</button> ':'';
+    const ma=e.matchAudit;
+    const matchAuditBadge=ma
+      ?' <span style="cursor:help;font-size:.85rem" title="'+esc('曾偵測到疑似同一人（比對到 '+(ma.matchedUniqueId||'-')+'，相符欄位：'+((ma.matchedFields||[]).join('、')||'-')+'）\n處理結果：'+(ma.decision==='same'?'選了「同一人」，已沿用該選手資料':'選了「非同一人」，各自建檔'))+'">'+(ma.decision==='same'?'🔗':'⚠️')+'</span>'
+      :'';
     return '<tr>'
       +'<td><input type="checkbox" class="row-cb" data-id="'+e.id+'" onchange="onRowCbChange(\'entriesBatchDeleteBtn\',\'entriesTableBody\',\'entriesSelectAll\',\'entriesBatchRejectBtn\')"></td>'
       +'<td><strong>'+esc(e.bibNumber||'-')+'</strong></td>'
       +'<td><span class="badge">'+esc(e.group||'-')+'</span></td>'
       +'<td><span class="mono">'+esc(e.uniqueId||'')+'</span></td>'
-      +'<td>'+esc(e.name||r.name||'-')+cancelBadge+'</td>'
+      +'<td>'+esc(e.name||r.name||'-')+cancelBadge+matchAuditBadge+'</td>'
       +'<td>'+esc(r.gender||'-')+'</td>'
       +'<td>'+esc(r.birthday||'-')+'</td>'
       +'<td>'+esc(r.phone||'-')+'</td>'
@@ -1289,6 +1299,7 @@ function renderEntries(list){
       +'<td>'+esc(e.parentName||'-')+'</td>'
       +'<td>'+esc(e.parentPhone||'-')+'</td>'
       +customCells
+      +'<td style="font-size:.78rem;white-space:nowrap">'+fmtDT(e.createdAt)+'</td>'
       +checkinCell
       +'<td style="white-space:nowrap">'
       +rejectBtn
@@ -1606,10 +1617,10 @@ window.exportEntries=async function(){
   const evDate=evDoc.data()?.date||'';
   const customFields=evDoc.data()?.customFields||[];
   const sorted=getSorted('entriesTableBody',allEntries);
-  let csv='編號,組別,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註,家長陪同聲明,緊急聯絡人,緊急聯絡人手機'+customFields.map(f=>','+csvCell(f.label)).join('')+',報到,報到時間\n';
+  let csv='編號,組別,ID,姓名,性別,生日,手機號碼,E-Mail,身分證字號,備註,家長陪同聲明,緊急聯絡人,緊急聯絡人手機'+customFields.map(f=>','+csvCell(f.label)).join('')+',報名時間,報到,報到時間\n';
   sorted.forEach(e=>{
     const r=e.runnerData||{}; const cd=e.customData||{}; const ci=e.checkin;
-    csv+=[e.bibNumber,e.group,e.name||r.name,r.gender,r.birthday,r.phone,
+    csv+=[e.bibNumber,e.group,e.uniqueId,e.name||r.name,r.gender,r.birthday,r.phone,
       r.email,r.idNumber,r.note,
       e.parentalConsentAgreed?'已同意':'',e.parentName,e.parentPhone].map(csvCell).join(',');
     customFields.forEach(f=>{
@@ -1617,6 +1628,7 @@ window.exportEntries=async function(){
       if(f.type==='checkbox') v=v?'是':'否';
       csv+=','+csvCell(v!==undefined?v:'');
     });
+    csv+=','+csvCell(fmtDT(e.createdAt));
     csv+=','+csvCell(ci?'已報到':'未報到')+','+csvCell(ci?.checkedInAt?.toDate?ci.checkedInAt.toDate().toLocaleString('zh-TW'):'');
     csv+='\n';
   });
@@ -1989,6 +2001,7 @@ window.editEntry=async function(id){
   document.getElementById('entryModal').style.display='flex';
 }
 window.saveEntry=async function(){
+  let matchAudit=null; // 記錄「跳出過相似選手確認框」的結果，供後台列表顯示追溯
   const eventId=document.getElementById('entryEventSelect').value;
   const id=document.getElementById('entryDocId').value;
   let uniqueId=document.getElementById('entryUniqueId').value;
@@ -2089,6 +2102,7 @@ window.saveEntry=async function(){
     }else if(match&&status==='ambiguous'){
       const result=await showSimilarPersonDialog(match,runnerData);
       if(result==='refill')return;
+      matchAudit={matchedUniqueId:match.uniqueId,decision:result,matchedFields:matchedFieldsOf(match,runnerData)};
       if(result==='same'){
         uniqueId=match.uniqueId;
         await updateDoc(doc(db,'runners',match.docId),{...runnerData,updatedAt:serverTimestamp()});
@@ -2139,6 +2153,7 @@ window.saveEntry=async function(){
         });
         if(result==='same'){showToast(conflictMsg,'error');return;}
         // result==='new' → 放行，繼續往下走
+        matchAudit={matchedUniqueId:match.uniqueId,decision:'new',matchedFields:matchedFieldsOf(match,newIdentity)};
       }
     }
   }
@@ -2151,6 +2166,7 @@ window.saveEntry=async function(){
     }
   }
   const data={uniqueId,name,bibNumber,group,groupId,customData,...parentalData,updatedAt:serverTimestamp()};
+  if(matchAudit)data.matchAudit={...matchAudit,decidedAt:serverTimestamp()};
   if(id){
     const oldBib=document.getElementById('eBib').dataset.oldBib||'';
     await updateDoc(doc(db,'events',eventId,'runners',id),data);
