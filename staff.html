@@ -212,7 +212,7 @@ function validateBirthday(v){
   if(y<1900)return false;
   return true;
 }
-function validatePhone(v){return /^09\d{8}$/.test(v);}
+function validatePhone(v){if(!v)return true;return /^09\d{8}$/.test(v);}
 function validateEmail(v){if(!v)return true;return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);}
 function validateId(v){if(!v)return false;return /^[A-Za-z]\d{9}$/.test(v);}
 function setFieldError(id,hasError){const el=document.getElementById(id);if(!el)return;el.style.borderColor=hasError?'var(--red)':'';}
@@ -597,6 +597,9 @@ window.showEditForm=async function(eventId,staffDocId,cardId){
   if(!e){showToast('資料已過期，請重新查詢','error');box.innerHTML='';box.dataset.open='';return;}
   const evDoc=await getDoc(doc(db,'events',eventId));
   const customFields=evDoc.data()?.staffCustomFields||[];
+  const sfs=evDoc.data()?.staffFieldSettings||{};
+  const phoneShow=sfs.phone?.show!==false, phoneReq=sfs.phone?.required===true;
+  const emailShow=sfs.email?.show!==false, emailReq=sfs.email?.required===true;
   const cd=e.customData||{};
   let html='<div class="card" style="background:var(--surface2);margin-top:12px">';
   html+='<div class="csv-hint">如需修改身分證字號，請直接填入正確號碼。</div>';
@@ -610,8 +613,8 @@ window.showEditForm=async function(eventId,staffDocId,cardId){
     +'onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\''+cardId+'_birthday\').value=y+\'/\'+m+\'/\'+d;this.value=\'\'}">'
     +'</div></div>';
   html+='<div class="input-group"><label>身分證字號 <span class="required-star">*</span></label><input id="'+cardId+'_idNumber" type="text" class="input" value="'+esc(e.idNumber||'')+'" oninput="applyHalf(this)"></div>';
-  html+='<div class="input-group"><label>手機</label><input id="'+cardId+'_phone" type="tel" class="input" value="'+esc(e.phone||'')+'" oninput="applyHalf(this)"></div>';
-  html+='<div class="input-group"><label>Email</label><input id="'+cardId+'_email" type="email" class="input" value="'+esc(e.email||'')+'" oninput="applyHalf(this)"></div>';
+  if(phoneShow)html+='<div class="input-group"><label>手機'+(phoneReq?' <span class="required-star">*</span>':'')+'</label><input id="'+cardId+'_phone" type="tel" class="input" value="'+esc(e.phone||'')+'" oninput="applyHalf(this)"></div>';
+  if(emailShow)html+='<div class="input-group"><label>Email'+(emailReq?' <span class="required-star">*</span>':'')+'</label><input id="'+cardId+'_email" type="email" class="input" value="'+esc(e.email||'')+'" oninput="applyHalf(this)"></div>';
   html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_note" type="text" class="input" value="'+esc(e.note||'')+'"></div>';
   customFields.forEach(f=>{
     const fid=cardId+'_cf_'+f.id;
@@ -633,22 +636,32 @@ window.showEditForm=async function(eventId,staffDocId,cardId){
   html+='</div>';
   box.innerHTML=html;
   box.dataset.customFields=JSON.stringify(customFields);
+  box.dataset.sfs=JSON.stringify(sfs);
 }
 
 window.saveEdit=async function(eventId,staffDocId,cardId){
+  let sfs={}; try{sfs=JSON.parse(document.getElementById(cardId+'_edit')?.dataset.sfs||'{}');}catch(e){}
   const name=document.getElementById(cardId+'_name').value.trim();
   const gender=document.getElementById(cardId+'_gender').value;
   const birthday=document.getElementById(cardId+'_birthday').value.trim();
   const idNumber=document.getElementById(cardId+'_idNumber').value.trim();
-  const phone=document.getElementById(cardId+'_phone').value.trim();
-  const email=document.getElementById(cardId+'_email').value.trim();
+  const phone=(sfs.phone?.show!==false)?(document.getElementById(cardId+'_phone')?.value.trim()||''):'';
+  const email=(sfs.email?.show!==false)?(document.getElementById(cardId+'_email')?.value.trim()||''):'';
   const note=document.getElementById(cardId+'_note').value.trim();
   if(!name){showToast('姓名為必填','error');return;}
   if(!gender){showToast('性別為必選','error');return;}
   if(!birthday||!validateBirthday(birthday)){showToast('生日格式錯誤','error');return;}
   if(!idNumber||!validateId(idNumber)){showToast('身分證字號格式錯誤','error');return;}
-  if(phone&&!validatePhone(phone)){showToast('手機號碼格式錯誤','error');return;}
-  if(email&&!validateEmail(email)){showToast('Email格式錯誤','error');return;}
+  if(sfs.phone?.show!==false){
+    if(sfs.phone?.required&&!phone){setFieldError(cardId+'_phone',true);showToast('請填寫手機號碼','error');return;}
+    if(phone&&!validatePhone(phone)){setFieldError(cardId+'_phone',true);showToast('手機號碼格式錯誤','error');return;}
+    setFieldError(cardId+'_phone',false);
+  }
+  if(sfs.email?.show!==false){
+    if(sfs.email?.required&&!email){setFieldError(cardId+'_email',true);showToast('請填寫 E-Mail','error');return;}
+    if(email&&!validateEmail(email)){setFieldError(cardId+'_email',true);showToast('Email格式錯誤','error');return;}
+    setFieldError(cardId+'_email',false);
+  }
   const customFields=JSON.parse(document.getElementById(cardId+'_edit').dataset.customFields||'[]');
   const customData={};
   for(const f of customFields){

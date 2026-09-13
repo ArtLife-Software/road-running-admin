@@ -324,7 +324,7 @@ function validateBirthday(v) {
   return true;
 }
 window.validateBirthday=validateBirthday;
-function validatePhone(v) { return /^09\d{8}$/.test(v); }
+function validatePhone(v) { if (!v) return true; return /^09\d{8}$/.test(v); }
 function validateEmail(v) {
   if (!v) return true;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
@@ -994,17 +994,22 @@ window.submitSignup=async function(){
   // 組別限制驗證
   const inviteInput=document.getElementById('suInviteCode')?.value.trim()||'';
   const g=window._signupGroupMap?.[group];
+  const suGroupHintEl=document.getElementById('suGroupHint');
+  const failGroup=(msg)=>{
+    if(suGroupHintEl){suGroupHintEl.textContent=msg;suGroupHintEl.style.color='var(--red)';}
+    showToast(msg,'error');
+  };
   if(g){
     const evDate=curSignupEvent?.date||'';
-    if(g.genderLimit&&gender&&g.genderLimit!==gender){showToast('此組別限'+g.genderLimit+'性報名','error');return;}
+    if(g.genderLimit&&gender&&g.genderLimit!==gender){failGroup('此組別限'+g.genderLimit+'性報名');return;}
     if(birthday&&evDate){
       const age=calcAgeRunner(birthday,evDate);
       if(age!==null){
-        if(g.ageMin>0&&age<g.ageMin){showToast('此組別年齡限制 '+g.ageMin+' 歲以上（您的年齡：'+age+'歲）','error');return;}
-        if(g.ageMax>0&&age>g.ageMax){showToast('此組別年齡限制 '+g.ageMax+' 歲以下（您的年齡：'+age+'歲）','error');return;}
+        if(g.ageMin>0&&age<g.ageMin){failGroup('此組別年齡限制 '+g.ageMin+' 歲以上（您的年齡：'+age+'歲）');return;}
+        if(g.ageMax>0&&age>g.ageMax){failGroup('此組別年齡限制 '+g.ageMax+' 歲以下（您的年齡：'+age+'歲）');return;}
       }
     }
-    if(groupHasInvite(g)&&!(await checkInviteCode(g,inviteInput))){showToast('邀請碼不正確','error');return;}
+    if(groupHasInvite(g)&&!(await checkInviteCode(g,inviteInput))){failGroup('邀請碼不正確');return;}
     // 家長陪同聲明：送出前即時重算（依目前的組別＋生日），
     // 不依賴可能殘留的旗標
     updateParentalBlock();
@@ -1019,7 +1024,7 @@ window.submitSignup=async function(){
     // 組別名額
     if(g.groupCapacity>0){
       const capSnap=await getCountFromServer(query(collection(db,'events',curSignupEvent.id,'runners'),where('groupId','==',group)));
-      if(capSnap.data().count>=g.groupCapacity){showToast('此組別已額滿（'+g.groupCapacity+'人）','error');return;}
+      if(capSnap.data().count>=g.groupCapacity){failGroup('此組別已額滿（'+g.groupCapacity+'人）');return;}
     }
   }
 
@@ -1416,8 +1421,13 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   const groupList=gSnap.docs.map(d=>({id:d.id,...d.data()}));
   const groupMap={}; groupList.forEach(g=>{groupMap[g.id]=g;});
   const customData=e.customData||{};
-  // 精簡版 groupMap 只保留 parentalAge，供 inline onchange 使用（key 是組別ID）
-  const gMapJson=JSON.stringify(Object.fromEntries(groupList.map(g=>[g.id,{parentalAge:g.parentalAge||0}])));
+  const fs=evDoc.data()?.fieldSettings||{};
+  // 精簡版 groupMap 供 inline onchange 使用（key 是組別ID）：parentalAge 判斷家長陪同，
+  // 其餘欄位供組別註解／限制摘要顯示（跟選手新增表單的 onSignupGroupChange 一致）
+  const gMapJson=JSON.stringify(Object.fromEntries(groupList.map(g=>[g.id,{
+    parentalAge:g.parentalAge||0, genderLimit:g.genderLimit||'', ageMin:g.ageMin||0, ageMax:g.ageMax||0,
+    groupCapacity:g.groupCapacity||0, note:g.note||''
+  }])));
 
   let html='<div class="card" style="background:var(--surface2)">';
   // 號碼規則依「這筆報名目前所屬的組別」判斷（組別有開啟自訂號碼規則就依組別，沒開啟就依賽事）
@@ -1443,20 +1453,26 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   html+='<div class="input-group"><label>性別</label><select id="'+cardId+'_eGender" class="input"><option value="男"'+(r.gender==='男'?' selected':'')+'>男</option><option value="女"'+(r.gender==='女'?' selected':'')+'>女</option></select></div>';
   const gMapEsc=gMapJson.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
   const evDateEsc=evDate.replace(/'/g,"\\'");
-  html+='<div class="input-group"><label>生日（yyyy/mm/dd）</label>'
+  html+='<div class="input-group"><label>生日（yyyy/mm/dd）<span class="required-star">*</span></label>'
     +'<div class="input-row">'
     +'<input id="'+cardId+'_eBirthday" data-fmt="ymd" type="text" class="input" value="'+esc(r.birthday||'')+'" oninput="applyHalf(this);updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\')" onblur="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\')">'
     +'<button type="button" class="btn btn-ghost btn-sm" onclick="var _d=document.getElementById(\''+cardId+'_eBirthdayPicker\');_d.showPicker?_d.showPicker():_d.click()">📅</button>'
     +'<input type="date" id="'+cardId+'_eBirthdayPicker" style="display:none" '
     +'onchange="if(this.value){const[y,m,d]=this.value.split(\'-\');document.getElementById(\''+cardId+'_eBirthday\').value=y+\'/\'+m+\'/\'+d;updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\');this.value=\'\'}">'
     +'</div></div>';
-  html+='<div class="input-group"><label>手機號碼</label><input id="'+cardId+'_ePhone" type="tel" class="input" value="'+esc(r.phone||'')+'" oninput="applyHalf(this)"></div>';
-  html+='<div class="input-group"><label>E-Mail</label><input id="'+cardId+'_eEmail" type="email" class="input" value="'+esc(r.email||'')+'" oninput="applyHalf(this)"></div>';
-  html+='<div class="input-group"><label>身分證字號</label><input id="'+cardId+'_eIdNumber" type="text" class="input" value="'+esc(r.idNumber||'')+'" oninput="applyHalf(this)"></div>';
+  const phoneShow=fs.phone?.show!==false, phoneReq=fs.phone?.required===true;
+  const emailShow=fs.email?.show!==false, emailReq=fs.email?.required===true;
+  const idShow=fs.idNumber?.show!==false, idReq=fs.idNumber?.required===true;
+  if(phoneShow)html+='<div class="input-group"><label>手機號碼（09開頭10碼）'+(phoneReq?' <span class="required-star">*</span>':'')+'</label><input id="'+cardId+'_ePhone" type="tel" class="input" value="'+esc(r.phone||'')+'" oninput="applyHalf(this)" onblur="if(this.value.trim())setFieldError(\''+cardId+'_ePhone\',!validatePhone(this.value.trim()))"></div>';
+  if(emailShow)html+='<div class="input-group"><label>E-Mail'+(emailReq?' <span class="required-star">*</span>':'')+'</label><input id="'+cardId+'_eEmail" type="email" class="input" value="'+esc(r.email||'')+'" oninput="applyHalf(this)" onblur="setFieldError(\''+cardId+'_eEmail\',!validateEmail(this.value.trim()))"></div>';
+  if(idShow)html+='<div class="input-group"><label>身分證字號（1英文+9數字）'+(idReq?' <span class="required-star">*</span>':'')+'</label><input id="'+cardId+'_eIdNumber" type="text" class="input" value="'+esc(r.idNumber||'')+'" oninput="applyHalf(this)" onblur="setFieldError(\''+cardId+'_eIdNumber\',!validateId(this.value.trim()))"></div>';
   html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_eNote" type="text" class="input" value="'+esc(r.note||'')+'"></div>';
-  html+='<div class="input-group"><label>組別</label><select id="'+cardId+'_eGroup" class="input" onchange="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\');updateEditCustomFieldsVisibility(\''+cardId+'\')">';
+  html+='<div class="input-group"><label>組別 <span class="required-star">*</span></label><select id="'+cardId+'_eGroup" class="input" onchange="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\');updateEditCustomFieldsVisibility(\''+cardId+'\');updateEditGroupInfo(\''+cardId+'\',\''+gMapEsc+'\')">';
   groupList.forEach(g=>{html+='<option value="'+esc(g.id)+'"'+(g.id===e.groupId?' selected':'')+'>'+esc(g.name)+'</option>';});
-  html+='</select></div>';
+  html+='</select>'
+    +'<div id="'+cardId+'_eGroupNote" style="font-size:.8rem;margin-top:6px;color:var(--text);white-space:pre-line"></div>'
+    +'<div id="'+cardId+'_eGroupHint" style="font-size:.75rem;margin-top:4px;min-height:16px;color:var(--muted)"></div>'
+    +'</div>';
   // 家長陪同欄位
   html+='<div id="'+cardId+'_eParentalBlock" style="display:none">'
     +'<div style="padding:12px;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.3);border-radius:8px;margin-bottom:14px">'
@@ -1497,10 +1513,33 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   // 儲存時重算家長需求要用到的資料
   box.dataset.gmap=gMapJson;
   box.dataset.evdate=evDate;
+  box.dataset.fs=JSON.stringify(fs);
   // 開啟表單當下就依「目前的組別＋生日」判斷是否顯示家長區塊
   //（與之後改生日/組別時走同一條判斷路徑，不會有初始不判斷的問題）
   updateEditParentalBlock(cardId,gMapJson,evDate);
   updateEditCustomFieldsVisibility(cardId);
+  updateEditGroupInfo(cardId,gMapJson);
+}
+
+// 修改表單：依目前選擇的組別，顯示組別註解與限制摘要
+// （跟新報名表單的 onSignupGroupChange 邏輯一致；灰字=純資訊提示，真的驗證失敗時另外在 saveEditEntry 裡改成紅字）
+window.updateEditGroupInfo=function(cardId, gMapJson){
+  const noteEl=document.getElementById(cardId+'_eGroupNote');
+  const hint=document.getElementById(cardId+'_eGroupHint');
+  if(!noteEl||!hint)return;
+  let gMap={}; try{gMap=JSON.parse(gMapJson);}catch(e){}
+  const group=document.getElementById(cardId+'_eGroup')?.value;
+  const g=gMap[group];
+  noteEl.textContent=g?.note||'';
+  if(!g){hint.textContent='';return;}
+  const hints=[];
+  if(g.genderLimit)hints.push('限'+g.genderLimit+'性');
+  if(g.ageMin>0)hints.push(g.ageMin+'歲以上');
+  if(g.ageMax>0)hints.push(g.ageMax+'歲以下');
+  if(g.groupCapacity>0)hints.push('限'+g.groupCapacity+'人');
+  if(g.parentalAge>0)hints.push(g.parentalAge+'歲以下須家長陪同聲明');
+  hint.textContent=hints.length?'此組別限制：'+hints.join('、'):'';
+  hint.style.color='var(--muted)';
 }
 
 // 修改表單：依目前選擇的組別，動態顯示/隱藏對應的自訂欄位
@@ -1542,12 +1581,13 @@ window.updateEditParentalBlock=function(cardId, gMapJson, evDate){
 }
 
 window.saveEditEntry=async function(eventId,entryDocId,cardId){
+  let fs={}; try{fs=JSON.parse(document.getElementById(cardId+'_edit')?.dataset.fs||'{}');}catch(e){}
   const name=document.getElementById(cardId+'_eName').value.trim();
   const gender=document.getElementById(cardId+'_eGender').value;
   const birthday=document.getElementById(cardId+'_eBirthday').value.trim();
-  const phone=document.getElementById(cardId+'_ePhone').value.trim();
-  const email=document.getElementById(cardId+'_eEmail').value.trim();
-  const idNumber=document.getElementById(cardId+'_eIdNumber').value.trim();
+  const phone=(fs.phone?.show!==false)?(document.getElementById(cardId+'_ePhone')?.value.trim()||''):'';
+  const email=(fs.email?.show!==false)?(document.getElementById(cardId+'_eEmail')?.value.trim()||''):'';
+  const idNumber=(fs.idNumber?.show!==false)?(document.getElementById(cardId+'_eIdNumber')?.value.trim()||''):'';
   const note=document.getElementById(cardId+'_eNote').value.trim();
   const groupId=document.getElementById(cardId+'_eGroup').value;
   const bibEl=document.getElementById(cardId+'_eBib');
@@ -1588,10 +1628,54 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
     newBib=padded;
   }
   if(!name){showToast('姓名為必填','error');return;}
-  if(birthday&&!validateBirthday(birthday)){showToast('生日格式錯誤或不合理（不能是未來日期）','error');return;}
-  if(phone&&!validatePhone(phone)){showToast('手機號碼格式錯誤','error');return;}
-  if(email&&!validateEmail(email)){showToast('Email格式錯誤','error');return;}
-  if(idNumber&&!validateId(idNumber)){showToast('身分證格式錯誤','error');return;}
+  if(!gender){showToast('性別為必選','error');return;}
+  if(!birthday){setFieldError(cardId+'_eBirthday',true);showToast('生日為必填','error');return;}
+  if(!validateBirthday(birthday)){setFieldError(cardId+'_eBirthday',true);showToast('生日格式錯誤或不合理（不能是未來日期）','error');return;}
+  setFieldError(cardId+'_eBirthday',false);
+  if(fs.phone?.show!==false){
+    if(fs.phone?.required&&!phone){setFieldError(cardId+'_ePhone',true);showToast('請填寫手機號碼','error');return;}
+    if(phone&&!validatePhone(phone)){setFieldError(cardId+'_ePhone',true);showToast('手機號碼格式錯誤','error');return;}
+    setFieldError(cardId+'_ePhone',false);
+  }
+  if(fs.email?.show!==false){
+    if(fs.email?.required&&!email){setFieldError(cardId+'_eEmail',true);showToast('請填寫 E-Mail','error');return;}
+    if(email&&!validateEmail(email)){setFieldError(cardId+'_eEmail',true);showToast('Email格式錯誤','error');return;}
+    setFieldError(cardId+'_eEmail',false);
+  }
+  if(fs.idNumber?.show!==false){
+    if(fs.idNumber?.required&&!idNumber){setFieldError(cardId+'_eIdNumber',true);showToast('請填寫身分證字號','error');return;}
+    if(idNumber&&!validateId(idNumber)){setFieldError(cardId+'_eIdNumber',true);showToast('身分證格式錯誤','error');return;}
+    setFieldError(cardId+'_eIdNumber',false);
+  }
+  // 組別限制驗證（性別/年齡/名額；邀請碼組別不開放在編輯時切換，維持原行為）
+  // ── 灰字提示跟錯誤紅字共用同一個 eGroupHint 元素：平常是 updateEditGroupInfo() 寫入的灰字摘要，
+  //    這裡驗證失敗時覆寫成紅字錯誤訊息，跟管理員端 eGroupHint 的顏色邏輯一致
+  {
+    const editBox0=document.getElementById(cardId+'_edit');
+    let gMap0={}; try{gMap0=JSON.parse(editBox0?.dataset.gmap||'{}');}catch(e){}
+    const g0=gMap0[groupId];
+    const groupHintEl=document.getElementById(cardId+'_eGroupHint');
+    const failGroup=(msg)=>{
+      if(groupHintEl){groupHintEl.textContent=msg;groupHintEl.style.color='var(--red)';}
+      showToast(msg,'error');
+    };
+    if(g0){
+      if(g0.genderLimit&&gender&&g0.genderLimit!==gender){failGroup('此組別限'+g0.genderLimit+'性報名');return;}
+      if(birthday){
+        const age=calcAgeRunner(birthday,editBox0?.dataset.evdate||'');
+        if(age!==null){
+          if(g0.ageMin>0&&age<g0.ageMin){failGroup('此組別年齡限制 '+g0.ageMin+' 歲以上（您的年齡：'+age+'歲）');return;}
+          if(g0.ageMax>0&&age>g0.ageMax){failGroup('此組別年齡限制 '+g0.ageMax+' 歲以下（您的年齡：'+age+'歲）');return;}
+        }
+      }
+      // 名額只在「真的換到不同組別」時才檢查，避免原本就在額滿組別的人被自己卡住
+      const origGroupId=statusCache[entryDocId]?.entry?.groupId;
+      if(groupId!==origGroupId&&g0.groupCapacity>0){
+        const capSnap=await getCountFromServer(query(collection(db,'events',eventId,'runners'),where('groupId','==',groupId)));
+        if(capSnap.data().count>=g0.groupCapacity){failGroup('此組別已額滿（'+g0.groupCapacity+'人）');return;}
+      }
+    }
+  }
   const customFields=JSON.parse(document.getElementById(cardId+'_edit').dataset.customFields||'[]');
   const customData={};
   for(const f of customFields){
