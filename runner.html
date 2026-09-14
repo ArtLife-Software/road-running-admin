@@ -1449,8 +1449,8 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
       +'</div>';
     html+='<input type="hidden" id="'+cardId+'_bibRange" data-min="'+editEffMin+'" data-max="'+editEffMax+'" data-pad="'+editPad+'" data-old-bib="'+esc(e.bibNumber||'')+'" data-uid="'+esc(e.uniqueId||'')+'">';
   }
-  html+='<div class="input-group"><label>姓名</label><input id="'+cardId+'_eName" type="text" class="input" value="'+esc(r.name||'')+'"></div>';
-  html+='<div class="input-group"><label>性別</label><select id="'+cardId+'_eGender" class="input"><option value="男"'+(r.gender==='男'?' selected':'')+'>男</option><option value="女"'+(r.gender==='女'?' selected':'')+'>女</option></select></div>';
+  html+='<div class="input-group"><label>姓名 <span class="required-star">*</span></label><input id="'+cardId+'_eName" type="text" class="input" value="'+esc(r.name||'')+'"></div>';
+  html+='<div class="input-group"><label>性別 <span class="required-star">*</span></label><select id="'+cardId+'_eGender" class="input"><option value="男"'+(r.gender==='男'?' selected':'')+'>男</option><option value="女"'+(r.gender==='女'?' selected':'')+'>女</option></select></div>';
   const gMapEsc=gMapJson.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
   const evDateEsc=evDate.replace(/'/g,"\\'");
   html+='<div class="input-group"><label>生日（yyyy/mm/dd）<span class="required-star">*</span></label>'

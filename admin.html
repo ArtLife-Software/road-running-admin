@@ -1642,7 +1642,7 @@ function renderEntryCustomFields(values){
   values=values||{};
   container.innerHTML=curEntryCustomFields.map(f=>{
     const id='cfInput_'+f.id;
-    const reqMark=f.required?' *':'';
+    const reqMark=f.required?' <span class="required-star">*</span>':'';
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     let inner;
     if(f.type==='select'){
@@ -3379,7 +3379,7 @@ function renderStaffCustomFields(values){
   values=values||{};
   container.innerHTML=curStaffCustomFields.map(f=>{
     const id='scfInput_'+f.id;
-    const reqMark=f.required?' *':'';
+    const reqMark=f.required?' <span class="required-star">*</span>':'';
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     if(f.type==='select'){
       const isOtherVal=f.allowOther&&values[f.id]!==undefined&&values[f.id]!==''&&!(f.options||[]).includes(values[f.id]);
@@ -4249,7 +4249,7 @@ th[data-sort]:hover{color:var(--accent);}
   <div class="modal">
     <div class="modal-title">編輯選手</div>
     <input type="hidden" id="runnerDocId">
-    <div class="input-group"><label>姓名 *</label><input id="rName" type="text" class="input"></div>
+    <div class="input-group"><label>姓名 <span class="required-star">*</span></label><input id="rName" type="text" class="input"></div>
     <div class="input-group"><label>性別</label><select id="rGender" class="input"><option value="">不填</option><option value="男">男</option><option value="女">女</option></select></div>
     <div class="input-group"><label>生日（yyyy/mm/dd）</label>
       <div class="input-row">
@@ -4271,7 +4271,7 @@ th[data-sort]:hover{color:var(--accent);}
     <div class="modal-title" id="eventModalTitle">新增賽事</div>
     <form id="eventForm">
       <input type="hidden" id="eventDocId">
-      <div class="input-group"><label>賽事名稱 *</label><input id="evName" type="text" class="input" placeholder="2026 台北馬拉松"></div>
+      <div class="input-group"><label>賽事名稱 <span class="required-star">*</span></label><input id="evName" type="text" class="input" placeholder="2026 台北馬拉松"></div>
       <div class="input-group"><label>比賽日期</label><input id="evDate" type="date" class="input"></div>
       <div class="input-group"><label>主辦單位</label><input id="evOrganizer" type="text" class="input" placeholder="例：中華民國路跑協會（會顯示在完賽證書上）"></div>
       <!-- 選手報名時間設定 -->
@@ -4411,7 +4411,7 @@ th[data-sort]:hover{color:var(--accent);}
     <div id="groupForm" class="group-form" style="display:none;margin-top:12px">
       <div class="modal-title" id="groupFormTitle" style="font-size:.95rem;margin-bottom:16px">新增組別</div>
       <input type="hidden" id="groupDocId">
-      <div class="input-group"><label>組別名稱 *</label><input id="gName" type="text" class="input" placeholder="全馬、半馬、10K..."></div>
+      <div class="input-group"><label>組別名稱 <span class="required-star">*</span></label><input id="gName" type="text" class="input" placeholder="全馬、半馬、10K..."></div>
       <div class="input-group"><label>組別註解（選填，會顯示在選手報名表單的組別選單下方）</label><textarea id="gNote" class="input" rows="2" placeholder="例：全馬需具備完賽半馬以上經驗"></textarea></div>
       <div class="input-group">
         <label>站點順序（依序挑選，兩個組別要共用同一個檢查點時，選同一個站點即可）</label>
@@ -4540,7 +4540,7 @@ th[data-sort]:hover{color:var(--accent);}
     <div id="cfForm" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
       <div class="modal-title" id="cfFormTitle" style="font-size:.95rem;margin-bottom:16px">新增欄位</div>
       <input type="hidden" id="cfFieldIndex">
-      <div class="input-group"><label>欄位名稱 *</label><input id="cfLabel" type="text" class="input" placeholder="例：T恤尺寸"></div>
+      <div class="input-group"><label>欄位名稱 <span class="required-star">*</span></label><input id="cfLabel" type="text" class="input" placeholder="例：T恤尺寸"></div>
       <div class="input-group"><label>欄位說明（選填，會顯示在欄位下方，給填表人看的提示文字）</label><input id="cfDescription" type="text" class="input" placeholder="例：請參考尺寸對照表後再選擇"></div>
       <div class="input-group"><label>欄位類型</label>
         <select id="cfType" class="input" onchange="onCfTypeChange()">
@@ -4601,7 +4601,7 @@ th[data-sort]:hover{color:var(--accent);}
     <div class="input-group" id="eEmailRow"><label id="eEmailLabel">E-Mail</label><input id="eEmail" type="email" class="input" placeholder="example@email.com" onblur="validateEntryField('email')" oninput="applyHalf(this)"></div>
     <div class="input-group" id="eIdNumberRow"><label id="eIdNumberLabel">身分證字號（1英文+9數字）</label><input id="eIdNumber" type="text" class="input" placeholder="A123456789" onblur="validateEntryField('idNumber')" oninput="applyHalf(this)"></div>
     <div class="input-group"><label>備註</label><input id="eNote" type="text" class="input"></div>
-    <div class="input-group" id="eInviteCodeRow" style="display:none"><label>邀請碼 *</label><input id="eInviteCode" type="text" class="input" placeholder="輸入邀請碼"></div>
+    <div class="input-group" id="eInviteCodeRow" style="display:none"><label>邀請碼 <span class="required-star">*</span></label><input id="eInviteCode" type="text" class="input" placeholder="輸入邀請碼"></div>
     <div id="eParentalBlock" style="display:none">
       <div style="padding:12px;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.3);border-radius:8px;margin-bottom:14px">
         <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:.85rem;line-height:1.5">
@@ -4609,10 +4609,10 @@ th[data-sort]:hover{color:var(--accent);}
           <span>本人（家長／監護人）已閱讀相關規定，同意全程陪同參賽者完成賽事，並承擔相關責任。</span>
         </label>
         <div class="input-group" style="margin-top:10px;margin-bottom:0">
-          <label>緊急聯絡人姓名 *</label><input id="eParentName" type="text" class="input" placeholder="家長／監護人姓名">
+          <label>緊急聯絡人姓名 <span class="required-star">*</span></label><input id="eParentName" type="text" class="input" placeholder="家長／監護人姓名">
         </div>
         <div class="input-group" style="margin-top:10px;margin-bottom:0">
-          <label>緊急聯絡人手機 *</label><input id="eParentPhone" type="tel" class="input" placeholder="0912345678" oninput="applyHalf(this)">
+          <label>緊急聯絡人手機 <span class="required-star">*</span></label><input id="eParentPhone" type="tel" class="input" placeholder="0912345678" oninput="applyHalf(this)">
         </div>
       </div>
     </div>
@@ -4628,8 +4628,8 @@ th[data-sort]:hover{color:var(--accent);}
 <div id="accountModal" class="modal-overlay">
   <div class="modal">
     <div class="modal-title">新增帳戶</div>
-    <div class="input-group"><label>Email *</label><input id="newAccEmail" type="email" class="input" placeholder="user@example.com"></div>
-    <div class="input-group"><label>預設密碼 *（至少6碼）</label><input id="newAccPassword" type="text" class="input" placeholder="預設密碼"></div>
+    <div class="input-group"><label>Email <span class="required-star">*</span></label><input id="newAccEmail" type="email" class="input" placeholder="user@example.com"></div>
+    <div class="input-group"><label>預設密碼 <span class="required-star">*</span>（至少6碼）</label><input id="newAccPassword" type="text" class="input" placeholder="預設密碼"></div>
     <div class="input-group"><label>備註</label><input id="newAccNote" type="text" class="input" placeholder="例：場地負責人"></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('accountModal')">取消</button><button class="btn btn-primary" onclick="saveAccount()">建立帳戶</button></div>
   </div>
@@ -4708,11 +4708,11 @@ th[data-sort]:hover{color:var(--accent);}
     </div>
     <div id="arSelectedRunner" style="display:none;margin-bottom:12px;padding:8px;background:var(--surface2);border-radius:8px;font-size:.85rem"></div>
     <div class="input-group">
-      <label>站點 *</label>
+      <label>站點 <span class="required-star">*</span></label>
       <select id="arStation" class="input"><option value="">請先選擇選手...</option></select>
     </div>
     <div class="input-group">
-      <label>打卡時間 *</label>
+      <label>打卡時間 <span class="required-star">*</span></label>
       <input id="arTime" type="datetime-local" step="1" class="input">
     </div>
     <div class="input-group">
