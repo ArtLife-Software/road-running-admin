@@ -75,6 +75,54 @@ function evFileName(evName, evDate) {
 function esc(v) {
   return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+// 組別排序：有 sortOrder 就依它排（手動排序過的結果），沒有的組別維持查詢回傳的原始順序（createdAt asc）
+// 不會因為缺欄位被排到奇怪的位置，也不影響還沒手動排序過的賽事。
+function sortGroupDocs(docs){
+  return docs.slice().sort((a,b)=>{
+    const ao=a.data().sortOrder, bo=b.data().sortOrder;
+    if(typeof ao==='number'&&typeof bo==='number')return ao-bo;
+    if(typeof ao==='number')return -1;
+    if(typeof bo==='number')return 1;
+    return 0;
+  });
+}
+// 確保某賽事的組別都有 sortOrder：沒有的話依目前排序（sortGroupDocs 的結果）補寫成 0..N-1，
+// 之後「手動排序」的上移/下移才有穩定的基準可以交換。回傳已排序、欄位已補齊的組別清單。
+async function ensureGroupSortOrder(eventId){
+  const snap=await getDocs(query(collection(db,'events',eventId,'groups'),orderBy('createdAt','asc')));
+  const sortedDocs=sortGroupDocs(snap.docs);
+  const list=sortedDocs.map(d=>({id:d.id,...d.data()}));
+  const needsBackfill=list.some(g=>typeof g.sortOrder!=='number');
+  if(needsBackfill){
+    const b=writeBatch(db);
+    list.forEach((g,i)=>{
+      if(g.sortOrder!==i){
+        b.update(doc(db,'events',eventId,'groups',g.id),{sortOrder:i});
+        g.sortOrder=i;
+      }
+    });
+    await b.commit();
+  }
+  return list;
+}
+// 唯讀版本：只依 sortOrder 排序、不補寫，給單純「讀組別清單」的地方用
+// （管理員手動排序過後，這裡讀到的就是排序後的結果；還沒排序過的賽事則維持 createdAt 順序）
+async function getSortedGroupList(eventId){
+  const snap=await getDocs(query(collection(db,'events',eventId,'groups'),orderBy('createdAt','asc')));
+  return sortGroupDocs(snap.docs).map(d=>({id:d.id,...d.data()}));
+}
+window.moveGroup=async function(id,dir){
+  const list=await ensureGroupSortOrder(curGEvId);
+  const idx=list.findIndex(g=>g.id===id);
+  const swapIdx=idx+dir;
+  if(idx<0||swapIdx<0||swapIdx>=list.length)return;
+  const a=list[idx], b2=list[swapIdx];
+  const batch=writeBatch(db);
+  batch.update(doc(db,'events',curGEvId,'groups',a.id),{sortOrder:b2.sortOrder});
+  batch.update(doc(db,'events',curGEvId,'groups',b2.id),{sortOrder:a.sortOrder});
+  await batch.commit();
+  loadGroups();
+}
 // 用於 onclick="fn('...','...')" 內、被包在JS單引號字串裡的參數
 // 先處理JS字串層（反斜線、單引號），再處理HTML屬性層（&、<、>、雙引號）
 function escJs(v) {
@@ -482,8 +530,8 @@ async function loadEvents() {
   // 為每個賽事讀取 groups 子集合
   const rows = await Promise.all(snap.docs.map(async d => {
     const ev=d.data(); const isActive=d.id===activeId;
-    const gSnap=await getDocs(collection(db,'events',d.id,'groups'));
-    const gNames=gSnap.docs.map(g=>g.data().name).join('、')||'-';
+    const gList=await getSortedGroupList(d.id);
+    const gNames=gList.map(g=>g.name).join('、')||'-';
     // 狀態徽章
     let statusHtml=(isActive?'<span class="badge badge-green">進行中</span>':'<span class="badge">未啟用</span>')+' ';
     statusHtml+=(ev.registrationOpen?'<span class="badge badge-green">選手報名 ON</span>':'')+'';
@@ -721,8 +769,8 @@ window.renameCheckpoint=async function(id,oldName){
   showToast('已更新站點名稱，所有引用這個站點的組別/歷史打卡記錄都會自動顯示新名稱');
 }
 window.deleteCheckpoint=async function(id,name){
-  const gSnap=await getDocs(collection(db,'events',curGEvId,'groups'));
-  const usedBy=gSnap.docs.filter(d=>(d.data().stationRefs||[]).includes(id)).map(d=>d.data().name);
+  const gList=await getSortedGroupList(curGEvId);
+  const usedBy=gList.filter(g=>(g.stationRefs||[]).includes(id)).map(g=>g.name);
   if(usedBy.length){showToast('無法刪除：「'+name+'」還被組別使用中（'+usedBy.join('、')+'），請先從組別站序移除','error');return;}
   if(!confirm('確定刪除站點「'+name+'」？'))return;
   await deleteDoc(doc(db,'events',curGEvId,'checkpoints',id));
@@ -731,16 +779,17 @@ window.deleteCheckpoint=async function(id,name){
 }
 async function loadGroups() {
   const tbody=document.getElementById('groupsTableBody');
-  tbody.innerHTML='<tr><td colspan="3" class="loading-cell">載入中...</td></tr>';
-  const snap=await getDocs(collection(db,'events',curGEvId,'groups'));
-  if (snap.empty) { tbody.innerHTML='<tr><td colspan="3" class="loading-cell">尚無組別</td></tr>'; return; }
+  tbody.innerHTML='<tr><td colspan="4" class="loading-cell">載入中...</td></tr>';
+  const list=await ensureGroupSortOrder(curGEvId);
+  if (!list.length) { tbody.innerHTML='<tr><td colspan="4" class="loading-cell">尚無組別</td></tr>'; return; }
   const nameById={}; curCheckpoints.forEach(c=>{nameById[c.id]=c.name;});
-  tbody.innerHTML=snap.docs.map(d=>{
-    const g=d.data();
+  tbody.innerHTML=list.map((g,i)=>{
     const stationNames=(g.stationRefs||[]).map(cid=>nameById[cid]||'（已刪除的站點）');
-    return '<tr><td><strong>'+esc(g.name)+'</strong></td>'
+    const upBtn='<button class="btn btn-sm btn-ghost" style="padding:2px 8px"'+(i===0?' disabled':'')+' onclick="moveGroup(\''+g.id+'\',-1)" title="上移">↑</button>';
+    const downBtn='<button class="btn btn-sm btn-ghost" style="padding:2px 8px"'+(i===list.length-1?' disabled':'')+' onclick="moveGroup(\''+g.id+'\',1)" title="下移">↓</button>';
+    return '<tr><td style="white-space:nowrap">'+upBtn+' '+downBtn+'</td><td><strong>'+esc(g.name)+'</strong></td>'
       +'<td style="font-size:.78rem;color:var(--muted)">'+esc(stationNames.join(' → '))+'</td>'
-      +'<td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="editGroup(\''+d.id+'\')">編輯</button> <button class="btn btn-sm btn-danger" onclick="deleteGroup(\''+d.id+'\',\''+escJs(g.name)+'\')">刪除</button></td></tr>';
+      +'<td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="editGroup(\''+g.id+'\')">編輯</button> <button class="btn btn-sm btn-danger" onclick="deleteGroup(\''+g.id+'\',\''+escJs(g.name)+'\')">刪除</button></td></tr>';
   }).join('');
 }
 // 組別「號碼規則」開關：沒勾選就把底下欄位隱藏＋清空，避免使用者以為填了就有作用
@@ -895,10 +944,12 @@ window.saveGroup=async function(){
   }
   else{
     if(inviteInput&&inviteInput!=='清除')data.inviteCodeHash=await sha256Hex(inviteInput);
+    const existingList=await ensureGroupSortOrder(curGEvId);
+    data.sortOrder=existingList.length;
     data.createdAt=serverTimestamp();await addDoc(collection(db,'events',curGEvId,'groups'),data);
   }
-  const gSnap=await getDocs(collection(db,'events',curGEvId,'groups'));
-  await updateDoc(doc(db,'events',curGEvId),{groupNames:gSnap.docs.map(d=>d.data().name),updatedAt:serverTimestamp()});
+  const gListForNames=await getSortedGroupList(curGEvId);
+  await updateDoc(doc(db,'events',curGEvId),{groupNames:gListForNames.map(g=>g.name),updatedAt:serverTimestamp()});
 
   let syncMsg='';
   if(id&&oldName&&oldName!==name){
@@ -922,8 +973,8 @@ async function cascadeGroupRename(eventId,groupId,oldName,newName){
 window.deleteGroup=async function(id,name){
   if(!confirm('確定刪除組別「'+name+'」？'))return;
   await deleteDoc(doc(db,'events',curGEvId,'groups',id));
-  const gSnap=await getDocs(collection(db,'events',curGEvId,'groups'));
-  await updateDoc(doc(db,'events',curGEvId),{groupNames:gSnap.docs.map(d=>d.data().name)});
+  const gListForNames=await getSortedGroupList(curGEvId);
+  await updateDoc(doc(db,'events',curGEvId),{groupNames:gListForNames.map(g=>g.name)});
   showToast('已刪除'); loadGroups();
 }
 window.cancelGroupForm=function(){document.getElementById('groupForm').style.display='none';}
@@ -947,8 +998,7 @@ window.manageCustomFields=async function(eid,ename,type){
   document.getElementById('cfFS_idNumber_row_req').style.display=idRowDisplay;
   // 工作人員沒有「組別」這個概念，適用組別設定只給選手表單用
   if(curCFType==='runner'){
-    const gSnap=await getDocs(collection(db,'events',eid,'groups'));
-    curCFGroups=gSnap.docs.map(d=>({id:d.id,name:d.data().name}));
+    curCFGroups=await getSortedGroupList(eid);
   }else{
     curCFGroups=[];
   }
@@ -1465,7 +1515,7 @@ window.handleEntryCSV=async function(e){
   const existingRunners=runnerSnap.docs.map(d=>({docId:d.id,...d.data()}));
   // CSV 裡的「組別」欄位是名稱文字，匯入時就近解析成目前的 groupId，
   // 這樣即使之後組別改名，這批匯入的報名資料仍然關聯得到正確組別。
-  const groupsForImportSnap=await getDocs(collection(db,'events',eventId,'groups'));
+  const groupsForImportSnap=await getDocs(query(collection(db,'events',eventId,'groups'),orderBy('createdAt','asc')));
   const groupIdByName={};
   const groupDataById={}; // 供每列判斷該組別是否有自訂號碼規則（bibOverride）
   groupsForImportSnap.docs.forEach(d=>{groupIdByName[d.data().name]=d.id; groupDataById[d.id]=d.data();});
@@ -1769,17 +1819,16 @@ async function loadEntryGroupOptions(selectedId){
   const sel=document.getElementById('eGroup'); sel.innerHTML='';
   curEntryGroupMap={};
   if(!eventId)return;
-  const snap=await getDocs(collection(db,'events',eventId,'groups'));
-  snap.docs.forEach(d=>{
-    const g=d.data();
-    curEntryGroupMap[d.id]=g;
+  const gList=await getSortedGroupList(eventId);
+  gList.forEach(g=>{
+    curEntryGroupMap[g.id]=g;
     const o=document.createElement('option');
-    o.value=d.id;
+    o.value=g.id;
     o.textContent=g.name;
-    if(d.id===selectedId)o.selected=true;
+    if(g.id===selectedId)o.selected=true;
     sel.appendChild(o);
   });
-  if(!snap.size)sel.innerHTML='<option value="未分組">未分組</option>';
+  if(!gList.length)sel.innerHTML='<option value="未分組">未分組</option>';
 }
 
 // ── 年齡計算（以賽事日期為基準）──
@@ -2290,7 +2339,7 @@ async function loadRecords(){
 
   // 組別/站點名稱對照表：只在切換賽事時讀一次，畫面上一律顯示「目前」的名稱
   const [gSnap,checkpointSnap]=await Promise.all([
-    getDocs(collection(db,'events',curRecordEventId,'groups')),
+    getDocs(query(collection(db,'events',curRecordEventId,'groups'),orderBy('createdAt','asc'))),
     getDocs(collection(db,'events',curRecordEventId,'checkpoints'))
   ]);
   curRecGroupNameById={}; gSnap.docs.forEach(d=>{curRecGroupNameById[d.id]=d.data().name||'';});
@@ -2335,7 +2384,7 @@ window.showAddRecord=async function(){
   document.getElementById('arTime').value=now.toISOString().slice(0,19);
   document.getElementById('arDeviceName').value='後台手動補登';
   const [gSnap,checkpointSnap]=await Promise.all([
-    getDocs(collection(db,'events',curRecordEventId,'groups')),
+    getDocs(query(collection(db,'events',curRecordEventId,'groups'),orderBy('createdAt','asc'))),
     getDocs(collection(db,'events',curRecordEventId,'checkpoints'))
   ]);
   arCheckpointNameById={}; checkpointSnap.docs.forEach(d=>{arCheckpointNameById[d.id]=d.data().name||'';});
@@ -2358,7 +2407,7 @@ window.editRecord=async function(docId){
   box.innerHTML='<strong>'+esc(rec.bibNumber||'-')+'　'+esc(rec.name||'-')+'</strong>　'+esc(rec.group||'-')+'　<span class="mono" style="font-size:.75rem">'+esc(rec.uniqueId)+'</span>';
 
   const [gSnap,checkpointSnap]=await Promise.all([
-    getDocs(collection(db,'events',curRecordEventId,'groups')),
+    getDocs(query(collection(db,'events',curRecordEventId,'groups'),orderBy('createdAt','asc'))),
     getDocs(collection(db,'events',curRecordEventId,'checkpoints'))
   ]);
   arCheckpointNameById={}; checkpointSnap.docs.forEach(d=>{arCheckpointNameById[d.id]=d.data().name||'';});
@@ -2592,9 +2641,9 @@ async function loadGroupDropdown(selectId,eventSelectId){
   const eventId=document.getElementById(eventSelectId)?.value;
   const sel=document.getElementById(selectId); sel.innerHTML='';
   if(!eventId)return;
-  const snap=await getDocs(collection(db,'events',eventId,'groups'));
-  snap.docs.forEach(d=>{
-    const o=document.createElement('option'); o.value=d.id; o.textContent=d.data().name; sel.appendChild(o);
+  const gList=await getSortedGroupList(eventId);
+  gList.forEach(g=>{
+    const o=document.createElement('option'); o.value=g.id; o.textContent=g.name; sel.appendChild(o);
   });
 }
 // ── 搜尋欄取值（考量組別下拉）──
@@ -2635,7 +2684,7 @@ window.doSearch=async function(){
   const [entrySnap, recSnap, groupSnap, checkpointSnap]=await Promise.all([
     getDocs(collection(db,'events',eventId,'runners')),
     getDocs(query(collection(db,'events',eventId,'records'),orderBy('scanTime','asc'))),
-    getDocs(collection(db,'events',eventId,'groups')),
+    getDocs(query(collection(db,'events',eventId,'groups'),orderBy('createdAt','asc'))),
     getDocs(collection(db,'events',eventId,'checkpoints'))
   ]);
   const entryMap={};
@@ -2646,6 +2695,7 @@ window.doSearch=async function(){
   // 每個站點是 {id,name}——比對用 id，畫面顯示用 name，改名字不影響比對正確性，
   // 也不需要任何連鎖同步。
   const checkpointNameById={}; checkpointSnap.docs.forEach(d=>{checkpointNameById[d.id]=d.data().name||'';});
+  const groupIndexById={}; sortGroupDocs(groupSnap.docs).forEach((d,i)=>{groupIndexById[d.id]=i;});
   const groupStations={}; const groupNameById={};
   groupSnap.docs.forEach(d=>{
     const g=d.data();
@@ -2706,11 +2756,13 @@ window.doSearch=async function(){
   }
 
   // ── 一組一表格 ──
-  // 收集本次查詢涉及的組別（保持順序）
+  // 收集本次查詢涉及的組別，依組別名稱排序（原本是保持「查詢結果裡先遇到哪個組別」的順序，
+  // 等同 Firestore 回傳選手的原始順序決定，沒有實質意義）
   const groupOrder=[];
   for(const [uid,e] of targetEntries){
     if(e.groupId&&!groupOrder.includes(e.groupId))groupOrder.push(e.groupId);
   }
+  groupOrder.sort((a,b)=>(groupIndexById[a]??Infinity)-(groupIndexById[b]??Infinity));
 
   // 建立每個組別的表格
   let resultHtml='';
@@ -2911,12 +2963,12 @@ window.loadStats=async function(){
 async function loadStatsRoster(eventId){
   const [entrySnap, gSnap, checkpointSnap, evDoc]=await Promise.all([
     getDocs(collection(db,'events',eventId,'runners')),
-    getDocs(collection(db,'events',eventId,'groups')),
+    getDocs(query(collection(db,'events',eventId,'groups'),orderBy('createdAt','asc'))),
     getDocs(collection(db,'events',eventId,'checkpoints')),
     getDoc(doc(db,'events',eventId))
   ]);
   const entries=entrySnap.docs.map(d=>d.data());
-  const groups=gSnap.docs.map(d=>({id:d.id,...d.data()}));
+  const groups=sortGroupDocs(gSnap.docs).map(d=>({id:d.id,...d.data()}));
   const checkpointNameById={}; checkpointSnap.docs.forEach(d=>{checkpointNameById[d.id]=d.data().name||'';});
   const statsBasis=evDoc.data()?.statsBasis||'registered';
   const topFinishersCount=(evDoc.data()?.topFinishersCount===0)?0:(evDoc.data()?.topFinishersCount??3);
@@ -3135,11 +3187,11 @@ window.deleteAccount=async function(docId,email){
 window.showVirtualStart=async function(){
   if(!curRecordEventId){showToast('請先選擇賽事','error');return;}
   // 載入組別清單
-  const gSnap=await getDocs(collection(db,'events',curRecordEventId,'groups'));
+  const gList=await getSortedGroupList(curRecordEventId);
   const gSel=document.getElementById('vstartGroup');
   gSel.innerHTML='<option value="">全部組別</option>';
-  gSnap.docs.forEach(d=>{
-    const o=document.createElement('option'); o.value=d.id; o.textContent=d.data().name; gSel.appendChild(o);
+  gList.forEach(g=>{
+    const o=document.createElement('option'); o.value=g.id; o.textContent=g.name; gSel.appendChild(o);
   });
   document.getElementById('vstartScope').value='all';
   document.getElementById('vstartTimeMode').value='now';
@@ -3170,7 +3222,7 @@ window.runVirtualStart=async function(){
 
   // 載入組別站點設定（站點一律用 checkpoints 集合裡目前的名稱）
   const [gSnap,checkpointSnap]=await Promise.all([
-    getDocs(collection(db,'events',eventId,'groups')),
+    getDocs(query(collection(db,'events',eventId,'groups'),orderBy('createdAt','asc'))),
     getDocs(collection(db,'events',eventId,'checkpoints'))
   ]);
   const checkpointNameById={}; checkpointSnap.docs.forEach(d=>{checkpointNameById[d.id]=d.data().name||'';});
@@ -4406,7 +4458,7 @@ th[data-sort]:hover{color:var(--accent);}
       <div class="table-wrap" style="margin-bottom:8px"><table style="min-width:0"><thead><tr><th>站點名稱</th><th style="width:120px">操作</th></tr></thead><tbody id="checkpointsTableBody"></tbody></table></div>
       <button class="btn btn-ghost btn-sm" onclick="showAddCheckpoint()">＋ 新增站點</button>
     </div>
-    <div class="table-wrap" style="margin-bottom:16px"><table style="min-width:0"><thead><tr><th>組別</th><th>站點順序</th><th>操作</th></tr></thead><tbody id="groupsTableBody"></tbody></table></div>
+    <div class="table-wrap" style="margin-bottom:16px"><table style="min-width:0"><thead><tr><th style="width:70px">順序</th><th>組別</th><th>站點順序</th><th>操作</th></tr></thead><tbody id="groupsTableBody"></tbody></table></div>
     <button class="btn btn-primary btn-sm" onclick="showAddGroup()">＋ 新增組別</button>
     <div id="groupForm" class="group-form" style="display:none;margin-top:12px">
       <div class="modal-title" id="groupFormTitle" style="font-size:.95rem;margin-bottom:16px">新增組別</div>

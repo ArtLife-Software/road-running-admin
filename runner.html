@@ -244,6 +244,17 @@ async function checkInviteCode(g,input){
 function esc(v) {
   return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+// 組別排序：有 sortOrder 就依它排（管理員在後台手動排序過的結果），沒有的組別維持查詢回傳的原始順序
+// （createdAt asc），不會因為缺欄位而消失或被排到奇怪的位置。跟 admin.html 共用同一套邏輯。
+function sortGroupDocs(docs){
+  return docs.slice().sort((a,b)=>{
+    const ao=a.data().sortOrder, bo=b.data().sortOrder;
+    if(typeof ao==='number'&&typeof bo==='number')return ao-bo;
+    if(typeof ao==='number')return -1;
+    if(typeof bo==='number')return 1;
+    return 0;
+  });
+}
 function escJs(v) {
   return String(v ?? '')
     .replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'')
@@ -464,8 +475,8 @@ async function selectSignupEvent(eventId, keepWrapper){
   curSignupEvent=signupEvents.find(e=>e.id===eventId);
   lastSignupEventId=eventId;
   curSignupCustomFields=curSignupEvent.customFields||[];
-  const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
-  const groupDocs=gSnap.docs.map(d=>({id:d.id,...d.data()}));
+  const gSnap=await getDocs(query(collection(db,'events',eventId,'groups'),orderBy('createdAt','asc')));
+  const groupDocs=sortGroupDocs(gSnap.docs).map(d=>({id:d.id,...d.data()}));
   // 組別的關聯鍵一律用 ID，名稱只是顯示用、之後改名不會弄亂已送出的報名資料
   window._signupGroupMap={};
   groupDocs.forEach(g=>{window._signupGroupMap[g.id]=g;});
@@ -1417,8 +1428,8 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   const evDoc=await getDoc(doc(db,'events',eventId));
   const customFields=evDoc.data()?.customFields||[];
   const evDate=evDoc.data()?.date||'';
-  const gSnap=await getDocs(collection(db,'events',eventId,'groups'));
-  const groupList=gSnap.docs.map(d=>({id:d.id,...d.data()}));
+  const gSnap=await getDocs(query(collection(db,'events',eventId,'groups'),orderBy('createdAt','asc')));
+  const groupList=sortGroupDocs(gSnap.docs).map(d=>({id:d.id,...d.data()}));
   const groupMap={}; groupList.forEach(g=>{groupMap[g.id]=g;});
   const customData=e.customData||{};
   const fs=evDoc.data()?.fieldSettings||{};
@@ -1451,8 +1462,8 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   }
   html+='<div class="input-group"><label>姓名 <span class="required-star">*</span></label><input id="'+cardId+'_eName" type="text" class="input" value="'+esc(r.name||'')+'"></div>';
   html+='<div class="input-group"><label>性別 <span class="required-star">*</span></label><select id="'+cardId+'_eGender" class="input"><option value="男"'+(r.gender==='男'?' selected':'')+'>男</option><option value="女"'+(r.gender==='女'?' selected':'')+'>女</option></select></div>';
-  const gMapEsc=gMapJson.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-  const evDateEsc=evDate.replace(/'/g,"\\'");
+  const gMapEsc=escJs(gMapJson);
+  const evDateEsc=escJs(evDate);
   html+='<div class="input-group"><label>生日（yyyy/mm/dd）<span class="required-star">*</span></label>'
     +'<div class="input-row">'
     +'<input id="'+cardId+'_eBirthday" data-fmt="ymd" type="text" class="input" value="'+esc(r.birthday||'')+'" oninput="applyHalf(this);updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\')" onblur="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\')">'
@@ -1838,7 +1849,7 @@ async function buildLookupCard(e, eventId, evData){
   const groupRecs=recSnap.docs.map(d=>d.data()); // 整個賽事的打卡記錄（不含個資，選手端可讀）
   const allRecs=groupRecs.filter(x=>x.uniqueId===e.uniqueId);
   const [gSnap,checkpointSnap]=await Promise.all([
-    getDocs(collection(db,'events',eventId,'groups')),
+    getDocs(query(collection(db,'events',eventId,'groups'),orderBy('createdAt','asc'))),
     getDocs(collection(db,'events',eventId,'checkpoints'))
   ]);
   // 站點名稱一律即時查詢目前的 checkpoints 名稱；組別/站點比對一律用ID，
