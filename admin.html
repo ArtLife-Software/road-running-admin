@@ -566,6 +566,10 @@ window.toggleStaffRegistration = async function(id,open){
 }
 window.activateEvent = async function(id) { await setDoc(doc(db,'config','active'),{eventId:id}); showToast('已開放掃描'); loadEvents(); }
 window.deactivateEvent = async function() { await setDoc(doc(db,'config','active'),{eventId:null}); showToast('已關閉掃描'); loadEvents(); }
+window.onEvEntryCountDisplayChange=function(){
+  const mode=document.getElementById('evEntryCountDisplay').value;
+  document.getElementById('evEntryCountThresholdRow').style.display=mode==='threshold'?'':'none';
+}
 window.showAddEvent = function() {
   document.getElementById('eventModalTitle').textContent='新增賽事';
   document.getElementById('eventForm').reset();
@@ -573,6 +577,9 @@ window.showAddEvent = function() {
   ['evRegStartDate','evRegEndDate','evStaffRegStartDate','evStaffRegEndDate'].forEach(id=>{const el=document.getElementById(id);el.value='';el.style.borderColor='';});
   ['evRegStartTime','evRegEndTime','evStaffRegStartTime','evStaffRegEndTime'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('evRegCapacity').value='';
+  document.getElementById('evEntryCountDisplay').value='threshold';
+  document.getElementById('evEntryCountThreshold').value='0';
+  onEvEntryCountDisplayChange();
   document.getElementById('evBibPadLength').value='3';
   document.getElementById('evStatsBasis').value='registered';
   document.getElementById('evTopFinishersCount').value='3';
@@ -596,6 +603,9 @@ window.editEvent = async function(id) {
   setDateTimeFields('evRegStart', ev.registrationStartAt);
   setDateTimeFields('evRegEnd', ev.registrationEndAt);
   document.getElementById('evRegCapacity').value=ev.registrationCapacity||'';
+  document.getElementById('evEntryCountDisplay').value=ev.entryCountDisplay||'threshold';
+  document.getElementById('evEntryCountThreshold').value=ev.entryCountThreshold??0;
+  onEvEntryCountDisplayChange();
   setDateTimeFields('evStaffRegStart', ev.staffRegistrationStartAt);
   setDateTimeFields('evStaffRegEnd', ev.staffRegistrationEndAt);
   document.getElementById('evBibPadLength').value=ev.bibPadLength||3;
@@ -652,6 +662,9 @@ window.saveEvent = async function() {
   const id = document.getElementById('eventDocId').value;
   const regCapRaw=document.getElementById('evRegCapacity').value.trim();
   const regCapacity=regCapRaw===''||parseInt(regCapRaw)===0?0:parseInt(regCapRaw)||0;
+  const entryCountDisplay=document.getElementById('evEntryCountDisplay').value||'threshold';
+  const entryCountThresholdRaw=document.getElementById('evEntryCountThreshold').value.trim();
+  const entryCountThreshold=entryCountThresholdRaw===''?0:Math.max(0,parseInt(entryCountThresholdRaw)||0);
   const bibPadLength=parseInt(document.getElementById('evBibPadLength').value)||3;
   const statsBasis=document.getElementById('evStatsBasis').value||'registered';
   const topFinishersCountRaw=document.getElementById('evTopFinishersCount').value.trim();
@@ -706,6 +719,7 @@ window.saveEvent = async function() {
     registrationStartAt: dtFieldsToTs('evRegStart'),
     registrationEndAt:   dtFieldsToTs('evRegEnd'),
     registrationCapacity: regCapacity,
+    entryCountDisplay, entryCountThreshold,
     staffRegistrationStartAt: dtFieldsToTs('evStaffRegStart'),
     staffRegistrationEndAt:   dtFieldsToTs('evStaffRegEnd'),
     bibPadLength, statsBasis, topFinishersCount, allowCustomBib, allowBibChange, bibRangeMin, bibRangeMax,
@@ -4351,6 +4365,15 @@ th[data-sort]:hover{color:var(--accent);}
           <div class="input-group" style="margin:0"><label>結束時間（hh:mm）</label><input id="evRegEndTime" type="time" class="input"></div>
         </div>
         <div class="input-group" style="margin-top:12px"><label>報名總人數（0 或留空＝無限制）</label><input id="evRegCapacity" type="number" min="0" class="input" placeholder="0"></div>
+        <div class="input-group" style="margin-top:12px"><label>已報名人數顯示</label>
+          <select id="evEntryCountDisplay" class="input" onchange="onEvEntryCountDisplayChange()">
+            <option value="hidden">不顯示</option>
+            <option value="capOnly">有設定報名總人數上限才顯示</option>
+            <option value="threshold" selected>達到指定人數才顯示</option>
+          </select>
+        </div>
+        <div class="input-group" id="evEntryCountThresholdRow" style="margin-top:12px"><label>顯示門檻（0＝一律顯示）</label><input id="evEntryCountThreshold" type="number" min="0" class="input" placeholder="0"></div>
+        <div class="csv-hint" style="margin-top:0">選手報名表單上「已報名人數：X」這段文字是否顯示，依此設定決定。選「有設定報名總人數上限才顯示」時，若上方「報名總人數」沒有設定上限，則等同不顯示。</div>
       </div>
       <!-- 工作人員報名時間設定 -->
       <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">

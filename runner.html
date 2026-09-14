@@ -427,7 +427,13 @@ function buildRegInfoHtml(ev, entryCount) {
   if (ev.registrationStartAt) lines.push('報名開始：' + fmtDT(ev.registrationStartAt));
   if (ev.registrationEndAt)   lines.push('報名截止：' + fmtDT(ev.registrationEndAt));
   const cap = ev.registrationCapacity ?? 0;
-  lines.push('已報名人數：' + entryCount + (cap > 0 ? ' / ' + cap : ''));
+  const mode = ev.entryCountDisplay || 'threshold';
+  const threshold = ev.entryCountThreshold ?? 0;
+  let showCount;
+  if (mode === 'hidden') showCount = false;
+  else if (mode === 'capOnly') showCount = cap > 0;
+  else showCount = entryCount >= threshold; // 'threshold'：0＝一律顯示
+  if (showCount) lines.push('已報名人數：' + entryCount + (cap > 0 ? ' / ' + cap : ''));
   return lines.length ? lines.map(l=>'<div style="font-size:.75rem;color:var(--muted);margin-top:3px">'+l+'</div>').join('') : '';
 }
 
