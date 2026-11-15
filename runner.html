@@ -1929,6 +1929,38 @@ window.doLookup=async function(){
   }
   result.innerHTML=html;
 }
+// ── 組別名次計算（admin.html 與 runner.html 同一套規則，改一邊要同步改另一邊）──
+// 起點一律用「第一站」的打卡時間（原本用「這位選手最早的一筆記錄」，漏刷起點時會拿第二站當起點，時間變短、名次變前面）
+// 各站名次：有第一站、也有該站記錄的人，依累積時間排序 → key：uid+'_'+站點ID
+// 終點名次：全部站點都有打卡的人，依總時間排序 → key：uid（漏刷任何一站就沒有終點名次）
+// recsByUid：{uid: [該選手的打卡記錄（依時間由早到晚）]}；同一站重複打卡取最早那筆
+function computeGroupRanks(stations, uids, recsByUid){
+  const map={};
+  if(!stations||!stations.length) return map;
+  const ms=r=>(r&&r.scanTime&&r.scanTime.toDate)?r.scanTime.toDate().getTime():null;
+  const at=(uid,sid)=>ms((recsByUid[uid]||[]).find(r=>r.stationId===sid));
+  const startId=stations[0].id;
+  stations.slice(1).forEach(s=>{
+    const list=[];
+    uids.forEach(uid=>{ const st=at(uid,startId), t=at(uid,s.id); if(st!==null&&t!==null) list.push({uid,v:t-st}); });
+    list.sort((a,b)=>a.v-b.v).forEach((x,i)=>{map[x.uid+'_'+s.id]=i+1;});
+  });
+  const lastId=stations[stations.length-1].id;
+  const fin=[];
+  uids.forEach(uid=>{
+    if(!stations.every(s=>at(uid,s.id)!==null)) return;
+    fin.push({uid,v:at(uid,lastId)-at(uid,startId)});
+  });
+  fin.sort((a,b)=>a.v-b.v).forEach((x,i)=>{map[x.uid]=i+1;});
+  map.__finishers=fin.length; // 組別完賽人數（證書變數 {組別完賽人數} 用）
+  return map;
+}
+function groupRecsByUid(recs){
+  const m={};
+  recs.forEach(r=>{ (m[r.uniqueId]=m[r.uniqueId]||[]).push(r); });
+  return m;
+}
+
 async function buildLookupCard(e, eventId, evData){
   let certEventInfo = evData;
   if (!certEventInfo) {
@@ -1958,36 +1990,7 @@ async function buildLookupCard(e, eventId, evData){
   const sameGroupSnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('groupId','==',e.groupId)));
   const groupUids=sameGroupSnap.docs.map(d=>d.data().uniqueId);
   const lastStation=stations[stations.length-1];
-  const rankMap={}; // key: uid 或 uid+'_'+stationId
-  if(lastStation){
-    const finishers=[];
-    groupUids.forEach(uid=>{
-      const myRecs=groupRecs.filter(r=>r.uniqueId===uid);
-      const firstR=myRecs[0];
-      const lastR=myRecs.find(r=>r.stationId===lastStation.id);
-      if(firstR&&lastR){
-        const total=lastR.scanTime?.toDate?lastR.scanTime.toDate()-firstR.scanTime.toDate():0;
-        finishers.push({uid,total});
-      }
-    });
-    finishers.sort((a,b)=>a.total-b.total);
-    finishers.forEach((f,i)=>{rankMap[f.uid]=i+1;});
-    stations.forEach(s=>{
-      const stEntries=[];
-      groupUids.forEach(uid=>{
-        const myRecs=groupRecs.filter(r=>r.uniqueId===uid);
-        const firstR=myRecs[0];
-        const sRec=myRecs.find(r=>r.stationId===s.id);
-        if(firstR&&sRec){
-          const cum=sRec.scanTime?.toDate?sRec.scanTime.toDate()-firstR.scanTime.toDate():0;
-          stEntries.push({uid,cum});
-        }
-      });
-      stEntries.sort((a,b)=>a.cum-b.cum);
-      stEntries.forEach((se,i)=>{rankMap[se.uid+'_'+s.id]=i+1;});
-    });
-  }
-
+  const rankMap=computeGroupRanks(stations, groupUids, groupRecsByUid(groupRecs)); // key: uid 或 uid+'_'+stationId
   const evTitle=evData?'<div style="font-size:.75rem;color:var(--muted);margin-bottom:8px">'+esc(evData.name)+(evData.date?' ・ '+esc(evData.date):'')+'</div>':'';
   const finalRank=rankMap[e.uniqueId];
 
@@ -2002,12 +2005,13 @@ async function buildLookupCard(e, eventId, evData){
   html+='<div class="table-wrap"><table><thead><tr>'
     +'<th>站點</th><th>到達時間</th><th>累積時間</th><th>區段時間</th><th>名次</th>'
     +'</tr></thead><tbody>';
-  const firstRec=allRecs[0];
+  // 起點一律用第一站的記錄（跟名次同一套規則）；沒有第一站記錄就不顯示累積時間
+  const firstRec=stations[0]?allRecs.find(x=>x.stationId===stations[0].id):null;
   let prevRec=null;
   stations.forEach((s,i)=>{
     const rec=allRecs.find(x=>x.stationId===s.id);
     const arrived=!!rec;
-    const total=arrived&&i>0?diffHMS(rec.scanTime,firstRec.scanTime):null;
+    const total=arrived&&i>0&&firstRec?diffHMS(rec.scanTime,firstRec.scanTime):null;
     // 第二站（i===1）區段時間 = 累積時間，省略不顯示；第三站以後才顯示區段時間
     const seg=arrived&&i>1&&prevRec?diffHMS(rec.scanTime,prevRec.scanTime):null;
     const sRank=arrived&&i>0?rankMap[e.uniqueId+'_'+s.id]:null;
