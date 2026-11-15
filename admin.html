@@ -829,7 +829,9 @@ async function loadGroups() {
     const stationNames=(g.stationRefs||[]).map(cid=>nameById[cid]||'（已刪除的站點）');
     const upBtn='<button class="btn btn-sm btn-ghost" style="padding:2px 8px"'+(i===0?' disabled':'')+' onclick="moveGroup(\''+g.id+'\',-1)" title="上移">↑</button>';
     const downBtn='<button class="btn btn-sm btn-ghost" style="padding:2px 8px"'+(i===list.length-1?' disabled':'')+' onclick="moveGroup(\''+g.id+'\',1)" title="下移">↓</button>';
-    return '<tr><td style="white-space:nowrap">'+upBtn+' '+downBtn+'</td><td><strong>'+esc(g.name)+'</strong></td>'
+    const info=[g.distance>0?certDistText(g.distance,g.distanceUnit):'', g.timed===false?'不計時':''].filter(Boolean);
+    return '<tr><td style="white-space:nowrap">'+upBtn+' '+downBtn+'</td><td><strong>'+esc(g.name)+'</strong>'
+      +(info.length?'<div style="font-size:.72rem;color:var(--muted);margin-top:2px">'+info.map(esc).join('・')+'</div>':'')+'</td>'
       +'<td style="font-size:.78rem;color:var(--muted)">'+esc(stationNames.join(' → '))+'</td>'
       +'<td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="editGroup(\''+g.id+'\')">編輯</button> <button class="btn btn-sm btn-danger" onclick="deleteGroup(\''+g.id+'\',\''+escJs(g.name)+'\')">刪除</button></td></tr>';
   }).join('');
@@ -844,6 +846,9 @@ window.showAddGroup=function(){
   document.getElementById('groupDocId').value=''; document.getElementById('gName').value='';
   document.getElementById('gNote').value='';
   document.getElementById('gStationList').innerHTML=''; addGStationRow();
+  document.getElementById('gDistance').value='';
+  document.getElementById('gDistanceUnit').value='km';
+  document.getElementById('gTimed').value='1';
   document.getElementById('gGenderLimit').value='';
   document.getElementById('gGroupCapacity').value='0';
   document.getElementById('gAgeMin').value='0';
@@ -871,6 +876,9 @@ window.editGroup=async function(id){
   const refs=g.stationRefs||[];
   if(refs.length)refs.forEach(cid=>addGStationRow(cid));
   else addGStationRow();
+  document.getElementById('gDistance').value=g.distance>0?g.distance:'';
+  document.getElementById('gDistanceUnit').value=g.distanceUnit||'km';
+  document.getElementById('gTimed').value=g.timed===false?'0':'1'; // 舊組別沒有這個欄位＝計時
   document.getElementById('gGenderLimit').value=g.genderLimit||'';
   document.getElementById('gGroupCapacity').value=g.groupCapacity||0;
   document.getElementById('gAgeMin').value=g.ageMin||0;
@@ -924,6 +932,11 @@ window.saveGroup=async function(){
   if(!name){showToast('組別名稱為必填','error');return;}
   if(!stationRefs.length){showToast('請至少選擇一個站點','error');return;}
   if(new Set(stationRefs).size!==stationRefs.length){showToast('同一個組別的站序不能重複選同一個站點','error');return;}
+  const distRaw=document.getElementById('gDistance').value.trim();
+  const distance=distRaw===''?0:parseFloat(distRaw);
+  if(distRaw!==''&&!(distance>0)){showToast('組別距離必須大於 0，或留空','error');return;}
+  const distanceUnit=document.getElementById('gDistanceUnit').value;
+  const timed=document.getElementById('gTimed').value!=='0';
   const genderLimit=document.getElementById('gGenderLimit').value;
   const groupCapacity=parseInt(document.getElementById('gGroupCapacity').value)||0;
   const ageMin=parseInt(document.getElementById('gAgeMin').value)||0;
@@ -965,7 +978,7 @@ window.saveGroup=async function(){
     if(gCustomBibRangeMin>gBibPadMax){showToast('自選號碼最小值（'+gCustomBibRangeMin+'）超出賽事「選手編號位數」可表示的範圍（'+gBibPadLength+'位最大到 '+gBibPadMax+'）','error'); return;}
   }
   // 完賽時間限制已改在「完賽證書／獎狀」設定畫面編輯，這裡不寫入（updateDoc 不會動到既有的值）
-  const data={name,note,stationRefs,genderLimit,groupCapacity,ageMin,ageMax,parentalAge,
+  const data={name,note,stationRefs,distance,distanceUnit,timed,genderLimit,groupCapacity,ageMin,ageMax,parentalAge,
     bibOverride,allowCustomBib,allowBibChange,bibRangeMin:gBibRangeMin,bibRangeMax:gBibRangeMax,
     customBibRangeMin:gCustomBibRangeMin,customBibRangeMax:gCustomBibRangeMax,
     updatedAt:serverTimestamp()};
@@ -1942,7 +1955,10 @@ window.onEntryGroupChange=function(){
   if(g.ageMax>0) hints.push(g.ageMax+'歲以下');
   if(g.groupCapacity>0) hints.push('限'+g.groupCapacity+'人');
   if(g.parentalAge>0) hints.push(g.parentalAge+'歲以下須家長陪同聲明');
-  hint.textContent=hints.length?'此組別限制：'+hints.join('、'):'';
+  // 第一行組別資訊（距離、計時方式），第二行限制摘要；跟選手報名表單一致
+  const info=[certDistText(g.distance,g.distanceUnit), g.timed===false?'不計時':'計時'].filter(Boolean);
+  hint.textContent='組別資訊：'+info.join('、')+(hints.length?'\n此組別限制：'+hints.join('、'):'');
+  hint.style.whiteSpace='pre-line';
   hint.style.color='var(--muted)';
   updateAdminParentalBlock();
 }
@@ -2669,6 +2685,10 @@ window.selectRunnerForRecord=function(entryJson){
   const sel=document.getElementById('arStation'); sel.innerHTML='<option value="">請選擇站點...</option>';
   const g=arGroupsById[e.groupId];
   const refs=g?.stationRefs||[];
+  if(g&&g.timed===false){
+    sel.innerHTML='<option value="">（不計時組別，不需要打卡記錄）</option>';
+    return;
+  }
   if(!refs.length){
     sel.innerHTML='<option value="">（此選手所屬組別沒有設定站點）</option>';
     return;
@@ -2892,9 +2912,10 @@ window.doSearch=async function(){
   // 也不需要任何連鎖同步。
   const checkpointNameById={}; checkpointSnap.docs.forEach(d=>{checkpointNameById[d.id]=d.data().name||'';});
   const groupIndexById={}; sortGroupDocs(groupSnap.docs).forEach((d,i)=>{groupIndexById[d.id]=i;});
-  const groupStations={}; const groupNameById={};
+  const groupStations={}; const groupNameById={}; const groupDataById={};
   groupSnap.docs.forEach(d=>{
     const g=d.data();
+    groupDataById[d.id]=g;
     groupNameById[d.id]=g.name||'';
     groupStations[d.id]=(g.stationRefs||[]).map(cid=>({id:cid,name:checkpointNameById[cid]||'（已刪除的站點）'}));
   });
@@ -2925,6 +2946,16 @@ window.doSearch=async function(){
     Object.assign(groupRankMap,m);
   }
 
+  // 平均配速：完成全部站點才有（跟終點排名同一套條件），組別沒填距離就沒有
+  const paceOf=(uid,gid)=>{
+    if(!groupRankMap[uid])return '';
+    const gs=groupStations[gid]||[], g=groupDataById[gid]||{};
+    const my=allRecs.filter(x=>x.uniqueId===uid);
+    const a=my.find(x=>x.stationId===gs[0].id), b=my.find(x=>x.stationId===gs[gs.length-1].id);
+    if(!a||!b||!a.scanTime?.toDate||!b.scanTime?.toDate)return '';
+    return certPace(b.scanTime.toDate()-a.scanTime.toDate(), g.distance, g.distanceUnit);
+  };
+
   // ── 一組一表格 ──
   // 收集本次查詢涉及的組別，依組別名稱排序（原本是保持「查詢結果裡先遇到哪個組別」的順序，
   // 等同 Firestore 回傳選手的原始順序決定，沒有實質意義）
@@ -2940,6 +2971,15 @@ window.doSearch=async function(){
     const gStations=groupStations[gid]||[];
     const gName=groupNameById[gid]||'（組別已刪除）';
     const gEntries=targetEntries.filter(([,e])=>e.groupId===gid);
+    const gData=groupDataById[gid]||{};
+    // 不計時組別：不打卡、沒有記錄，只標示人數
+    if(gData.timed===false){
+      resultHtml+='<div style="margin-bottom:28px">'
+        +'<div style="font-size:1rem;font-weight:700;margin-bottom:8px;color:var(--accent)">'+esc(gName)+'</div>'
+        +'<div style="color:var(--muted);font-size:.85rem">不計時組別，沒有成績記錄（共 '+gEntries.length+' 人）</div></div>';
+      continue;
+    }
+    const showPace=gData.distance>0;
     // 排序：已完賽者依終點排名由前到後；未完賽者排在後面、依編號排序
     // （原本完全沒有排序，Firestore 回傳的順序等同亂序，導致看起來「資料順序不對」）
     gEntries.sort((a,b)=>{
@@ -2965,7 +3005,7 @@ window.doSearch=async function(){
           +'<th>'+esc(s.name)+'<br><small style="font-weight:400;color:var(--muted)">名次</small></th>';
       }
     });
-    thead+='<th>終點排名</th></tr>';
+    thead+='<th>終點排名</th>'+(showPace?'<th>平均配速</th>':'')+'</tr>';
 
     // 表身
     let tbody='';
@@ -3002,7 +3042,8 @@ window.doSearch=async function(){
         }
       });
       const finalRank=groupRankMap[uid]||'-';
-      row+='<td>'+(finalRank!=='-'?'<span class="badge badge-green">第'+finalRank+'名</span>':'-')+'</td></tr>';
+      row+='<td>'+(finalRank!=='-'?'<span class="badge badge-green">第'+finalRank+'名</span>':'-')+'</td>'
+        +(showPace?'<td>'+(paceOf(uid,gid)||'-')+'</td>':'')+'</tr>';
       tbody+=row;
     }
 
@@ -3014,13 +3055,13 @@ window.doSearch=async function(){
 
   result.innerHTML=resultHtml||'<div class="loading-cell">找不到符合的選手</div>';
   document.getElementById('searchExportBtn').style.display='inline-flex';
-  window._lastSearchResult={targetEntries,groupStations,groupNameById,groupOrder,rMap,allRecs,groupRankMap,evName,evDate};
+  window._lastSearchResult={targetEntries,groupStations,groupNameById,groupDataById,groupOrder,rMap,allRecs,groupRankMap,evName,evDate,paceOf};
 }
 
 // 查詢成績匯出CSV（一組一檔）
 window.exportSearchCSV=function(){
   const d=window._lastSearchResult; if(!d){showToast('請先查詢','error');return;}
-  const {targetEntries,groupStations,groupNameById,groupOrder,rMap,allRecs,groupRankMap,evName,evDate}=d;
+  const {targetEntries,groupStations,groupNameById,groupDataById,groupOrder,rMap,allRecs,groupRankMap,evName,evDate,paceOf}=d;
   const dateStr=fmtFileDateTime();
   let fileCount=0;
   for(const gid of groupOrder){
@@ -3028,6 +3069,9 @@ window.exportSearchCSV=function(){
     const gName=groupNameById[gid]||'（組別已刪除）';
     const gEntries=targetEntries.filter(([,e])=>e.groupId===gid);
     if(!gEntries.length)continue;
+    const gData=groupDataById[gid]||{};
+    if(gData.timed===false)continue; // 不計時組別沒有成績，不匯出
+    const showPace=gData.distance>0;
     // 排序邏輯與畫面表格一致：已完賽者依終點排名，未完賽者依編號
     gEntries.sort((a,b)=>{
       const rankA=groupRankMap[a[0]]||Infinity;
@@ -3041,7 +3085,7 @@ window.exportSearchCSV=function(){
       if(i===1) csv+=','+gStations[i].name+'到達,'+gStations[i].name+'累積,'+gStations[i].name+'名次';
       else csv+=','+gStations[i].name+'到達,'+gStations[i].name+'區段,'+gStations[i].name+'累積,'+gStations[i].name+'名次';
     }
-    csv+=',終點排名\n';
+    csv+=',終點排名'+(showPace?',平均配速':'')+'\n';
     for(const [uid,e] of gEntries){
       const r=rMap[uid]||{};
       const myRecs=allRecs.filter(x=>x.uniqueId===uid);
@@ -3072,12 +3116,13 @@ window.exportSearchCSV=function(){
         }
       });
       const finalRank=groupRankMap[uid]||'-';
-      csv+=','+(finalRank!=='-'?'第'+finalRank+'名':'-')+'\n';
+      csv+=','+(finalRank!=='-'?'第'+finalRank+'名':'-')+(showPace?','+csvCell(paceOf(uid,gid)||'-'):'')+'\n';
     }
     // 延遲下載避免瀏覽器封鎖
     setTimeout(()=>downloadCSV(csv,evFileName(evName,evDate)+'_查詢成績_'+gName+'_'+dateStr+'.csv'), fileCount*300);
     fileCount++;
   }
+  if(!fileCount){showToast('查詢結果都是不計時組別，沒有成績可以匯出','error');return;}
   showToast('共 '+fileCount+' 個檔案下載中...');
 }
 
@@ -3187,11 +3232,14 @@ function renderStatsContent(roster, records, checkinIds){
   }
 
   // 上方資訊框
-  const totalFinishers=groups.reduce((acc,g)=>{
+  // 不計時組別（沒有打卡記錄）不計入「抵達終點總人數」與「進度總百分比」；報名、男女、報到人數照算
+  const timedGroups=groups.filter(g=>g.timed!==false);
+  const timedGroupIds=new Set(timedGroups.map(g=>g.id));
+  const totalFinishers=timedGroups.reduce((acc,g)=>{
     const gEntries=entries.filter(e=>e.groupId===g.id);
     return acc+computeGroupFinishers(gEntries, records, groupStationsMap[g.id]||[]);
   },0);
-  const overallProgress=calcProgress(entries, records);
+  const overallProgress=calcProgress(entries.filter(e=>timedGroupIds.has(e.groupId)), records);
   const maleCount=entries.filter(e=>(rMap[e.uniqueId]?.gender)==='男').length;
   const femaleCount=entries.filter(e=>(rMap[e.uniqueId]?.gender)==='女').length;
   const totalCheckin=entries.filter(e=>checkinIds.has(e.uniqueId)).length;
@@ -3204,7 +3252,7 @@ function renderStatsContent(roster, records, checkinIds){
     +(isStatsMode?'':'<div class="stat-card large"><div class="stat-num">'+femaleCount+'</div><div class="stat-label">女生人數</div></div>')
     +'<div class="stat-card large"><div class="stat-num">'+totalCheckin+'</div><div class="stat-label">報到總人數</div></div>'
     +'<div class="stat-card large"><div class="stat-num">'+totalFinishers+'</div><div class="stat-label">抵達終點總人數</div></div>'
-    +'<div class="stat-card large"><div class="stat-num">'+overallProgress+'%</div><div class="stat-label">進度總百分比<br><span style="font-size:.65rem;font-weight:400">（'+(statsBasis==='checkin'?'報到':'報名')+'人數，不含起跑站）</span></div></div>'
+    +'<div class="stat-card large"><div class="stat-num">'+overallProgress+'%</div><div class="stat-label">進度總百分比<br><span style="font-size:.65rem;font-weight:400">（'+(statsBasis==='checkin'?'報到':'報名')+'人數，不含起跑站'+(timedGroups.length<groups.length?'、不計時組別':'')+'）</span></div></div>'
     +'</div>';
 
   // 算出從第一站到指定站的前N名（累積時間由小到大排序，兩站都有打卡記錄才算）
@@ -3235,6 +3283,21 @@ function renderStatsContent(roster, records, checkinIds){
       +'</div>';
   }
 
+  // 不計時組別的卡片：只有基本人數（沒有打卡記錄，不顯示抵達終點、進度與各站統計）
+  function renderUntimedGroupCard(label, ents){
+    if(!ents.length)return '';
+    const gMale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='男').length;
+    const gFemale=ents.filter(e=>(rMap[e.uniqueId]?.gender)==='女').length;
+    const gCheckin=ents.filter(e=>checkinIds.has(e.uniqueId)).length;
+    return '<div class="runner-card" style="margin-bottom:16px">'
+      +'<div class="runner-card-header"><strong>'+esc(label)+'</strong>'
+      +' <span class="badge">報名'+ents.length+'人</span>'
+      +(isStatsMode?'':' <span class="badge">男生'+gMale+'人</span>')
+      +(isStatsMode?'':' <span class="badge">女生'+gFemale+'人</span>')
+      +' <span class="badge badge-green">報到'+gCheckin+'人</span>'
+      +' <span class="badge" style="color:var(--muted)">不計時</span>'
+      +'</div></div>';
+  }
   // 繪製一個組別統計卡的函式；gStations 是 [{id,name}]（依站序）
   function renderGroupCard(label, ents, recs, gStations){
     if(!ents.length)return '';
@@ -3278,7 +3341,7 @@ function renderStatsContent(roster, records, checkinIds){
   // 各組統計
   for(const g of groups){
     const gEntries=entries.filter(e=>e.groupId===g.id);
-    html+=renderGroupCard(g.name, gEntries, records, groupStationsMap[g.id]||[]);
+    html+=g.timed===false?renderUntimedGroupCard(g.name, gEntries):renderGroupCard(g.name, gEntries, records, groupStationsMap[g.id]||[]);
   }
 
   content.innerHTML=html;
@@ -3359,8 +3422,8 @@ window.showVirtualStart=async function(){
   // 載入組別清單
   const gList=await getSortedGroupList(curRecordEventId);
   const gSel=document.getElementById('vstartGroup');
-  gSel.innerHTML='<option value="">全部組別</option>';
-  gList.forEach(g=>{
+  gSel.innerHTML='<option value="">全部組別（不含不計時組別）</option>';
+  gList.filter(g=>g.timed!==false).forEach(g=>{ // 不計時組別不打卡、不能有記錄
     const o=document.createElement('option'); o.value=g.id; o.textContent=g.name; gSel.appendChild(o);
   });
   document.getElementById('vstartScope').value='all';
@@ -3396,17 +3459,21 @@ window.runVirtualStart=async function(){
     getDocs(collection(db,'events',eventId,'checkpoints'))
   ]);
   const checkpointNameById={}; checkpointSnap.docs.forEach(d=>{checkpointNameById[d.id]=d.data().name||'';});
-  const groupStationsById={}; const groupNameById={};
+  const groupStationsById={}; const groupNameById={}; const untimedGroupIds=new Set();
   gSnap.docs.forEach(d=>{
     const g=d.data();
     groupNameById[d.id]=g.name||'';
     groupStationsById[d.id]=(g.stationRefs||[]).map(cid=>({id:cid,name:checkpointNameById[cid]||''}));
+    if(g.timed===false) untimedGroupIds.add(d.id);
   });
 
   // 載入報名選手
   const entrySnap=await getDocs(collection(db,'events',eventId,'runners'));
   let entries=entrySnap.docs.map(d=>d.data());
   if(groupFilter) entries=entries.filter(e=>e.groupId===groupFilter);
+  // 不計時組別不打卡，跳過（選「全部組別」時才會遇到）
+  const untimedSkipped=entries.filter(e=>untimedGroupIds.has(e.groupId)).length;
+  entries=entries.filter(e=>!untimedGroupIds.has(e.groupId));
 
   // 已報到者篩選
   if(scope==='checkin'){
@@ -3430,7 +3497,8 @@ window.runVirtualStart=async function(){
 
   if(!targets.length){showToast('所有選手已有第一站記錄，無需執行','error');return;}
 
-  if(!confirm('將為 '+targets.length+' 位選手寫入第一站起跑記錄（時間：'+fmt(scanTime)+'），確定執行？'))return;
+  if(!confirm('將為 '+targets.length+' 位選手寫入第一站起跑記錄（時間：'+fmt(scanTime)+'）'
+    +(untimedSkipped?'\n不計時組別的 '+untimedSkipped+' 位選手不打卡，已自動跳過。':'')+'\n\n確定執行？'))return;
 
   const btn=document.querySelector('#vstartModal .btn-primary');
   btn.textContent='執行中...'; btn.disabled=true;
@@ -4078,7 +4146,9 @@ const CERT_VARS = [
   { key: '編號',         desc: '報名編號（號碼布）' },
   { key: 'ID',           desc: '選手 ID（查詢成績用）' },
   { key: '組別',         desc: '組別名稱' },
+  { key: '組別距離',     desc: '組別設定的距離，例 21.0975 公里、10K' },
   { key: '成績',         desc: '第一站到最後一站的時間，例 01:52:37' },
+  { key: '平均配速',     desc: '成績 ÷ 組別距離，例 5:12 /km（英里為 /mi）；組別沒填距離時沒有值' },
   { key: '起跑時間',     desc: '第一站打卡時間，例 07:00:12' },
   { key: '抵達時間',     desc: '最後一站打卡時間，例 08:52:49' },
   { key: '組別名次',     desc: '同組別完賽者依成績排序的名次（數字）' },
@@ -4404,6 +4474,7 @@ function certAwardName(rank, names) {
 // 共同條件：全部站點都有打卡、成績沒有超過時間限制
 function certEligible(info, rule, limitMin) {
   rule = rule || { mode: 'all' };
+  if (info && info.timed === false) return { ok: false, reason: '不計時組別', untimed: true };
   if (rule.mode === 'none') return { ok: false, reason: '此組別不頒發' };
   if (!info || !info.completed) return { ok: false, reason: '未完成全部站點打卡' };
   if (limitMin > 0 && info.finishMs !== null && info.finishMs / 60000 > limitMin) return { ok: false, reason: '成績超過完賽時間限制（' + limitMin + ' 分鐘）', overLimit: true };
@@ -4420,14 +4491,30 @@ function certBuildData(info) {
   const s = (v) => (v === undefined || v === null ? '' : String(v));
   return {
     '姓名': s(info.name), '編號': s(info.bibNumber), 'ID': s(info.uniqueId), '組別': s(info.group),
-    '成績': s(info.finishTime), '起跑時間': s(info.startTime), '抵達時間': s(info.arriveTime),
+    '組別距離': s(info.distanceText), '成績': s(info.finishTime), '平均配速': s(info.pace), '起跑時間': s(info.startTime), '抵達時間': s(info.arriveTime),
     '組別名次': s(info.rank), '名次中文': certRankName(info.rank), '獎項名稱': certAwardName(info.rank, info.awardNames),
     '組別完賽人數': s(info.finishers), '組別報名人數': s(info.entrants),
     '賽事名稱': s(info.eventName), '比賽日期': s(info.eventDate), '主辦單位': s(info.organizer),
   };
 }
+// ── 組別距離、平均配速（查詢成績也用同一套）──
+// unit：'km' 公里、'K'、'm' 公尺、'mi' 英里
+function certDistText(d, unit) {
+  d = parseFloat(d); if (!(d > 0)) return '';
+  const n = String(Math.round(d * 10000) / 10000);
+  return unit === 'K' ? n + 'K' : unit === 'm' ? n + ' 公尺' : unit === 'mi' ? n + ' 英里' : n + ' 公里';
+}
+// 每公里（英里組別為每英里）花幾分幾秒，例 5:12 /km；超過一小時寫成 1:02:05 /km
+function certPace(ms, d, unit) {
+  d = parseFloat(d); if (!(d > 0) || ms === null || ms === undefined || isNaN(ms) || ms <= 0) return '';
+  const per = unit === 'mi' ? d : unit === 'm' ? d / 1000 : d;
+  const sec = Math.round(ms / 1000 / per);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), ss = sec % 60;
+  return (h ? h + ':' + certPad2(m) : String(m)) + ':' + certPad2(ss) + (unit === 'mi' ? ' /mi' : ' /km');
+}
+
 // ── 從打卡記錄算出一位選手的證書資料（後台「實際選手」預覽、選手端產生證書共用）──
-// o：{ entry:{name,bibNumber,uniqueId,group}, groupName, stations:[{id}], groupUids:[uid],
+// o：{ entry:{name,bibNumber,uniqueId,group}, groupName, group:(組別資料，取距離與計時方式), stations:[{id}], groupUids:[uid],
 //      recsByUid:{uid:[記錄（依時間由早到晚）]}, ranks:(computeGroupRanks 結果，可省略), ev:{name,date,organizer} }
 // 成績、名次規則與「查詢成績」相同：起點一律用第一站；全部站點都有打卡才算完賽
 function certPad2(n) { return String(n).padStart(2, '0'); }
@@ -4448,12 +4535,17 @@ function certComputeInfo(o) {
   const at = (sid) => recs.find((r) => r.stationId === sid) || null;
   const start = st[0] ? at(st[0].id) : null;
   const end = st.length ? at(st[st.length - 1].id) : null;
-  const completed = st.length > 0 && st.every((s) => at(s.id));
+  const g = o.group || {};
+  const timed = g.timed !== false; // 沒設定＝計時
+  const completed = timed && st.length > 0 && st.every((s) => at(s.id)); // 不計時組別沒有打卡記錄，不會完賽
   const ranks = o.ranks || computeGroupRanks(st, o.groupUids || [], o.recsByUid || {});
   return {
     name: e.name || '', bibNumber: e.bibNumber || '', uniqueId: e.uniqueId || '', group: o.groupName || e.group || '',
     finishTime: completed ? certFmtDur(certTsMs(end) - certTsMs(start)) : '',
     finishMs: completed ? certTsMs(end) - certTsMs(start) : null,
+    distanceText: certDistText(g.distance, g.distanceUnit),
+    pace: completed ? certPace(certTsMs(end) - certTsMs(start), g.distance, g.distanceUnit) : '',
+    timed,
     startTime: start ? certFmtClock(start) : '', arriveTime: completed ? certFmtClock(end) : '',
     rank: completed ? (ranks[e.uniqueId] || '') : '', finishers: ranks.__finishers || 0, entrants: (o.groupUids || []).length,
     eventName: ev.name || '', eventDate: ev.date || '', organizer: ev.organizer || '', completed,
@@ -4477,8 +4569,10 @@ const CERT_BG_LIMIT = 950000; // Firestore 單一文件上限 1MB，底圖 data 
 let certEd = null; // 目前開啟的編輯狀態
 
 function certEdSamples(ev) {
-  const base = { uniqueId: 'R000123', group: '21K 半馬', startTime: '07:00:12', finishers: 118, entrants: 132,
+  const base = { uniqueId: 'R000123', group: '21K 半馬', distanceText: certDistText(21.0975, 'km'), startTime: '07:00:12', finishers: 118, entrants: 132,
     eventName: ev.name || '範例賽事', eventDate: ev.date || '2026-12-06', organizer: ev.organizer || '' };
+  // 依成績自動算出配速，模擬資料才跟實際一樣
+  const withPace = (x) => { const [h, m, sec] = x.d.finishTime.split(':').map(Number); x.d.pace = certPace(((h * 60 + m) * 60 + sec) * 1000, 21.0975, 'km'); return x; };
   return [
     { label: '第 1 名：林冠宇', d: { ...base, name: '林冠宇', bibNumber: '0007', finishTime: '01:21:05', arriveTime: '08:21:17', rank: 1 } },
     { label: '一般：王小明（第 5 名）', d: { ...base, name: '王小明', bibNumber: '0123', finishTime: '01:52:37', arriveTime: '08:52:49', rank: 5 } },
@@ -4486,7 +4580,7 @@ function certEdSamples(ev) {
     { label: '英文長名', d: { ...base, name: 'Alexander Montgomery-Smith', bibNumber: '1088', finishTime: '01:38:44', arriveTime: '08:38:56', rank: 1 } },
     { label: '罕用字：林堃喆', d: { ...base, name: '林堃喆', bibNumber: '0789', finishTime: '02:31:08', arriveTime: '09:31:20', rank: 103 } },
     { label: '沒有名次（測試隱藏條件）', d: { ...base, name: '陳大文', bibNumber: '0999', finishTime: '02:58:00', arriveTime: '09:58:12', rank: '' } },
-  ];
+  ].map(withPace);
 }
 
 window.openCertEditor = async function (eventId, kind) {
@@ -4500,7 +4594,9 @@ window.openCertEditor = async function (eventId, kind) {
   const ev = evSnap.data() || {};
   const c = cSnap.exists() ? cSnap.data() : null;
   const tpl = (c && c.template) ? JSON.parse(JSON.stringify(c.template)) : certDefaultTemplate(K.tpl);
-  const groups = gSnap.docs.map((d) => ({ id: d.id, name: d.data().name || '', limit: d.data().finishTimeLimit || 0, origLimit: d.data().finishTimeLimit || 0 }));
+  // 組別順序跟「組別管理」的 ↑↓ 排序一致
+  const groups = sortGroupDocs(gSnap.docs).map((d) => ({ id: d.id, name: d.data().name || '', limit: d.data().finishTimeLimit || 0,
+    origLimit: d.data().finishTimeLimit || 0, timed: d.data().timed !== false }));
   const rules = {};
   groups.forEach((g) => { rules[g.id] = Object.assign({}, K.rule, (c && c.rules && c.rules[g.id]) || {}); });
   certEd = {
@@ -4736,10 +4832,9 @@ async function certEdLoadReal() {
   ]);
   const recsByUid = groupRecsByUid(recSnap.docs.map((d) => d.data()));
   const groups = {}, gOrder = {};
-  gSnap.docs.forEach((d) => { groups[d.id] = { name: d.data().name || '', stations: (d.data().stationRefs || []).map((cid) => ({ id: cid })) }; });
-  // 組別順序跟後台其他地方一致：依建立時間
-  gSnap.docs.slice().sort((a, b) => ((a.data().createdAt && a.data().createdAt.toMillis) ? a.data().createdAt.toMillis() : 0) - ((b.data().createdAt && b.data().createdAt.toMillis) ? b.data().createdAt.toMillis() : 0))
-    .forEach((d, i) => { gOrder[d.id] = i; });
+  gSnap.docs.forEach((d) => { groups[d.id] = { name: d.data().name || '', data: d.data(), stations: (d.data().stationRefs || []).map((cid) => ({ id: cid })) }; });
+  // 組別順序跟「組別管理」的 ↑↓ 排序一致
+  sortGroupDocs(gSnap.docs).forEach((d, i) => { gOrder[d.id] = i; });
   const entries = entSnap.docs.map((d) => d.data()).filter((e) => e.uniqueId);
   const uidsByGroup = {};
   entries.forEach((e) => { (uidsByGroup[e.groupId] = uidsByGroup[e.groupId] || []).push(e.uniqueId); });
@@ -4747,9 +4842,9 @@ async function certEdLoadReal() {
   Object.keys(uidsByGroup).forEach((gid) => { ranksByGroup[gid] = computeGroupRanks((groups[gid] || {}).stations || [], uidsByGroup[gid], recsByUid); });
   const list = entries.map((e) => {
     const g = groups[e.groupId] || {};
-    const info = certComputeInfo({ entry: e, groupName: g.name, stations: g.stations || [], groupUids: uidsByGroup[e.groupId] || [],
+    const info = certComputeInfo({ entry: e, groupName: g.name, group: g.data, stations: g.stations || [], groupUids: uidsByGroup[e.groupId] || [],
       recsByUid, ranks: ranksByGroup[e.groupId], ev: certEd.ev });
-    const label = (e.bibNumber || '-') + ' ' + (e.name || '') + (info.completed ? (info.rank ? '（第 ' + info.rank + ' 名）' : '（已完賽）') : '（未完賽）');
+    const label = (e.bibNumber || '-') + ' ' + (e.name || '') + (!info.timed ? '（不計時）' : info.completed ? (info.rank ? '（第 ' + info.rank + ' 名）' : '（已完賽）') : '（未完賽）');
     return { label, info, gid: e.groupId, groupName: g.name || e.group || '（未分組）', groupOrder: gOrder[e.groupId] ?? 999 };
   }).sort((a, b) => (a.groupOrder - b.groupOrder) || String(a.info.bibNumber).localeCompare(String(b.info.bibNumber), undefined, { numeric: true }));
   certEd.real = { list };
@@ -4792,7 +4887,7 @@ window.certEdPickReal = function () {
   const i = hit.info;
   certEd.realInfo = i;
   const el = certEdEligible(i, hit.gid);
-  const perf = i.completed ? '成績 ' + esc(i.finishTime) + (i.rank ? '，組別第 ' + i.rank + ' 名（共 ' + i.finishers + ' 人完賽）' : '') : '未完成全部站點打卡';
+  const perf = !i.timed ? '不計時組別，沒有成績' : i.completed ? '成績 ' + esc(i.finishTime) + (i.pace ? '（' + esc(i.pace) + '）' : '') + (i.rank ? '，組別第 ' + i.rank + ' 名（共 ' + i.finishers + ' 人完賽）' : '') : '未完成全部站點打卡';
   info.innerHTML = el.ok
     ? '✅ 符合頒發條件：' + perf
     : '<span style="color:var(--accent)">⚠️ 不符頒發條件（' + esc(el.reason) + '）：' + perf + '。這位選手實際上拿不到，這裡只是預覽版面。</span>';
@@ -4806,6 +4901,7 @@ function certEdRenderRules() {
   el.innerHTML = '<table class="cert-rules"><thead><tr><th>組別</th><th title="證書、獎狀共用">時間限制<br><small>分鐘，0＝不限</small></th><th>頒發對象</th></tr></thead><tbody>'
     + certEd.groups.map((g) => {
       const r = certEd.rules[g.id];
+      if (!g.timed) return '<tr><td>' + esc(g.name) + '</td><td colspan="2" style="color:var(--muted)">不計時組別，不適用</td></tr>';
       return '<tr><td>' + esc(g.name) + '</td>'
         + '<td><input type="number" min="0" class="input" value="' + (g.limit || 0) + '" oninput="certEdSetLimit(\'' + g.id + '\',this.value)"></td>'
         + '<td><div style="display:flex;gap:4px;align-items:center">'
@@ -4840,7 +4936,7 @@ function certEdEligible(info, gid) {
 
 // ── 獎項名稱對照：列數＝各組「前 N 名」的最大 N（至少 3 列，最多 20 列）──
 function certEdRenderNames() {
-  const maxN = Math.max(3, ...Object.values(certEd.rules).filter((r) => r.mode === 'top').map((r) => parseInt(r.topN, 10) || 0));
+  const maxN = Math.max(3, ...certEd.groups.filter((g) => g.timed).map((g) => certEd.rules[g.id]).filter((r) => r && r.mode === 'top').map((r) => parseInt(r.topN, 10) || 0));
   const n = Math.min(20, maxN);
   document.getElementById('certEdNames').innerHTML = Array.from({ length: n }, (_, k) => k + 1).map((i) =>
     '<label class="cert-name-row"><span>第 ' + i + ' 名</span><input class="input" placeholder="' + certRankName(i) + '" value="' + esc(certEd.awardNames[i] || '') + '" oninput="certEdSetName(' + i + ',this.value)"></label>').join('');
@@ -5889,6 +5985,29 @@ th[data-sort]:hover{color:var(--accent);}
         <div id="gStationList"></div>
         <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addGStationRow()">＋ 加入站點</button>
       </div>
+      <!-- 組別資訊 -->
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:.78rem;font-weight:700;color:var(--accent);margin-bottom:10px">📏 組別資訊</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="input-group" style="margin:0">
+            <label>組別距離（空白＝不填）</label>
+            <div style="display:flex;gap:6px">
+              <input id="gDistance" type="number" min="0" step="any" class="input" placeholder="例：21.0975">
+              <select id="gDistanceUnit" class="input" style="width:96px;flex-shrink:0">
+                <option value="km">公里</option><option value="K">K</option><option value="m">公尺</option><option value="mi">英里</option>
+              </select>
+            </div>
+          </div>
+          <div class="input-group" style="margin:0">
+            <label>計時方式</label>
+            <select id="gTimed" class="input">
+              <option value="1">計時</option>
+              <option value="0">不計時（不發計時晶片、不打卡）</option>
+            </select>
+          </div>
+        </div>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:8px">距離用於證書變數 {組別距離} 與平均配速。不計時組別沒有打卡記錄：統計頁只顯示基本人數、不計入進度與抵達終點總人數，查詢成績不顯示成績，也不頒發完賽證書與獎狀。</div>
+      </div>
       <!-- 組別限制 -->
       <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="font-size:.78rem;font-weight:700;color:var(--accent);margin-bottom:10px">⚙️ 組別限制</div>
@@ -6277,7 +6396,7 @@ th[data-sort]:hover{color:var(--accent);}
 <div id="vstartModal" class="modal-overlay">
   <div class="modal">
     <div class="modal-title">🚩 虛擬起跑</div>
-    <div class="csv-hint">為選手寫入第一站的到達記錄，作為起跑時間。已有第一站記錄的選手會自動跳過。</div>
+    <div class="csv-hint">為選手寫入第一站的到達記錄，作為起跑時間。已有第一站記錄的選手會自動跳過；不計時組別不打卡，不會寫入。</div>
     <div class="input-group">
       <label>選手範圍</label>
       <select id="vstartScope" class="input">
