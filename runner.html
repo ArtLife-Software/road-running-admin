@@ -1173,7 +1173,8 @@ window.submitSignup=async function(){
 
 function showSignupSuccess(info){
   const content=document.getElementById('signupContent');
-  let html='<div class="card" style="text-align:center">';
+  lastSignupInfo=info;
+  let html='<div id="signupResultCard" class="card" style="text-align:center">';
   html+='<div style="font-size:2.5rem;margin-bottom:8px">✅</div>';
   html+='<div style="font-size:1.05rem;font-weight:900;margin-bottom:4px">報名成功！</div>';
   html+='<div style="font-size:.82rem;color:var(--muted);margin-bottom:16px">'+esc(info.eventName)+(info.eventDate?'（'+esc(info.eventDate)+'）':'')+'</div>';
@@ -1186,11 +1187,71 @@ function showSignupSuccess(info){
   html+='<div style="font-size:2.4rem;font-weight:900;color:var(--green);letter-spacing:1px;line-height:1.2">'+esc(info.bibNumber)+'</div>';
   html+='</div>';
   html+='<div id="signupQR" class="qr-box"></div>';
-  html+='<div class="csv-hint" style="text-align:left;margin-top:16px;color:var(--text)">請截圖保存此 QR Code，比賽當天報到時使用。或記得編號，於「查詢報名／修改」分頁重新查詢。</div>';
+  html+='<div class="csv-hint" style="text-align:left;margin-top:16px;color:var(--text)">請儲存此圖片（或截圖）保存 QR Code，比賽當天報到時使用。或記得編號，於「查詢報名／修改」分頁重新查詢。</div>';
   html+='</div>';
+  html+='<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="saveSignupResultPng()">📥 存成圖片（PNG）</button>';
   content.innerHTML=html;
   const qrText=[info.uniqueId,info.bibNumber].join('|');
   makeQRCode(document.getElementById('signupQR'), qrText, 200);
+}
+let lastSignupInfo=null;
+window.saveSignupResultPng=function(){
+  const i=lastSignupInfo||{};
+  saveElementAsPng(document.getElementById('signupResultCard'),'報名資訊_'+(i.bibNumber||'')+'_'+(i.name||'')+'.png');
+}
+
+// ── 把畫面上的某個區塊存成 PNG ──
+// 電腦：直接下載檔案
+// 手機／LINE、FB 等 App 內建瀏覽器：下載常常沒反應，改成跳出圖片預覽，
+// 讓使用者長按圖片存到相簿（預覽裡另有「下載／分享」按鈕可試）
+async function saveElementAsPng(el,filename){
+  if(!el)return;
+  if(typeof html2canvas==='undefined'){showToast('圖片功能載入失敗，請改用截圖保存','error');return;}
+  showToast('正在產生圖片...');
+  let canvas;
+  try{
+    const bg=getComputedStyle(document.body).backgroundColor||'#0f1117';
+    canvas=await html2canvas(el,{scale:2,useCORS:true,backgroundColor:bg});
+  }catch(e){showToast('圖片產生失敗，請改用截圖保存','error');return;}
+  const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));
+  const isMobile=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+    ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1); // iPadOS 會偽裝成 Mac
+  if(isMobile||!blob){showPngPreview(canvas.toDataURL('image/png'),blob,filename);return;}
+  downloadBlob(blob,filename);
+  showToast('圖片已下載');
+}
+function downloadBlob(blob,filename){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=filename;
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),10000);
+}
+function showPngPreview(dataUrl,blob,filename){
+  let ov=document.getElementById('pngPreviewOverlay');
+  if(ov)ov.remove();
+  ov=document.createElement('div');
+  ov.id='pngPreviewOverlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;gap:12px';
+  ov.innerHTML='<div style="color:#fff;font-weight:700;font-size:.95rem;text-align:center">長按圖片即可儲存到相簿</div>'
+    +'<img src="'+dataUrl+'" style="max-width:100%;max-height:68vh;border-radius:12px;-webkit-touch-callout:default;user-select:auto">'
+    +'<div style="display:flex;gap:8px;width:100%;max-width:360px">'
+    +'<button class="btn btn-ghost" style="flex:1" data-act="close">關閉</button>'
+    +(blob?'<button class="btn btn-primary" style="flex:1" data-act="save">下載／分享</button>':'')
+    +'</div>';
+  ov.addEventListener('click',async e=>{
+    const act=e.target.dataset?.act;
+    if(act==='close'||e.target===ov){ov.remove();return;}
+    if(act==='save'&&blob){
+      const file=new File([blob],filename,{type:'image/png'});
+      if(navigator.canShare&&navigator.canShare({files:[file]})){
+        try{await navigator.share({files:[file]});return;}
+        catch(err){if(err.name==='AbortError')return;}
+      }
+      downloadBlob(blob,filename);
+    }
+  });
+  document.body.appendChild(ov);
 }
 
 // 把驗證函式掛到全域，供 inline onblur 使用

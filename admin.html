@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>路跑打卡系統｜管理後台</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js";
@@ -1372,6 +1374,7 @@ function renderEntries(list){
       +'<td style="white-space:nowrap">'
       +rejectBtn
       +'<button class="btn btn-sm btn-ghost" onclick="editEntry(\''+e.id+'\')">編輯</button> '
+      +'<button class="btn btn-sm btn-ghost" onclick="showEntryInfo(\''+e.id+'\')">報名資訊</button> '
       +'<button class="btn btn-sm btn-danger" onclick="deleteEntry(\''+e.id+'\',\''+escJs(e.name||'')+'\')">'+(e.cancelRequested?'核准刪除':'刪除')+'</button>'
       +'</td></tr>';
   }).join('');
@@ -2255,6 +2258,79 @@ window.saveEntry=async function(){
   }
   availBibSetAdmin=null; // 這次可能用掉/改掉一個號碼，「查看可用號碼」快取要清掉，不然要重整頁面才會反映
   closeModal('entryModal'); loadEntries();
+  // 新增成功：比照選手報名表單，顯示報名資訊（含報到 QR Code），可存成 PNG 交給選手
+  if(!id){
+    const ev=evDoc.data()||{};
+    showEntryResult({uniqueId,name,gender,group,bibNumber,eventName:ev.name||'',eventDate:ev.date||''});
+  }
+}
+
+// ── 新增選手後的報名資訊（與選手端 runner.html 的「報名成功」畫面一致）──
+let lastEntryResultInfo=null;
+function adminUtf16to8(str){
+  let out='';
+  for(let i=0;i<str.length;i++){
+    const c=str.charCodeAt(i);
+    if(c>=0x0001&&c<=0x007F)out+=str.charAt(i);
+    else if(c>0x07FF){out+=String.fromCharCode(0xE0|((c>>12)&0x0F),0x80|((c>>6)&0x3F),0x80|(c&0x3F));}
+    else{out+=String.fromCharCode(0xC0|((c>>6)&0x1F),0x80|(c&0x3F));}
+  }
+  return out;
+}
+function showEntryResult(info){
+  lastEntryResultInfo=info;
+  let html='<div style="font-size:2.5rem;margin-bottom:8px">✅</div>';
+  html+='<div style="font-size:1.05rem;font-weight:900;margin-bottom:4px">'+esc(info.title||'報名成功！')+'</div>';
+  html+='<div style="font-size:.82rem;color:var(--muted);margin-bottom:16px">'+esc(info.eventName)+(info.eventDate?'（'+esc(info.eventDate)+'）':'')+'</div>';
+  html+='<div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">';
+  html+='<strong style="font-size:1.05rem">'+esc(info.name)+'</strong>';
+  html+='<span class="badge">'+esc(info.group)+'</span>';
+  html+='</div>';
+  html+='<div style="margin:14px 0">';
+  html+='<div style="font-size:.75rem;color:var(--muted);margin-bottom:2px">您的報名編號</div>';
+  html+='<div style="font-size:2.4rem;font-weight:900;color:var(--green);letter-spacing:1px;line-height:1.2">'+esc(info.bibNumber)+'</div>';
+  html+='</div>';
+  html+='<div id="entryResultQR" style="display:flex;flex-direction:column;align-items:center;padding:20px;background:#fff;border-radius:12px;margin-top:12px"></div>';
+  html+='<div class="csv-hint" style="text-align:left;margin:16px 0 0;color:var(--text)">請儲存此圖片（或截圖）保存 QR Code，比賽當天報到時使用。或記得編號，於「查詢報名／修改」分頁重新查詢。</div>';
+  document.getElementById('entryResultCard').innerHTML=html;
+  const qrEl=document.getElementById('entryResultQR');
+  if(typeof QRCode!=='undefined'){
+    new QRCode(qrEl,{text:adminUtf16to8([info.uniqueId,info.bibNumber].join('|')),width:200,height:200});
+  }else{
+    qrEl.innerHTML='<div style="color:#333;font-size:.85rem">QR Code 套件載入失敗</div>';
+  }
+  document.getElementById('entryResultModal').style.display='flex';
+}
+// 報名列表「報名資訊」按鈕：重新顯示既有報名的報名資訊（例如選手弄丟 QR Code 時）
+window.showEntryInfo=async function(entryId){
+  const eventId=document.getElementById('entryEventSelect').value;
+  const e=allEntries.find(x=>x.id===entryId);
+  if(!e){showToast('找不到此筆報名資料，請重新整理','error');return;}
+  const ev=(await getDoc(doc(db,'events',eventId))).data()||{};
+  showEntryResult({
+    title:'報名資訊',
+    uniqueId:e.uniqueId,
+    name:e.name||e.runnerData?.name||'',
+    group:e.group||'',
+    bibNumber:e.bibNumber||'',
+    eventName:ev.name||'',eventDate:ev.date||''
+  });
+}
+window.saveEntryResultPng=async function(){
+  const el=document.getElementById('entryResultCard');
+  const i=lastEntryResultInfo||{};
+  if(typeof html2canvas==='undefined'){showToast('圖片匯出功能載入失敗','error');return;}
+  showToast('正在產生圖片...');
+  try{
+    const canvas=await html2canvas(el,{scale:2,useCORS:true,backgroundColor:'#0f1117'});
+    const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download='報名資訊_'+(i.bibNumber||'')+'_'+(i.name||'')+'.png';
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),10000);
+    showToast('圖片已下載');
+  }catch(e){showToast('圖片匯出失敗','error');}
 }
 window.deleteEntry=async function(id,name){
   const eventId=document.getElementById('entryEventSelect').value;
@@ -4705,6 +4781,17 @@ th[data-sort]:hover{color:var(--accent);}
 <div id="toast" class="toast"></div>
 
 <!-- 帳戶管理 Modal -->
+<!-- 新增選手成功：報名資訊 Modal -->
+<div id="entryResultModal" class="modal-overlay">
+  <div class="modal" style="width:420px">
+    <div id="entryResultCard" style="text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('entryResultModal')">關閉</button>
+      <button class="btn btn-primary" onclick="saveEntryResultPng()">📥 存成 PNG</button>
+    </div>
+  </div>
+</div>
+
 <div id="accountModal" class="modal-overlay">
   <div class="modal">
     <div class="modal-title">新增帳戶</div>
