@@ -4201,12 +4201,20 @@ function certResolveText(b, data) {
 }
 
 // ── 換行：中文逐字可斷，英數字整個單字一起換行 ──
+// 避頭點：這些標點不能出現在行首，換行時把前一個字一起帶到下一行（中文排版慣例）
+const CERT_NO_LINE_START = '，。、；：！？）」』】》〉…—．,.;:!?)]}%';
 function certWrapLine(ctx, line, maxW) {
   const tokens = line.match(/[A-Za-z0-9@#$%&*+\-_.,:;!?'"()\/]+|\s+|./gu) || [];
   const out = []; let cur = '';
   for (const t of tokens) {
     const test = cur + t;
     if (cur && ctx.measureText(test).width > maxW) {
+      if (CERT_NO_LINE_START.includes(t[0]) && [...cur].length > 1) {
+        const chars = [...cur]; const last = chars.pop();
+        out.push(chars.join('').replace(/\s+$/, ''));
+        cur = last + t;
+        continue;
+      }
       out.push(cur.replace(/\s+$/, ''));
       cur = /^\s+$/.test(t) ? '' : t;
     } else cur = test;
@@ -4321,6 +4329,39 @@ function certBuildData(info) {
     '賽事名稱': s(info.eventName), '比賽日期': s(info.eventDate), '主辦單位': s(info.organizer),
   };
 }
+// ── 從打卡記錄算出一位選手的證書資料（後台「實際選手」預覽、選手端產生證書共用）──
+// o：{ entry:{name,bibNumber,uniqueId,group}, groupName, stations:[{id}], groupUids:[uid],
+//      recsByUid:{uid:[記錄（依時間由早到晚）]}, ranks:(computeGroupRanks 結果，可省略), ev:{name,date,organizer} }
+// 成績、名次規則與「查詢成績」相同：起點一律用第一站；全部站點都有打卡才算完賽
+function certPad2(n) { return String(n).padStart(2, '0'); }
+function certFmtDur(ms) {
+  if (ms === null || ms === undefined || isNaN(ms)) return '';
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return certPad2(Math.floor(s / 3600)) + ':' + certPad2(Math.floor((s % 3600) / 60)) + ':' + certPad2(s % 60);
+}
+function certTsMs(r) { return r && r.scanTime && r.scanTime.toDate ? r.scanTime.toDate().getTime() : null; }
+function certFmtClock(r) {
+  const ms = certTsMs(r); if (ms === null) return '';
+  const d = new Date(ms);
+  return certPad2(d.getHours()) + ':' + certPad2(d.getMinutes()) + ':' + certPad2(d.getSeconds());
+}
+function certComputeInfo(o) {
+  const e = o.entry || {}, st = o.stations || [], ev = o.ev || {};
+  const recs = (o.recsByUid && o.recsByUid[e.uniqueId]) || [];
+  const at = (sid) => recs.find((r) => r.stationId === sid) || null;
+  const start = st[0] ? at(st[0].id) : null;
+  const end = st.length ? at(st[st.length - 1].id) : null;
+  const completed = st.length > 0 && st.every((s) => at(s.id));
+  const ranks = o.ranks || computeGroupRanks(st, o.groupUids || [], o.recsByUid || {});
+  return {
+    name: e.name || '', bibNumber: e.bibNumber || '', uniqueId: e.uniqueId || '', group: o.groupName || e.group || '',
+    finishTime: completed ? certFmtDur(certTsMs(end) - certTsMs(start)) : '',
+    finishMs: completed ? certTsMs(end) - certTsMs(start) : null,
+    startTime: start ? certFmtClock(start) : '', arriveTime: completed ? certFmtClock(end) : '',
+    rank: completed ? (ranks[e.uniqueId] || '') : '', finishers: ranks.__finishers || 0, entrants: (o.groupUids || []).length,
+    eventName: ev.name || '', eventDate: ev.date || '', organizer: ev.organizer || '', completed,
+  };
+}
 // ═══ 完賽證書繪製程式 結束 ═══
 
 // ════════════════════════════
@@ -4359,11 +4400,16 @@ window.openCertEditor = async function (eventId) {
     eventId, ev, tpl, open: c ? !!c.open : true,
     bgImg: null, bgDataUrl: '', bgDirty: false, bgUrlOk: null,
     sel: tpl.boxes[0] ? tpl.boxes[0].id : null, rects: [], samples: certEdSamples(ev), sample: 0, drag: null,
+    real: null, realInfo: null, // 實際選手預覽：第一次選用時才載入報名與打卡資料
   };
   document.getElementById('certEdTitle').textContent = '完賽證書設定 — ' + (ev.name || '');
   document.getElementById('certEdOpen').checked = certEd.open;
   const sampleSel = document.getElementById('certEdSample');
-  sampleSel.innerHTML = certEd.samples.map((s, i) => '<option value="' + i + '">' + esc(s.label) + '</option>').join('');
+  sampleSel.innerHTML = '<optgroup label="模擬資料">'
+    + certEd.samples.map((s, i) => '<option value="' + i + '">' + esc(s.label) + '</option>').join('')
+    + '</optgroup><optgroup label="實際資料"><option value="real">實際選手（從報名資料選擇）</option></optgroup>';
+  document.getElementById('certEdRealRow').style.display = 'none';
+  document.getElementById('certEdRealInput').value = '';
   certEdFillStaticSelects();
   document.getElementById('certEdModal').style.display = 'flex';
   certEdInitStage();
@@ -4403,7 +4449,7 @@ function certEdFillStaticSelects() {
 let _certEdFontTimer = null;
 async function certEdRedraw(needFonts) {
   if (!certEd) return;
-  const data = certBuildData(certEd.samples[certEd.sample].d);
+  const data = certBuildData(certEdCurrentInfo());
   if (needFonts) {
     const token = (_certEdFontTimer = {});
     await certEnsureFonts(certEd.tpl, data);
@@ -4531,8 +4577,73 @@ window.certEdInsertVar = function (key) {
   ta.focus(); ta.selectionStart = ta.selectionEnd = s + ins.length;
   certEdProp('text');
 };
-window.certEdSetSample = function () {
-  certEd.sample = parseInt(document.getElementById('certEdSample').value, 10) || 0;
+function certEdCurrentInfo() {
+  if (certEd.sample === 'real') return certEd.realInfo || { eventName: certEd.ev.name, eventDate: certEd.ev.date, organizer: certEd.ev.organizer };
+  return certEd.samples[certEd.sample].d;
+}
+window.certEdSetSample = async function () {
+  const v = document.getElementById('certEdSample').value;
+  const realRow = document.getElementById('certEdRealRow');
+  if (v !== 'real') {
+    certEd.sample = parseInt(v, 10) || 0;
+    realRow.style.display = 'none';
+    certEdRedraw(true); return;
+  }
+  certEd.sample = 'real';
+  realRow.style.display = 'flex';
+  if (!certEd.real) {
+    const info = document.getElementById('certEdRealInfo');
+    info.textContent = '載入報名與打卡資料中...';
+    try { await certEdLoadReal(); }
+    catch (e) { info.innerHTML = '<span style="color:var(--red)">載入失敗：' + esc(e.message) + '</span>'; return; }
+    if (!certEd || certEd.sample !== 'real') return;
+    // 預設選第一位已完賽的選手，方便直接看到完整的證書
+    const first = certEd.real.list.find((x) => x.info.completed) || certEd.real.list[0];
+    if (first) { document.getElementById('certEdRealInput').value = first.label; certEdPickReal(); }
+    else info.textContent = '這場賽事還沒有報名資料';
+    return;
+  }
+  certEdPickReal();
+};
+// 載入這場賽事的報名、組別、打卡記錄，一次算好每位選手的證書資料
+async function certEdLoadReal() {
+  const id = certEd.eventId;
+  const [entSnap, gSnap, recSnap] = await Promise.all([
+    getDocs(collection(db, 'events', id, 'runners')),
+    getDocs(collection(db, 'events', id, 'groups')),
+    getDocs(query(collection(db, 'events', id, 'records'), orderBy('scanTime', 'asc'))),
+  ]);
+  const recsByUid = groupRecsByUid(recSnap.docs.map((d) => d.data()));
+  const groups = {};
+  gSnap.docs.forEach((d) => { groups[d.id] = { name: d.data().name || '', stations: (d.data().stationRefs || []).map((cid) => ({ id: cid })) }; });
+  const entries = entSnap.docs.map((d) => d.data()).filter((e) => e.uniqueId);
+  const uidsByGroup = {};
+  entries.forEach((e) => { (uidsByGroup[e.groupId] = uidsByGroup[e.groupId] || []).push(e.uniqueId); });
+  const ranksByGroup = {};
+  Object.keys(uidsByGroup).forEach((gid) => { ranksByGroup[gid] = computeGroupRanks((groups[gid] || {}).stations || [], uidsByGroup[gid], recsByUid); });
+  const list = entries.map((e) => {
+    const g = groups[e.groupId] || {};
+    const info = certComputeInfo({ entry: e, groupName: g.name, stations: g.stations || [], groupUids: uidsByGroup[e.groupId] || [],
+      recsByUid, ranks: ranksByGroup[e.groupId], ev: certEd.ev });
+    const label = (e.bibNumber || '-') + ' ' + (e.name || '') + '（' + (g.name || e.group || '-') + (info.completed ? '，已完賽' : '，未完賽') + '）';
+    return { label, info };
+  }).sort((a, b) => String(a.info.bibNumber).localeCompare(String(b.info.bibNumber), undefined, { numeric: true }));
+  certEd.real = { list };
+  document.getElementById('certEdRealList').innerHTML = list.map((x) => '<option value="' + esc(x.label) + '"></option>').join('');
+}
+window.certEdPickReal = function () {
+  if (!certEd || !certEd.real) return;
+  const v = document.getElementById('certEdRealInput').value.trim();
+  const info = document.getElementById('certEdRealInfo');
+  // 先找完全相符（從下拉清單選的），再找編號或姓名相符的第一筆（直接打字的）
+  const hit = certEd.real.list.find((x) => x.label === v)
+    || certEd.real.list.find((x) => v && (x.info.bibNumber === v || x.info.name === v || x.info.uniqueId === v.toUpperCase()));
+  if (!hit) { info.textContent = v ? '找不到這位選手，請從下拉清單選擇' : ''; return; }
+  const i = hit.info;
+  certEd.realInfo = i;
+  info.innerHTML = i.completed
+    ? '✅ 已完賽：成績 ' + esc(i.finishTime) + (i.rank ? '，組別第 ' + i.rank + ' 名（共 ' + i.finishers + ' 人完賽）' : '')
+    : '<span style="color:var(--accent)">⚠️ 未完成全部站點打卡：成績、名次、抵達時間沒有值。這位選手實際上不能下載證書，這裡只是預覽版面。</span>';
   certEdRedraw(true);
 };
 
@@ -4715,7 +4826,6 @@ window.saveCertEditor = async function () {
     showToast('儲存失敗：' + e.message, 'error');
   } finally { btn.disabled = false; }
 };
-
 // ── 組別名次計算（admin.html 與 runner.html 同一套規則，改一邊要同步改另一邊）──
 // 起點一律用「第一站」的打卡時間（原本用「這位選手最早的一筆記錄」，漏刷起點時會拿第二站當起點，時間變短、名次變前面）
 // 各站名次：有第一站、也有該站記錄的人，依累積時間排序 → key：uid+'_'+站點ID
@@ -5648,6 +5758,11 @@ th[data-sort]:hover{color:var(--accent);}
           <label style="font-size:.78rem;color:var(--muted)">測試資料</label>
           <select id="certEdSample" class="input" style="width:auto;flex:1;min-width:160px;padding:6px 10px" onchange="certEdSetSample()"></select>
           <button class="btn btn-ghost btn-sm" onclick="certEdDownloadTest()">📥 下載預覽 PNG</button>
+        </div>
+        <div id="certEdRealRow" class="cert-ed-toolbar" style="display:none">
+          <input id="certEdRealInput" list="certEdRealList" class="input" style="flex:1;min-width:220px;padding:6px 10px" placeholder="輸入編號或姓名，從清單選擇選手" oninput="certEdPickReal()" onchange="certEdPickReal()">
+          <datalist id="certEdRealList"></datalist>
+          <div id="certEdRealInfo" class="cert-sub" style="flex-basis:100%;margin-top:0"></div>
         </div>
         <div class="csv-hint" style="margin:8px 0 0">
           在預覽圖上<strong>拖曳文字</strong>可移動位置；選取後可用<strong>方向鍵</strong>微調（按住 Shift 移動較多）。
