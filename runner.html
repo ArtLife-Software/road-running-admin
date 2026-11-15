@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>路跑打卡系統｜選手服務</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Great+Vibes&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
@@ -67,28 +66,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .cert-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);backdrop-filter:blur(4px);align-items:center;justify-content:center;z-index:600;padding:16px;overflow:auto;}
 .cert-modal-box{background:#12141c;border-radius:16px;padding:16px;max-width:96vw;box-shadow:0 30px 80px rgba(0,0,0,.6);}
 .cert-scale-wrap{width:100%;overflow:auto;display:flex;justify-content:center;}
-#certContent{width:900px;height:636px;flex-shrink:0;position:relative;background:#fbf6ea;font-family:'Cinzel',serif;color:#5a3b1e;box-sizing:border-box;padding:34px;background-image:radial-gradient(circle at 50% 0%, #fffaf0 0%, #fbf6ea 60%);}
-.cert-border-outer{position:absolute;inset:16px;border:3px solid #b8860b;border-radius:6px;}
-.cert-border-inner{position:absolute;inset:24px;border:1px solid #d4af37;border-radius:4px;}
-.cert-inner{position:relative;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:38px 60px;text-align:center;}
-.cert-medal{font-size:2.6rem;line-height:1;margin-bottom:2px;}
-.cert-kicker{font-size:.78rem;letter-spacing:.35em;color:#b8860b;font-weight:700;text-transform:uppercase;margin-bottom:6px;}
-.cert-title{font-size:2.1rem;font-weight:900;letter-spacing:.12em;color:#7a4a12;text-transform:uppercase;margin-bottom:4px;}
-.cert-title-sub{font-size:.85rem;letter-spacing:.2em;color:#a9793a;margin-bottom:18px;text-transform:uppercase;}
-.cert-presented{font-size:.85rem;color:#8a6a3a;margin-bottom:8px;letter-spacing:.05em;}
-.cert-name{font-family:'Great Vibes',cursive;font-size:3.2rem;color:#3d2410;margin-bottom:10px;line-height:1;}
-.cert-desc{font-family:'Noto Sans TC',sans-serif;font-size:.88rem;color:#5a3b1e;line-height:1.9;max-width:620px;margin-bottom:18px;}
-.cert-desc strong{color:#7a4a12;}
-.cert-stats{display:flex;gap:28px;margin-bottom:22px;flex-wrap:wrap;justify-content:center;}
-.cert-stat{text-align:center;}
-.cert-stat .v{font-family:'Cinzel',serif;font-size:1.3rem;font-weight:700;color:#7a4a12;}
-.cert-stat .l{font-family:'Noto Sans TC',sans-serif;font-size:.68rem;color:#a9793a;letter-spacing:.1em;text-transform:uppercase;margin-top:2px;}
-.cert-footer{position:absolute;bottom:44px;left:60px;right:60px;display:flex;justify-content:space-between;align-items:flex-end;}
-.cert-sign{text-align:center;font-family:'Noto Sans TC',sans-serif;width:150px;}
-.cert-sign .line{width:150px;border-top:1px solid #a9793a;margin-bottom:4px;}
-.cert-sign .name{font-size:.78rem;color:#5a3b1e;font-weight:700;min-height:1.1em;line-height:1.1;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.cert-sign .label{font-size:.68rem;color:#a9793a;letter-spacing:.05em;}
-.cert-seal{font-size:2.2rem;opacity:.85;}
+#certCanvas{display:block;max-width:100%;max-height:calc(100vh - 150px);width:auto;height:auto;border-radius:6px;}
+.cert-loading{color:#c9cede;padding:60px 40px;text-align:center;font-size:.9rem;min-width:260px;}
 .cert-actions{display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap;}
 @media print{
   body *{visibility:hidden;}
@@ -97,7 +76,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   .cert-modal-box{box-shadow:none;background:#fff;padding:0;}
   .cert-scale-wrap{overflow:visible;}
   .cert-no-print{display:none!important;}
-  @page{size:landscape;margin:0;}
+  #certCanvas{max-width:100vw;max-height:100vh;border-radius:0;}
+  /* 紙張方向依證書是橫式或直式，列印前由 printCertificate() 動態設定 */
 }
 </style>
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
@@ -1962,6 +1942,7 @@ function groupRecsByUid(recs){
 }
 
 async function buildLookupCard(e, eventId, evData){
+  const certSettingsP=loadCertSettings(eventId); // 先發出讀取，下面算成績的同時一起等
   let certEventInfo = evData;
   if (!certEventInfo) {
     const evSnap = await getDoc(doc(db,'events',eventId));
@@ -1990,7 +1971,8 @@ async function buildLookupCard(e, eventId, evData){
   const sameGroupSnap=await getDocs(query(collection(db,'events',eventId,'runners'),where('groupId','==',e.groupId)));
   const groupUids=sameGroupSnap.docs.map(d=>d.data().uniqueId);
   const lastStation=stations[stations.length-1];
-  const rankMap=computeGroupRanks(stations, groupUids, groupRecsByUid(groupRecs)); // key: uid 或 uid+'_'+stationId
+  const recsByUid=groupRecsByUid(groupRecs);
+  const rankMap=computeGroupRanks(stations, groupUids, recsByUid); // key: uid 或 uid+'_'+stationId
   const evTitle=evData?'<div style="font-size:.75rem;color:var(--muted);margin-bottom:8px">'+esc(evData.name)+(evData.date?' ・ '+esc(evData.date):'')+'</div>':'';
   const finalRank=rankMap[e.uniqueId];
 
@@ -2033,16 +2015,19 @@ async function buildLookupCard(e, eventId, evData){
     const lastRec = allRecs.find(x=>x.stationId===lastStation.id);
     const finishSeconds = Math.max(0, Math.floor((lastRec.scanTime.toDate() - firstRec.scanTime.toDate())/1000));
     const withinLimit = !finishTimeLimit || finishSeconds/60 <= finishTimeLimit;
-    const finishTimeStr = diffHMS(lastRec.scanTime, firstRec.scanTime);
     if (withinLimit) {
-      const certIdx = certDataStore.push({
-        name: e.name||'', bibNumber: e.bibNumber||'-', group: e.group||'-',
-        eventName: certEventInfo.name||'', eventDate: certEventInfo.date||'', organizer: certEventInfo.organizer||'',
-        finishTime: finishTimeStr, rank: finalRank||null
-      }) - 1;
-      html += '<div style="margin-top:14px;text-align:center">'
-        + '<button class="btn btn-primary btn-full" onclick="openCertificate('+certIdx+')">🏅 產生完賽證書</button>'
-        + '</div>';
+      const certSet = await certSettingsP;
+      if (!certSet.open) {
+        html += '<div style="margin-top:14px;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:.82rem;color:var(--muted);text-align:center">⏳ 成績確認中，完賽證書將於主辦單位確認成績後開放下載</div>';
+      } else {
+        const gDoc = gSnap.docs.find(d=>d.id===e.groupId);
+        const info = certComputeInfo({ entry:e, groupName:gDoc?(gDoc.data().name||''):'', stations, groupUids, recsByUid, ranks:rankMap, ev:certEventInfo });
+        info.eventId = eventId;
+        const certIdx = certDataStore.push(info) - 1;
+        html += '<div style="margin-top:14px;text-align:center">'
+          + '<button class="btn btn-primary btn-full" onclick="openCertificate('+certIdx+')">🏅 產生完賽證書</button>'
+          + '</div>';
+      }
     } else {
       html += '<p style="color:var(--muted);font-size:.78rem;margin-top:10px;text-align:center">已完成全部站點打卡，但成績超過本組別完賽時間限制，無法產生完賽證書</p>';
     }
@@ -2051,57 +2036,411 @@ async function buildLookupCard(e, eventId, evData){
   return html;
 }
 
-// ════════════════════════════
-// 完賽證書
-// ════════════════════════════
-function certificateHtml(c){
-  const rankHtml = c.rank
-    ? '<div class="cert-stat"><div class="v">第 '+c.rank+' 名</div><div class="l">Overall Rank</div></div>'
-    : '';
-  return ''
-    +'<div class="cert-border-outer"></div>'
-    +'<div class="cert-border-inner"></div>'
-    +'<div class="cert-inner">'
-    +'  <div class="cert-medal">🏅</div>'
-    +'  <div class="cert-kicker">Certificate of Achievement</div>'
-    +'  <div class="cert-title">完賽證書</div>'
-    +'  <div class="cert-title-sub">Certificate of Completion</div>'
-    +'  <div class="cert-presented">茲證明</div>'
-    +'  <div class="cert-name">'+esc(c.name)+'</div>'
-    +'  <div class="cert-desc">已完成 <strong>'+esc(c.eventName||'本次賽事')+'</strong> <strong>'+esc(c.group)+'</strong> 組別全程賽事，通過全部檢查站完成打卡，特頒此證，以茲鼓勵。</div>'
-    +'  <div class="cert-stats">'
-    +'    <div class="cert-stat"><div class="v">'+esc(c.bibNumber)+'</div><div class="l">Bib Number</div></div>'
-    +'    <div class="cert-stat"><div class="v">'+esc(c.finishTime)+'</div><div class="l">Finish Time</div></div>'
-    +      rankHtml
-    +'  </div>'
-    +'  <div class="cert-footer">'
-    +'    <div class="cert-sign"><div class="line"></div><div class="name">'+esc(c.organizer||'\u00A0')+'</div><div class="label">主辦單位</div></div>'
-    +'    <div class="cert-seal">🏁</div>'
-    +'    <div class="cert-sign"><div class="line"></div><div class="name">'+esc(c.eventDate||'\u00A0')+'</div><div class="label">比賽日期</div></div>'
-    +'  </div>'
-    +'</div>';
+// ═══════════════════════════════════════════════════════════════
+// 完賽證書繪製程式（CERT ENGINE）
+// ⚠️ admin.html 與 runner.html 各放一份，內容必須完全一致；改一邊就要同步改另一邊。
+//    （這個系統的三個頁面是分開部署的單一 HTML 檔，所以不拆成獨立 .js，避免部署時漏傳）
+//
+// 證書 = 底圖 + 多個文字方塊。直接畫在 <canvas> 上（不用截圖套件），
+// 所以後台預覽、選手手機、存出來的 PNG 版面完全一樣。
+// 位置、寬度用「百分比」，字體大小用「佔底圖寬度的百分比」，換底圖或縮放都不會跑版。
+// ═══════════════════════════════════════════════════════════════
+
+// 可用字型（Google Fonts 上的開源字型，SIL OFL 授權，可免費商用、嵌入網頁）
+// weights：該字型在 Google Fonts 上實際有的粗細；要求不存在的粗細會讓整個字型載入失敗
+const CERT_FONTS_ZH = [
+  { id: 'Noto Sans TC',           label: '思源黑體',   weights: [400, 700, 900] },
+  { id: 'Noto Serif TC',          label: '思源宋體',   weights: [400, 700, 900] },
+  { id: 'LXGW WenKai TC',         label: '霞鶩文楷',   weights: [300, 400, 700] },
+  { id: 'Cactus Classical Serif', label: '仙人掌明體', weights: [400] },
+  { id: 'Iansui',                 label: '芫荽',       weights: [400] },
+];
+const CERT_FONTS_EN = [
+  { id: '',                 label: '同中文字型',                 weights: [] },
+  { id: 'Cinzel',           label: 'Cinzel（古典大寫）',         weights: [400, 700, 900] },
+  { id: 'Playfair Display', label: 'Playfair Display（優雅襯線）', weights: [400, 700, 900] },
+  { id: 'Oswald',           label: 'Oswald（運動窄體）',         weights: [400, 700] },
+];
+const CERT_WEIGHT_LABEL = { 300: '細', 400: '一般', 700: '粗體', 900: '特粗' };
+
+// 合併變數（代碼 → 說明）。選手的實際值由 certBuildData() 組出來
+const CERT_VARS = [
+  { key: '姓名',         desc: '選手姓名' },
+  { key: '編號',         desc: '報名編號（號碼布）' },
+  { key: 'ID',           desc: '選手 ID（查詢成績用）' },
+  { key: '組別',         desc: '組別名稱' },
+  { key: '成績',         desc: '第一站到最後一站的時間，例 01:52:37' },
+  { key: '起跑時間',     desc: '第一站打卡時間，例 07:00:12' },
+  { key: '抵達時間',     desc: '最後一站打卡時間，例 08:52:49' },
+  { key: '組別名次',     desc: '同組別完賽者依成績排序的名次' },
+  { key: '組別完賽人數', desc: '同組別完成全部站點的人數' },
+  { key: '組別報名人數', desc: '同組別的報名人數' },
+  { key: '賽事名稱',     desc: '賽事設定的名稱' },
+  { key: '比賽日期',     desc: '賽事設定的日期' },
+  { key: '主辦單位',     desc: '賽事設定的主辦單位' },
+];
+
+// 內建底圖尺寸（A4，150dpi：列印夠清楚，手機產生也不會太吃記憶體）
+const CERT_SIZES = {
+  'a4-landscape': { w: 1754, h: 1240, label: 'A4 橫式' },
+  'a4-portrait':  { w: 1240, h: 1754, label: 'A4 直式' },
+};
+const CERT_MAX_SIDE = 4000; // 底圖長邊上限，太大手機會記憶體不足而產生失敗
+
+// ── 預設範本 ──
+// classic：重現原本的完賽證書（內建古典金框底圖＋完整文字）
+// varsOnly：只放每位選手不同的變數，固定文字請直接做在自己的底圖上
+function certDefaultTemplate(kind) {
+  let n = 0;
+  const box = (o) => Object.assign({
+    id: 'b' + Date.now().toString(36) + (n++), text: '', x: 50, y: 50, size: 2, color: '#5a3b1e',
+    align: 'center', weight: 400, fontZh: 'Noto Sans TC', fontEn: '', width: 0, fit: 'wrap', hide: '',
+  }, o);
+  if (kind === 'varsOnly') {
+    return {
+      bg: { type: 'preset', preset: 'white', size: 'a4-landscape', url: '' },
+      boxes: [
+        box({ text: '{姓名}', y: 45, size: 5.5, color: '#222222', weight: 700, fontZh: 'LXGW WenKai TC', width: 60, fit: 'shrink' }),
+        box({ text: '{成績}', x: 35, y: 62, size: 2.6, color: '#222222', weight: 700, fontEn: 'Cinzel' }),
+        box({ text: '第 {組別名次} 名', x: 65, y: 62, size: 2.6, color: '#222222', weight: 700, fontZh: 'Noto Serif TC', hide: '*' }),
+        box({ text: '{編號}', x: 50, y: 72, size: 1.6, color: '#555555', fontEn: 'Cinzel' }),
+      ],
+    };
+  }
+  const gold = '#b8860b', brown = '#7a4a12', light = '#a9793a', text = '#5a3b1e';
+  return {
+    bg: { type: 'preset', preset: 'classic', size: 'a4-landscape', url: '' },
+    boxes: [
+      box({ text: 'CERTIFICATE OF ACHIEVEMENT', y: 17, size: 1.5, color: gold, weight: 700, fontEn: 'Cinzel' }),
+      box({ text: '完賽證書', y: 25, size: 4.2, color: brown, weight: 900, fontZh: 'Noto Serif TC' }),
+      box({ text: 'CERTIFICATE OF COMPLETION', y: 32, size: 1.5, color: light, fontEn: 'Cinzel' }),
+      box({ text: '茲證明', y: 38.5, size: 1.6, color: '#8a6a3a' }),
+      box({ text: '{姓名}', y: 46, size: 5.6, color: '#3d2410', weight: 700, fontZh: 'LXGW WenKai TC', width: 60, fit: 'shrink' }),
+      box({ text: '已完成 {賽事名稱} {組別} 全程賽事，通過全部檢查站完成打卡，特頒此證，以茲鼓勵。', y: 55.5, size: 1.65, color: text, width: 75, fit: 'wrap' }),
+      box({ text: '{編號}', x: 33, y: 65, size: 2.4, color: brown, weight: 700, fontEn: 'Cinzel', fontZh: 'Noto Serif TC' }),
+      box({ text: 'BIB NUMBER', x: 33, y: 69.5, size: 1.1, color: light, fontEn: 'Cinzel' }),
+      box({ text: '{成績}', x: 50, y: 65, size: 2.4, color: brown, weight: 700, fontEn: 'Cinzel', fontZh: 'Noto Serif TC' }),
+      box({ text: 'FINISH TIME', x: 50, y: 69.5, size: 1.1, color: light, fontEn: 'Cinzel' }),
+      box({ text: '第 {組別名次} 名', x: 67, y: 65, size: 2.4, color: brown, weight: 700, fontEn: 'Cinzel', fontZh: 'Noto Serif TC', hide: '*' }),
+      box({ text: 'GROUP RANK', x: 67, y: 69.5, size: 1.1, color: light, fontEn: 'Cinzel', hide: '組別名次' }),
+      box({ text: '{主辦單位}', x: 20, y: 82, size: 1.45, color: text, weight: 700, width: 26, fit: 'shrink', hide: '*' }),
+      box({ text: '主辦單位', x: 20, y: 86, size: 1.15, color: light, hide: '主辦單位' }),
+      box({ text: '{比賽日期}', x: 80, y: 82, size: 1.45, color: text, weight: 700, hide: '*' }),
+      box({ text: '比賽日期', x: 80, y: 86, size: 1.15, color: light, hide: '比賽日期' }),
+    ],
+  };
 }
-window.openCertificate=function(idx){
+
+// ── 字型載入 ──
+// 只在需要時才向 Google Fonts 要字型；中文字型會被切成很多小塊，只下載畫面用到的字
+function certFontCssUrl(family) {
+  const f = CERT_FONTS_ZH.concat(CERT_FONTS_EN).find((x) => x.id === family);
+  const name = encodeURIComponent(family).replace(/%20/g, '+');
+  const w = f && f.weights.length > 1 ? ':wght@' + f.weights.join(';') : '';
+  return 'https://fonts.googleapis.com/css2?family=' + name + w + '&display=swap';
+}
+const _certFontCss = {};
+function certEnsureFontCss(family) {
+  if (!family) return Promise.resolve();
+  if (_certFontCss[family]) return _certFontCss[family];
+  _certFontCss[family] = new Promise((resolve) => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = (window.CERT_FONT_CSS_OVERRIDE ? window.CERT_FONT_CSS_OVERRIDE(family) : certFontCssUrl(family));
+    link.onload = () => resolve();
+    link.onerror = () => resolve(); // 載入失敗就用備用字型畫，不要整張證書卡住
+    document.head.appendChild(link);
+  });
+  return _certFontCss[family];
+}
+function certFontString(b, px) {
+  const fams = [];
+  if (b.fontEn) fams.push('"' + b.fontEn + '"');
+  fams.push('"' + (b.fontZh || 'Noto Sans TC') + '"');
+  fams.push('sans-serif');
+  return (b.weight || 400) + ' ' + px + 'px ' + fams.join(', ');
+}
+// 確保每個文字方塊「實際要畫的字」都已下載好；字型沒好就畫，會變成手機預設字型而且每次結果不一樣
+async function certEnsureFonts(tpl, data) {
+  const boxes = (tpl && tpl.boxes) || [];
+  const fams = new Set();
+  boxes.forEach((b) => { if (b.fontZh) fams.add(b.fontZh); if (b.fontEn) fams.add(b.fontEn); });
+  await Promise.all([...fams].map(certEnsureFontCss));
+  if (!document.fonts || !document.fonts.load) return;
+  const jobs = boxes.map((b) => {
+    const r = certResolveText(b, data);
+    if (r.hidden || !r.text.trim()) return null;
+    return document.fonts.load(certFontString(b, 40), r.text.replace(/\n/g, '')).catch(() => {});
+  }).filter(Boolean);
+  await Promise.race([Promise.all(jobs), new Promise((r) => setTimeout(r, 10000))]); // 最多等 10 秒
+}
+
+// ── 變數代入 ──
+// 回傳 {text, hidden}。hide：'' 不隱藏；'*' 內容中任一變數沒有值就隱藏；'變數名' 該變數沒有值就隱藏
+function certResolveText(b, data) {
+  data = data || {};
+  let anyEmpty = false;
+  const text = String(b.text || '').replace(/\{([^{}]+)\}/g, (m, k) => {
+    if (!CERT_VARS.some((v) => v.key === k)) return m; // 不認得的代碼原樣保留，方便發現打錯字
+    const v = data[k];
+    if (v === undefined || v === null || String(v) === '') { anyEmpty = true; return ''; }
+    return String(v);
+  });
+  let hidden = false;
+  if (b.hide === '*') hidden = anyEmpty;
+  else if (b.hide) { const v = data[b.hide]; hidden = v === undefined || v === null || String(v) === ''; }
+  return { text, hidden };
+}
+
+// ── 換行：中文逐字可斷，英數字整個單字一起換行 ──
+// 避頭點：這些標點不能出現在行首，換行時把前一個字一起帶到下一行（中文排版慣例）
+const CERT_NO_LINE_START = '，。、；：！？）」』】》〉…—．,.;:!?)]}%';
+function certWrapLine(ctx, line, maxW) {
+  const tokens = line.match(/[A-Za-z0-9@#$%&*+\-_.,:;!?'"()\/]+|\s+|./gu) || [];
+  const out = []; let cur = '';
+  for (const t of tokens) {
+    const test = cur + t;
+    if (cur && ctx.measureText(test).width > maxW) {
+      if (CERT_NO_LINE_START.includes(t[0]) && [...cur].length > 1) {
+        const chars = [...cur]; const last = chars.pop();
+        out.push(chars.join('').replace(/\s+$/, ''));
+        cur = last + t;
+        continue;
+      }
+      out.push(cur.replace(/\s+$/, ''));
+      cur = /^\s+$/.test(t) ? '' : t;
+    } else cur = test;
+  }
+  if (cur) out.push(cur);
+  return out.length ? out : [''];
+}
+
+// ── 內建底圖 ──
+function certDrawPresetBg(ctx, W, H, preset) {
+  const u = Math.min(W, H) / 1240; // 以 A4 短邊 1240 為基準等比例
+  if (preset === 'classic') {
+    const g = ctx.createRadialGradient(W / 2, 0, 0, W / 2, 0, Math.max(W, H) * 0.8);
+    g.addColorStop(0, '#fffaf0'); g.addColorStop(0.6, '#fbf6ea'); g.addColorStop(1, '#f6eedb');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 6 * u;
+    certRoundRect(ctx, 32 * u, 32 * u, W - 64 * u, H - 64 * u, 10 * u); ctx.stroke();
+    ctx.strokeStyle = '#d4af37'; ctx.lineWidth = 2 * u;
+    certRoundRect(ctx, 48 * u, 48 * u, W - 96 * u, H - 96 * u, 6 * u); ctx.stroke();
+    // 四角小菱形裝飾
+    ctx.fillStyle = '#d4af37';
+    [[48, 48], [W / u - 48, 48], [48, H / u - 48], [W / u - 48, H / u - 48]].forEach(([x, y]) => {
+      ctx.beginPath(); ctx.moveTo(x * u, (y - 10) * u); ctx.lineTo((x + 10) * u, y * u);
+      ctx.lineTo(x * u, (y + 10) * u); ctx.lineTo((x - 10) * u, y * u); ctx.closePath(); ctx.fill();
+    });
+  } else {
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#d0d4dc'; ctx.lineWidth = 2 * u;
+    ctx.strokeRect(40 * u, 40 * u, W - 80 * u, H - 80 * u);
+  }
+}
+function certRoundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+}
+
+// 證書像素尺寸：自訂底圖＝底圖原尺寸（超過上限等比例縮小）；內建底圖＝選定的 A4 尺寸
+function certCanvasSize(tpl, bgImg) {
+  if (tpl.bg && tpl.bg.type !== 'preset' && bgImg && bgImg.naturalWidth) {
+    let w = bgImg.naturalWidth, h = bgImg.naturalHeight;
+    const k = Math.min(1, CERT_MAX_SIDE / Math.max(w, h));
+    return { w: Math.round(w * k), h: Math.round(h * k) };
+  }
+  const s = CERT_SIZES[(tpl.bg && tpl.bg.size) || 'a4-landscape'] || CERT_SIZES['a4-landscape'];
+  return { w: s.w, h: s.h };
+}
+
+// 讀取底圖。http(s) 網址要用 crossOrigin 載入，否則畫進 canvas 後就不能存成 PNG
+function certLoadImage(src) {
+  return new Promise((resolve, reject) => {
+    if (!src) { resolve(null); return; }
+    const img = new Image();
+    if (!/^data:/.test(src)) img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('底圖載入失敗'));
+    img.src = src;
+  });
+}
+
+// ── 主程式：把證書畫到 canvas 上（同步；呼叫前先 await certEnsureFonts） ──
+// 回傳每個文字方塊在畫布上的範圍（後台拖曳、點選用）
+function certDraw(canvas, tpl, data, bgImg) {
+  const { w: W, h: H } = certCanvasSize(tpl, bgImg);
+  if (canvas.width !== W) canvas.width = W;
+  if (canvas.height !== H) canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  if (tpl.bg && tpl.bg.type !== 'preset') {
+    // 自訂底圖；還沒上傳或載入失敗時畫白底（不要退回內建底圖，以免誤以為設定沒生效）
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+    if (bgImg) ctx.drawImage(bgImg, 0, 0, W, H);
+  } else certDrawPresetBg(ctx, W, H, (tpl.bg && tpl.bg.preset) || 'classic');
+
+  const rects = [];
+  for (const b of (tpl.boxes || [])) {
+    const r = certResolveText(b, data);
+    let px = Math.max(1, (Number(b.size) || 2) * W / 100);
+    const maxW = (Number(b.width) || 0) * W / 100;
+    const x = (Number(b.x) || 0) * W / 100, y = (Number(b.y) || 0) * H / 100;
+    ctx.font = certFontString(b, px);
+    let lines = r.text.split('\n');
+    if (maxW > 0 && b.fit === 'shrink') {
+      // 自動縮小：維持不換行，整段縮到放得下為止
+      const widest = Math.max(...lines.map((l) => ctx.measureText(l).width), 1);
+      if (widest > maxW) { px = px * maxW / widest; ctx.font = certFontString(b, px); }
+    } else if (maxW > 0) {
+      lines = lines.flatMap((l) => certWrapLine(ctx, l, maxW));
+    }
+    const lh = px * 1.4;
+    const total = lh * lines.length;
+    const widths = lines.map((l) => ctx.measureText(l).width);
+    const bw = Math.max(maxW > 0 && b.fit !== 'shrink' ? maxW : 0, ...widths, px);
+    const x0 = b.align === 'left' ? x : b.align === 'right' ? x - bw : x - bw / 2;
+    rects.push({ id: b.id, x0, y0: y - total / 2, x1: x0 + bw, y1: y + total / 2, hidden: r.hidden });
+    if (r.hidden) continue;
+    ctx.fillStyle = b.color || '#000';
+    ctx.textAlign = b.align === 'left' ? 'left' : b.align === 'right' ? 'right' : 'center';
+    ctx.textBaseline = 'middle';
+    lines.forEach((l, i) => ctx.fillText(l, x, y - total / 2 + lh * (i + 0.5)));
+  }
+  return rects;
+}
+
+// ── 選手資料 → 變數值 ──
+// info：{name,bibNumber,uniqueId,group,finishTime,startTime,arriveTime,rank,finishers,entrants,eventName,eventDate,organizer}
+function certBuildData(info) {
+  const s = (v) => (v === undefined || v === null ? '' : String(v));
+  return {
+    '姓名': s(info.name), '編號': s(info.bibNumber), 'ID': s(info.uniqueId), '組別': s(info.group),
+    '成績': s(info.finishTime), '起跑時間': s(info.startTime), '抵達時間': s(info.arriveTime),
+    '組別名次': s(info.rank), '組別完賽人數': s(info.finishers), '組別報名人數': s(info.entrants),
+    '賽事名稱': s(info.eventName), '比賽日期': s(info.eventDate), '主辦單位': s(info.organizer),
+  };
+}
+// ── 從打卡記錄算出一位選手的證書資料（後台「實際選手」預覽、選手端產生證書共用）──
+// o：{ entry:{name,bibNumber,uniqueId,group}, groupName, stations:[{id}], groupUids:[uid],
+//      recsByUid:{uid:[記錄（依時間由早到晚）]}, ranks:(computeGroupRanks 結果，可省略), ev:{name,date,organizer} }
+// 成績、名次規則與「查詢成績」相同：起點一律用第一站；全部站點都有打卡才算完賽
+function certPad2(n) { return String(n).padStart(2, '0'); }
+function certFmtDur(ms) {
+  if (ms === null || ms === undefined || isNaN(ms)) return '';
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return certPad2(Math.floor(s / 3600)) + ':' + certPad2(Math.floor((s % 3600) / 60)) + ':' + certPad2(s % 60);
+}
+function certTsMs(r) { return r && r.scanTime && r.scanTime.toDate ? r.scanTime.toDate().getTime() : null; }
+function certFmtClock(r) {
+  const ms = certTsMs(r); if (ms === null) return '';
+  const d = new Date(ms);
+  return certPad2(d.getHours()) + ':' + certPad2(d.getMinutes()) + ':' + certPad2(d.getSeconds());
+}
+function certComputeInfo(o) {
+  const e = o.entry || {}, st = o.stations || [], ev = o.ev || {};
+  const recs = (o.recsByUid && o.recsByUid[e.uniqueId]) || [];
+  const at = (sid) => recs.find((r) => r.stationId === sid) || null;
+  const start = st[0] ? at(st[0].id) : null;
+  const end = st.length ? at(st[st.length - 1].id) : null;
+  const completed = st.length > 0 && st.every((s) => at(s.id));
+  const ranks = o.ranks || computeGroupRanks(st, o.groupUids || [], o.recsByUid || {});
+  return {
+    name: e.name || '', bibNumber: e.bibNumber || '', uniqueId: e.uniqueId || '', group: o.groupName || e.group || '',
+    finishTime: completed ? certFmtDur(certTsMs(end) - certTsMs(start)) : '',
+    finishMs: completed ? certTsMs(end) - certTsMs(start) : null,
+    startTime: start ? certFmtClock(start) : '', arriveTime: completed ? certFmtClock(end) : '',
+    rank: completed ? (ranks[e.uniqueId] || '') : '', finishers: ranks.__finishers || 0, entrants: (o.groupUids || []).length,
+    eventName: ev.name || '', eventDate: ev.date || '', organizer: ev.organizer || '', completed,
+  };
+}
+// ═══ 完賽證書繪製程式 結束 ═══
+
+// ════════════════════════════
+// 完賽證書（選手端）
+// ════════════════════════════
+// 版面來自後台「完賽證書」設定（events/{id}/settings/certificate）；沒設定過的賽事用「古典完整版」範本，
+// 而且視為開放下載（維持舊賽事原本的行為）。
+const certSettingsCache={};
+function loadCertSettings(eventId){
+  if(!certSettingsCache[eventId]){
+    certSettingsCache[eventId]=(async()=>{
+      let c=null;
+      try{ const snap=await getDoc(doc(db,'events',eventId,'settings','certificate')); c=snap.exists()?snap.data():null; }catch(e){}
+      return { open: c ? !!c.open : true, template: (c && c.template) || certDefaultTemplate('classic') };
+    })();
+  }
+  return certSettingsCache[eventId];
+}
+const certBgCache={};
+function loadCertBg(eventId, tpl){
+  const bg=tpl.bg||{};
+  if(bg.type==='preset') return Promise.resolve(null);
+  const key=eventId+'|'+bg.type+'|'+(bg.url||'');
+  if(!certBgCache[key]){
+    certBgCache[key]=(async()=>{
+      try{
+        if(bg.type==='upload'){
+          const snap=await getDoc(doc(db,'events',eventId,'settings','certificateBg'));
+          return snap.exists()?await certLoadImage(snap.data().dataUrl):null;
+        }
+        if(bg.type==='url'&&bg.url) return await certLoadImage(bg.url);
+      }catch(e){ console.warn('證書底圖載入失敗',e); }
+      return null;
+    })();
+  }
+  return certBgCache[key];
+}
+let curCertInfo=null;
+window.openCertificate=async function(idx){
   const c=certDataStore[idx]; if(!c)return;
-  document.getElementById('certContent').innerHTML=certificateHtml(c);
+  curCertInfo=c;
+  const cv=document.getElementById('certCanvas'), loading=document.getElementById('certLoading');
+  cv.style.display='none'; loading.style.display='block'; loading.textContent='證書產生中...';
+  document.getElementById('certSaveBtn').disabled=true; document.getElementById('certPrintBtn').disabled=true;
   document.getElementById('certModalOverlay').style.display='flex';
+  try{
+    const set=await loadCertSettings(c.eventId);
+    const bgImg=await loadCertBg(c.eventId,set.template);
+    const data=certBuildData(c);
+    await certEnsureFonts(set.template,data);
+    if(curCertInfo!==c) return; // 等待期間使用者已關掉或換了另一張
+    certDraw(cv,set.template,data,bgImg);
+    loading.style.display='none'; cv.style.display='block';
+    document.getElementById('certSaveBtn').disabled=false; document.getElementById('certPrintBtn').disabled=false;
+  }catch(e){
+    loading.textContent='證書產生失敗，請稍後再試（'+e.message+'）';
+  }
 }
 window.closeCertificate=function(){
+  curCertInfo=null;
   document.getElementById('certModalOverlay').style.display='none';
 }
 window.printCertificate=function(){
+  const cv=document.getElementById('certCanvas');
+  // 紙張方向跟著證書走：橫式證書印橫式、直式證書印直式
+  let st=document.getElementById('certPrintPageStyle');
+  if(!st){ st=document.createElement('style'); st.id='certPrintPageStyle'; document.head.appendChild(st); }
+  st.textContent='@media print{@page{size:'+(cv.width>=cv.height?'landscape':'portrait')+';margin:0;}}';
   window.print();
 }
 window.exportCertificateImage=function(){
-  const el=document.getElementById('certContent');
-  if(typeof html2canvas==='undefined'){showToast('圖片匯出功能載入失敗，請改用列印功能','error');return;}
-  showToast('正在產生圖片...');
-  html2canvas(el,{scale:2,useCORS:true,backgroundColor:'#fbf6ea'}).then(canvas=>{
-    const link=document.createElement('a');
-    link.download='完賽證書.png';
-    link.href=canvas.toDataURL('image/png');
-    link.click();
-  }).catch(()=>{showToast('圖片匯出失敗','error');});
+  const cv=document.getElementById('certCanvas'), c=curCertInfo||{};
+  const filename='完賽證書_'+(c.bibNumber||'')+'_'+(c.name||'')+'.png';
+  let ok=true;
+  try{
+    cv.toBlob(blob=>{
+      if(!blob){ showToast('圖片產生失敗，請改用列印功能','error'); return; }
+      const isMobile=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+      // 手機（含 LINE、FB 內建瀏覽器）下載常沒反應，改跳出預覽讓使用者長按存圖
+      if(isMobile){ showPngPreview(URL.createObjectURL(blob),blob,filename); return; }
+      downloadBlob(blob,filename); showToast('證書已下載');
+    },'image/png');
+  }catch(e){ ok=false; }
+  if(!ok) showToast('無法存成圖片（底圖主機不允許），請改用列印功能或截圖','error');
 }
 
 // 初始化第一個分頁（先完成匿名登入再載入資料）
@@ -2152,10 +2491,10 @@ window.closeModal=function(id){document.getElementById(id).style.display='none';
 <!-- 完賽證書 Modal -->
 <div id="certModalOverlay" class="cert-modal-overlay">
   <div class="cert-modal-box">
-    <div class="cert-scale-wrap"><div id="certContent"></div></div>
+    <div class="cert-scale-wrap"><div id="certLoading" class="cert-loading">證書產生中...</div><canvas id="certCanvas" style="display:none"></canvas></div>
     <div class="cert-actions cert-no-print">
-      <button class="btn btn-primary" onclick="printCertificate()">🖨️ 列印證書</button>
-      <button class="btn btn-ghost" onclick="exportCertificateImage()">📥 匯出圖片</button>
+      <button class="btn btn-primary" id="certSaveBtn" onclick="exportCertificateImage()">📥 存成圖片（PNG）</button>
+      <button class="btn btn-ghost" id="certPrintBtn" onclick="printCertificate()">🖨️ 列印證書</button>
       <button class="btn btn-ghost" onclick="closeCertificate()">關閉</button>
     </div>
   </div>
