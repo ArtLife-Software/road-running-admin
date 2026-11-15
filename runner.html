@@ -1963,10 +1963,12 @@ async function buildLookupCard(e, eventId, evData){
   const recSnap=await getDocs(query(collection(db,'events',eventId,'records'),orderBy('scanTime','asc')));
   const groupRecs=recSnap.docs.map(d=>d.data()); // 整個賽事的打卡記錄（不含個資，選手端可讀）
   const allRecs=groupRecs.filter(x=>x.uniqueId===e.uniqueId);
-  const [gSnap,checkpointSnap]=await Promise.all([
+  const [gSnap,checkpointSnap,ckSnap]=await Promise.all([
     getDocs(query(collection(db,'events',eventId,'groups'),orderBy('createdAt','asc'))),
-    getDocs(collection(db,'events',eventId,'checkpoints'))
+    getDocs(collection(db,'events',eventId,'checkpoints')),
+    getDocs(collection(db,'events',eventId,'checkins')).catch(()=>null) // 證書變數 {組別報到人數} 用；讀不到就留空
   ]);
+  const checkinIds=ckSnap?new Set(ckSnap.docs.map(d=>d.id)):null;
   // 站點名稱一律即時查詢目前的 checkpoints 名稱；組別/站點比對一律用ID，
   // 改名字不影響任何比對正確性，也不需要連鎖同步。
   const checkpointNameById={}; checkpointSnap.docs.forEach(d=>{checkpointNameById[d.id]=d.data().name||'';});
@@ -1990,7 +1992,7 @@ async function buildLookupCard(e, eventId, evData){
   // 成績摘要（總成績、平均配速）與證書資料共用同一份計算
   const gDoc=gSnap.docs.find(d=>d.id===e.groupId);
   const gData=gDoc?gDoc.data():{};
-  const info=certComputeInfo({ entry:e, groupName:gData.name||'', group:gData, stations, groupUids, recsByUid, ranks:rankMap, ev:certEventInfo });
+  const info=certComputeInfo({ entry:e, groupName:gData.name||'', group:gData, stations, groupUids, recsByUid, ranks:rankMap, ev:certEventInfo, checkinIds });
   info.eventId=eventId;
 
   let html='<div class="card">'+evTitle
@@ -2008,7 +2010,7 @@ async function buildLookupCard(e, eventId, evData){
   }
   if(!allRecs.length){html+='<p style="color:var(--muted);font-size:.85rem;margin-top:8px">尚無打卡記錄</p></div>';return html;}
   html+='<div class="table-wrap"><table><thead><tr>'
-    +'<th>站點</th><th>到達時間</th><th>累積時間</th><th>區段時間</th><th>名次</th>'
+    +'<th>站點</th><th>到達時間</th><th>區段時間</th><th>累積時間</th><th>名次</th>'
     +'</tr></thead><tbody>';
   // 起點一律用第一站的記錄（跟名次同一套規則）；沒有第一站記錄就不顯示累積時間
   const firstRec=stations[0]?allRecs.find(x=>x.stationId===stations[0].id):null;
@@ -2024,8 +2026,8 @@ async function buildLookupCard(e, eventId, evData){
     html+='<tr><td>'+(i===0?'<span style="color:var(--muted);font-size:.7rem">(起跑)</span> ':'')+esc(s.name)+'</td>'
       +(arrived
         ?'<td>'+fmt(rec.scanTime)+'</td>'
-          +'<td>'+(total||'-')+'</td>'
           +'<td>'+(seg||(i===1?'（同累積）':'-'))+'</td>'
+          +'<td>'+(total||'-')+'</td>'
           +'<td>'+(sRank?'第'+sRank+'名':'-')+'</td>'
         :'<td style="color:var(--muted)">未到</td><td style="color:var(--muted)">-</td><td style="color:var(--muted)">-</td><td style="color:var(--muted)">-</td>')
       +'</tr>';
@@ -2097,6 +2099,7 @@ const CERT_VARS = [
   { key: '名次中文',     desc: '名次的中文寫法，例 第一名、第十二名' },
   { key: '獎項名稱',     desc: '依「獎項名稱對照」，例 冠軍；沒有對照的名次用「第X名」' },
   { key: '組別完賽人數', desc: '同組別完成全部站點的人數' },
+  { key: '組別報到人數', desc: '同組別已報到的人數' },
   { key: '組別報名人數', desc: '同組別的報名人數' },
   { key: '賽事名稱',     desc: '賽事設定的名稱' },
   { key: '比賽日期',     desc: '賽事設定的日期' },
@@ -2428,14 +2431,14 @@ function certEligible(info, rule, limitMin) {
 }
 
 // ── 選手資料 → 變數值 ──
-// info：{name,bibNumber,uniqueId,group,finishTime,startTime,arriveTime,rank,finishers,entrants,eventName,eventDate,organizer,awardNames}
+// info：{name,bibNumber,uniqueId,group,finishTime,startTime,arriveTime,rank,finishers,checkins,entrants,eventName,eventDate,organizer,awardNames}
 function certBuildData(info) {
   const s = (v) => (v === undefined || v === null ? '' : String(v));
   return {
     '姓名': s(info.name), '編號': s(info.bibNumber), 'ID': s(info.uniqueId), '組別': s(info.group),
     '組別距離': s(info.distanceText), '成績': s(info.finishTime), '平均配速': s(info.pace), '起跑時間': s(info.startTime), '抵達時間': s(info.arriveTime),
     '組別名次': s(info.rank), '名次中文': certRankName(info.rank), '獎項名稱': certAwardName(info.rank, info.awardNames),
-    '組別完賽人數': s(info.finishers), '組別報名人數': s(info.entrants),
+    '組別完賽人數': s(info.finishers), '組別報到人數': s(info.checkins), '組別報名人數': s(info.entrants),
     '賽事名稱': s(info.eventName), '比賽日期': s(info.eventDate), '主辦單位': s(info.organizer),
   };
 }
@@ -2457,7 +2460,8 @@ function certPace(ms, d, unit) {
 
 // ── 從打卡記錄算出一位選手的證書資料（後台「實際選手」預覽、選手端產生證書共用）──
 // o：{ entry:{name,bibNumber,uniqueId,group}, groupName, group:(組別資料，取距離與計時方式), stations:[{id}], groupUids:[uid],
-//      recsByUid:{uid:[記錄（依時間由早到晚）]}, ranks:(computeGroupRanks 結果，可省略), ev:{name,date,organizer} }
+//      recsByUid:{uid:[記錄（依時間由早到晚）]}, ranks:(computeGroupRanks 結果，可省略), ev:{name,date,organizer},
+//      checkinIds:(已報到選手 uniqueId 的 Set，算組別報到人數用，可省略) }
 // 成績、名次規則與「查詢成績」相同：起點一律用第一站；全部站點都有打卡才算完賽
 function certPad2(n) { return String(n).padStart(2, '0'); }
 function certFmtDur(ms) {
@@ -2490,6 +2494,7 @@ function certComputeInfo(o) {
     timed,
     startTime: start ? certFmtClock(start) : '', arriveTime: completed ? certFmtClock(end) : '',
     rank: completed ? (ranks[e.uniqueId] || '') : '', finishers: ranks.__finishers || 0, entrants: (o.groupUids || []).length,
+    checkins: o.checkinIds ? (o.groupUids || []).filter((u) => o.checkinIds.has(u)).length : '',
     eventName: ev.name || '', eventDate: ev.date || '', organizer: ev.organizer || '', completed,
   };
 }
