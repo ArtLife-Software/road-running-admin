@@ -2300,10 +2300,22 @@ function renderEntryInfoInto(el,info){
   el.innerHTML=html;
   const qrEl=el.querySelector('[data-role="qr"]');
   if(typeof QRCode!=='undefined'){
-    new QRCode(qrEl,{text:adminUtf16to8([info.uniqueId,info.bibNumber||''].join('|')),width:200,height:200});
-    // qrcode.js 會另外產生一張 <img>，圖片是非同步載入的；直接顯示 canvas，批次截圖時才不會截到還沒載好的空白
-    const cv=qrEl.querySelector('canvas'), im=qrEl.querySelector('img');
-    if(cv&&im){cv.style.display='block';im.remove();}
+    // qrcode.js 畫好 canvas 之後，會「非同步」再切換成顯示 <img>、隱藏 canvas，
+    // 直接操作它產生的元素會被事後蓋掉（之前 QR Code 消失就是這個原因）。
+    // 所以改成在暫存容器裡讓它畫，馬上把 canvas 轉成圖片放進卡片，顯示結果不受它後續動作影響，
+    // 批次截圖時也不會截到還沒載好的空白
+    const tmp=document.createElement('div');
+    new QRCode(tmp,{text:adminUtf16to8([info.uniqueId,info.bibNumber||''].join('|')),width:200,height:200});
+    const cv=tmp.querySelector('canvas');
+    if(cv){
+      const img=document.createElement('img');
+      img.src=cv.toDataURL('image/png');
+      img.width=200;img.height=200;img.style.display='block';
+      qrEl.appendChild(img);
+    }else{
+      // 不支援 canvas 的極舊瀏覽器：qrcode.js 會改用表格畫，直接搬過來
+      while(tmp.firstChild)qrEl.appendChild(tmp.firstChild);
+    }
   }else{
     qrEl.innerHTML='<div style="color:#333;font-size:.85rem">QR Code 套件載入失敗</div>';
   }
