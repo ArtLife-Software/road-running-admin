@@ -420,12 +420,17 @@ window.showSection = function(id) {
 // 選手資料
 // ════════════════════════════
 let allRunners = [];
+let runnersLoadedOnce=false;
 async function loadRunners() {
   const tbody = document.getElementById('runnersTableBody');
+  // 重新載入（編輯/刪除後）要保留篩選與勾選；先記住勾選，因為下一行就會清空表格
+  const prevChecked = runnersLoadedOnce ? getCheckedIdSet('runnersTableBody') : null;
   tbody.innerHTML = '<tr><td colspan="8" class="loading-cell">載入中...</td></tr>';
   const snap = await getDocs(collection(db,'runners'));
   allRunners = snap.docs.map(d=>({id:d.id,...d.data()}));
-  renderRunners(getSorted('runnersTableBody',allRunners));
+  if (runnersLoadedOnce) { doRunnerSearch(); restoreChecks('runnersTableBody',prevChecked); }
+  else renderRunners(getSorted('runnersTableBody',allRunners));
+  runnersLoadedOnce = true;
 }
 function renderRunners(list) {
   const tbody = document.getElementById('runnersTableBody');
@@ -1273,9 +1278,13 @@ async function loadLockedEntryEventSelect() {
   }
 }
 let curEntryCustomFields=[];
+let lastLoadedEntryEventId=null; // 用來判斷「同一場賽事重新載入」還是「換了賽事」
 window.loadEntries=async function(){
   const eventId=document.getElementById('entryEventSelect').value;
   const tbody=document.getElementById('entriesTableBody');
+  // 同一場賽事重新載入（編輯/刪除/報到後）要保留篩選與勾選；先記住勾選，因為下面一開始就會清空表格
+  const sameEvent=lastLoadedEntryEventId===eventId;
+  const prevChecked=sameEvent?getCheckedIdSet('entriesTableBody'):null;
   const baseCols=13; // 加了報到欄
   if(!eventId){tbody.innerHTML='<tr><td colspan="'+baseCols+'" class="loading-cell">請先選擇賽事</td></tr>';return;}
   tbody.innerHTML='<tr><td colspan="'+baseCols+'" class="loading-cell">載入中...</td></tr>';
@@ -1327,7 +1336,9 @@ window.loadEntries=async function(){
       console.log('已補寫',missing.length,'筆報名記錄的姓名');
     }catch(err){console.warn('姓名補寫失敗',err);}
   })();
-  renderEntries(getSorted('entriesTableBody',allEntries));
+  if(sameEvent){ doEntrySearch(); restoreChecks('entriesTableBody',prevChecked); }
+  else { renderEntries(getSorted('entriesTableBody',allEntries)); restoreChecks('entriesTableBody',null); }
+  lastLoadedEntryEventId=eventId;
 }
 function renderEntries(list){
   const tbody=document.getElementById('entriesTableBody');
@@ -2529,7 +2540,8 @@ async function loadRecords(){
         const group=curRecGroupNameById[r.groupId]||r.group||'-';
         return {...r, _id:d.id, name, bibNumber, group, d};
       });
-      renderRecordRows(getSorted('recordsTableBody',_lastRecordsData));
+      // 即時更新（有新打卡進來）時保留勾選，不然勾到一半會被清掉
+      keepChecks('recordsTableBody',()=>renderRecordRows(getSorted('recordsTableBody',_lastRecordsData)));
     }
   );
 }
@@ -3469,8 +3481,11 @@ let curStaffCustomFields=[];
 async function loadStaffSection(){
   await loadLockedEventSelect('staffEventSelect', async activeId=>{ if(activeId) loadStaff(); });
 }
+let lastLoadedStaffEventId=null;
 window.loadStaff=async function(){
   const eventId=document.getElementById('staffEventSelect').value;
+  const sameStaffEvent=lastLoadedStaffEventId===eventId;
+  const prevStaffChecked=sameStaffEvent?getCheckedIdSet('staffTableBody'):null;
   const tbody=document.getElementById('staffTableBody');
   if(!eventId){tbody.innerHTML='<tr><td colspan="9" class="loading-cell">請先選擇賽事</td></tr>';return;}
   tbody.innerHTML='<tr><td colspan="9" class="loading-cell">載入中...</td></tr>';
@@ -3490,7 +3505,9 @@ window.loadStaff=async function(){
     +'<th>操作</th>';
   const snap=await getDocs(collection(db,'events',eventId,'staff'));
   allStaff=snap.docs.map(d=>({id:d.id,...d.data()}));
-  renderStaff(getSorted('staffTableBody',allStaff));
+  if(sameStaffEvent){ doStaffSearch(); restoreChecks('staffTableBody',prevStaffChecked); }
+  else { renderStaff(getSorted('staffTableBody',allStaff)); restoreChecks('staffTableBody',null); }
+  lastLoadedStaffEventId=eventId;
 }
 function renderStaff(list){
   const tbody=document.getElementById('staffTableBody');
@@ -3822,11 +3839,14 @@ window.sortTable = function(tableId, key) {
   const dir = s.key === key ? -s.dir : 1;
   sortState[tableId] = { key, dir };
   updateSortHeaders(tableId, key, dir);
-  // 根據 tableId 取對應資料並重新渲染
-  if (tableId === 'runnersTableBody') renderRunners(getSorted(tableId, allRunners));
-  else if (tableId === 'entriesTableBody') renderEntries(getSorted(tableId, allEntries));
-  else if (tableId === 'staffTableBody') renderStaff(getSorted(tableId, allStaff));
-  else if (tableId === 'recordsTableBody') reRenderRecords();
+  // 重新渲染：走各分頁的搜尋函式，才會保留目前的篩選條件
+  // （搜尋函式本身會套用排序；沒有輸入條件時就是顯示全部）。
+  // 原本這裡直接拿全部資料重排，排序一按篩選就失效。
+  // 勾選狀態由搜尋函式外層的 keepChecks 負責保留
+  if (tableId === 'runnersTableBody') doRunnerSearch();
+  else if (tableId === 'entriesTableBody') doEntrySearch();
+  else if (tableId === 'staffTableBody') doStaffSearch();
+  else if (tableId === 'recordsTableBody') keepChecks(tableId, reRenderRecords);
 }
 
 function updateSortHeaders(tableId, key, dir) {
@@ -3851,6 +3871,37 @@ window.renderEntries = function(list) { renderEntries(list); };
 window.renderStaff   = function(list) { renderStaff(list); };
 window.reRenderRecords = reRenderRecords;
 
+// ── 排序／篩選／勾選互不干擾 ──
+// 表格每次重畫（排序、篩選、編輯後重新載入、打卡記錄即時更新）都會重建勾選框，
+// 這裡統一負責：重畫前記住勾選的列 → 重畫後還在畫面上的列勾回去 → 同步「全選」框與批次按鈕。
+// 被篩選掉而不在畫面上的列不會保留勾選，避免批次刪除時刪到看不到的資料。
+const BATCH_UI = {
+  entriesTableBody: ['entriesBatchDeleteBtn','entriesSelectAll','entriesBatchRejectBtn'],
+  runnersTableBody: ['runnersBatchDeleteBtn','runnersSelectAll'],
+  staffTableBody:   ['staffBatchDeleteBtn','staffSelectAll','staffBatchRejectBtn'],
+  recordsTableBody: ['recordsBatchDeleteBtn','recordsSelectAll'],
+};
+function getCheckedIdSet(tableId) {
+  return new Set([...document.querySelectorAll('#'+tableId+' .row-cb:checked')].map(cb=>cb.dataset.id));
+}
+function restoreChecks(tableId, ids) {
+  if (ids && ids.size) {
+    document.querySelectorAll('#'+tableId+' .row-cb').forEach(cb=>{ if(ids.has(cb.dataset.id)) cb.checked=true; });
+  }
+  const b = BATCH_UI[tableId];
+  if (b && document.getElementById(b[0]) && document.getElementById(b[1])) onRowCbChange(b[0], tableId, b[1], b[2]);
+}
+function keepChecks(tableId, fn) {
+  const ids = getCheckedIdSet(tableId);
+  fn();
+  restoreChecks(tableId, ids);
+}
+// 各分頁的搜尋函式包一層 keepChecks（按搜尋、排序、重新載入都會經過這裡）
+for (const [fnName, tableId] of [['doEntrySearch','entriesTableBody'],['doRunnerSearch','runnersTableBody'],['doStaffSearch','staffTableBody']]) {
+  const orig = window[fnName];
+  window[fnName] = function(...args){ keepChecks(tableId, ()=>orig.apply(this, args)); };
+}
+
 // ════════════════════════════
 // 批次刪除
 // ════════════════════════════
@@ -3873,6 +3924,8 @@ function getCheckedIds(tbodyId){
   return [...document.querySelectorAll('#'+tbodyId+' .row-cb:checked')].map(cb=>cb.dataset.id);
 }
 function resetBatchUI(tbodyId, selectAllId, btnId, extraBtnId){
+  // 批次動作完成後清掉勾選，接著重新載入時才不會把處理完的列又勾回去
+  document.querySelectorAll('#'+tbodyId+' .row-cb').forEach(cb=>cb.checked=false);
   const sa=document.getElementById(selectAllId); if(sa)sa.checked=false;
   const btn=document.getElementById(btnId); if(btn)btn.style.display='none';
   if(extraBtnId){const eb=document.getElementById(extraBtnId); if(eb) eb.style.display='none';}
