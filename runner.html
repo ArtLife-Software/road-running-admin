@@ -1174,25 +1174,35 @@ window.submitSignup=async function(){
 function showSignupSuccess(info){
   const content=document.getElementById('signupContent');
   lastSignupInfo=info;
-  let html='<div id="signupResultCard" class="card" style="text-align:center">';
-  html+='<div style="font-size:2.5rem;margin-bottom:8px">✅</div>';
-  html+='<div style="font-size:1.05rem;font-weight:900;margin-bottom:4px">報名成功！</div>';
-  html+='<div style="font-size:.82rem;color:var(--muted);margin-bottom:16px">'+esc(info.eventName)+(info.eventDate?'（'+esc(info.eventDate)+'）':'')+'</div>';
+  content.innerHTML='<div id="signupResultCard" class="card"></div>'
+    +'<button class="btn btn-primary" style="width:100%;margin-top:-4px" onclick="saveSignupResultPng()">📥 存成圖片（PNG）</button>';
+  renderRegInfo(document.getElementById('signupResultCard'),{...info,title:'報名成功！',icon:'✅'});
+}
+
+// ── 報名資訊卡（報名成功畫面、查詢報名結果共用同一個版面，存成的圖片也一致）──
+// info: {title, icon, eventName, eventDate, name, group, bibNumber, uniqueId}
+function renderRegInfo(el,info){
+  let html='<div style="text-align:center">';
+  html+='<div style="font-size:2.5rem;margin-bottom:8px">'+esc(info.icon||'📋')+'</div>';
+  html+='<div style="font-size:1.05rem;font-weight:900;margin-bottom:4px">'+esc(info.title||'報名資訊')+'</div>';
+  html+='<div style="font-size:.82rem;color:var(--muted);margin-bottom:16px">'+esc(info.eventName||'')+(info.eventDate?'（'+esc(info.eventDate)+'）':'')+'</div>';
   html+='<div class="runner-card-header" style="justify-content:center">';
-  html+='<strong style="font-size:1.05rem">'+esc(info.name)+'</strong>';
-  html+='<span class="badge">'+esc(info.group)+'</span>';
+  html+='<strong style="font-size:1.05rem">'+esc(info.name||'')+'</strong>';
+  html+='<span class="badge">'+esc(info.group||'-')+'</span>';
   html+='</div>';
   html+='<div style="margin:14px 0">';
   html+='<div style="font-size:.75rem;color:var(--muted);margin-bottom:2px">您的報名編號</div>';
-  html+='<div style="font-size:2.4rem;font-weight:900;color:var(--green);letter-spacing:1px;line-height:1.2">'+esc(info.bibNumber)+'</div>';
+  html+='<div style="font-size:2.4rem;font-weight:900;color:var(--green);letter-spacing:1px;line-height:1.2">'+esc(info.bibNumber||'-')+'</div>';
   html+='</div>';
-  html+='<div id="signupQR" class="qr-box"></div>';
-  html+='<div class="csv-hint" style="text-align:left;margin-top:16px;color:var(--text)">請儲存此圖片（或截圖）保存 QR Code，比賽當天報到時使用。或記得編號，於「查詢報名／修改」分頁重新查詢。</div>';
+  html+='<div style="display:inline-block;margin-bottom:4px;padding:6px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px">';
+  html+='<span style="font-size:.75rem;color:var(--muted);margin-right:6px">ID（查詢成績用）</span>';
+  html+='<span style="font-family:var(--mono);font-size:1.05rem;font-weight:700;color:var(--accent);letter-spacing:.5px">'+esc(info.uniqueId||'-')+'</span>';
   html+='</div>';
-  html+='<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="saveSignupResultPng()">📥 存成圖片（PNG）</button>';
-  content.innerHTML=html;
-  const qrText=[info.uniqueId,info.bibNumber].join('|');
-  makeQRCode(document.getElementById('signupQR'), qrText, 200);
+  html+='<div class="qr-box" data-role="qr"></div>';
+  html+='<div class="csv-hint" style="text-align:left;margin:16px 0 0;color:var(--text)">請儲存此圖片（或截圖）保存 QR Code，比賽當天報到時使用。或記得編號，於「查詢報名／修改」分頁重新查詢；查詢成績請使用上方 ID。</div>';
+  html+='</div>';
+  el.innerHTML=html;
+  makeQRCode(el.querySelector('[data-role="qr"]'), [info.uniqueId,info.bibNumber||''].join('|'), 200);
 }
 let lastSignupInfo=null;
 window.saveSignupResultPng=function(){
@@ -1211,7 +1221,14 @@ async function saveElementAsPng(el,filename){
   let canvas;
   try{
     const bg=getComputedStyle(document.body).backgroundColor||'#0f1117';
-    canvas=await html2canvas(el,{scale:2,useCORS:true,backgroundColor:bg});
+    // 要截的區塊本身不是卡片（例如查詢結果裡的報名資訊）時，匯出時補上卡片外框和留白，圖片才不會貼邊
+    const needFrame=!el.classList.contains('card')&&el.id;
+    canvas=await html2canvas(el,{scale:2,useCORS:true,backgroundColor:bg,
+      onclone:doc=>{
+        if(!needFrame)return;
+        const c=doc.getElementById(el.id);
+        if(c)Object.assign(c.style,{padding:'20px',border:'1px solid #2e3349',borderRadius:'14px',background:'#1a1d27'});
+      }});
   }catch(e){showToast('圖片產生失敗，請改用截圖保存','error');return;}
   const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));
   const isMobile=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -1372,14 +1389,9 @@ window.doStatusQuery=async function(){
     matched.push({eDoc, e});
     const cardId='statusCard_'+eventId+'_'+eDoc.id;
     html+='<div class="card" id="'+cardId+'">';
-    html+='<div style="font-size:.78rem;color:var(--muted);margin-bottom:8px">'+esc(ev.name)+(ev.date?'　'+esc(ev.date):'')+'</div>';
-    html+='<div class="runner-card-header" id="'+cardId+'_header">';
-    html+='<strong style="font-size:1.05rem">'+esc(entryName)+'</strong>';
-    html+='<span class="badge">'+esc(e.group||'-')+'</span>';
-    html+='<span class="badge">編號 '+esc(e.bibNumber||'-')+'</span>';
-    html+='<span class="mono" style="font-size:.78rem;color:var(--accent)">'+esc(e.uniqueId)+'</span>';
-    html+='</div>';
-    html+='<div id="statusQR_'+eventId+'_'+eDoc.id+'" class="qr-box"></div>';
+    // 報名資訊（跟報名成功畫面同一個版面），存成圖片時只截這一塊，下面的按鈕不會入鏡
+    html+='<div id="'+cardId+'_info" style="background:var(--surface)"></div>';
+    html+='<button class="btn btn-primary btn-full" style="margin-top:12px" onclick="saveStatusInfoPng(\''+cardId+'\',\''+eDoc.id+'\')">📥 存成圖片（PNG）</button>';
     if(isRunnerRegOpen(ev, 0)){
       if(e.cancelRequested){
         html+='<div id="'+cardId+'_actions">';
@@ -1403,11 +1415,26 @@ window.doStatusQuery=async function(){
     return;
   }
   result.innerHTML=html;
-  for(const {eDoc, e} of matched){
-    const el=document.getElementById('statusQR_'+eventId+'_'+eDoc.id);
-    if(!el)continue;
-    makeQRCode(el, [e.uniqueId,e.bibNumber||''].join('|'), 180);
+  for(const {eDoc} of matched){
+    renderStatusInfo('statusCard_'+eventId+'_'+eDoc.id, eDoc.id);
   }
+}
+// 依快取資料畫出（或重畫）查詢結果卡片上的報名資訊；修改資料後也呼叫這個，QR Code 會跟著新編號更新
+function renderStatusInfo(cardId, entryDocId){
+  const m=statusCache[entryDocId];
+  const el=document.getElementById(cardId+'_info');
+  if(!m||!el)return;
+  const ev=curStatusEvent||{};
+  renderRegInfo(el,{
+    title:'報名資訊', icon:'📋',
+    eventName:ev.name||'', eventDate:ev.date||'',
+    name:m.profile.name||'', group:m.entry.group||'-',
+    bibNumber:m.entry.bibNumber||'', uniqueId:m.entry.uniqueId
+  });
+}
+window.saveStatusInfoPng=function(cardId, entryDocId){
+  const m=statusCache[entryDocId]||{entry:{},profile:{}};
+  saveElementAsPng(document.getElementById(cardId+'_info'),'報名資訊_'+(m.entry.bibNumber||'')+'_'+(m.profile.name||'')+'.png');
 }
 
 // ── 撤銷取消申請 ──
@@ -1820,15 +1847,9 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
       Object.assign(cached.profile,{name,gender,birthday,phone,email,idNumber,note});
       const groupName=document.getElementById(cardId+'_eGroup')?.selectedOptions?.[0]?.textContent||cached.entry.group;
       Object.assign(cached.entry,{group:groupName,groupId,customData,bibNumber:res.newBib||cached.entry.bibNumber});
-      // 卡片最上面的姓名/組別/編號徽章是查詢當下一次性畫好的，存檔成功後不會自動跟著換，
-      // 不手動同步的話畫面看起來會像沒改到（資料庫其實已經改好了）
-      const headerEl=document.getElementById(cardId+'_header');
-      if(headerEl){
-        headerEl.innerHTML='<strong style="font-size:1.05rem">'+esc(cached.profile.name||'')+'</strong>'
-          +'<span class="badge">'+esc(cached.entry.group||'-')+'</span>'
-          +'<span class="badge">編號 '+esc(cached.entry.bibNumber||'-')+'</span>'
-          +'<span class="mono" style="font-size:.78rem;color:var(--accent)">'+esc(cached.entry.uniqueId||'')+'</span>';
-      }
+      // 卡片上的報名資訊是查詢當下一次性畫好的，存檔成功後要手動重畫，
+      // 不然畫面（含 QR Code 裡的編號）看起來會像沒改到（資料庫其實已經改好了）
+      renderStatusInfo(cardId, entryDocId);
       // 編號真的有變動的話，「查看可用號碼」的快取要清掉，不然剛用掉/剛空出來的號碼要重整頁面才會反映
       if(bibChanged) delete availBibSetByEvent[eventId];
     }

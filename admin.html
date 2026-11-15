@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js";
@@ -2277,29 +2278,99 @@ function adminUtf16to8(str){
   }
   return out;
 }
-function showEntryResult(info){
-  lastEntryResultInfo=info;
-  let html='<div style="font-size:2.5rem;margin-bottom:8px">✅</div>';
+// 把報名資訊卡畫進指定容器（新增成功視窗、「報名資訊」按鈕、批次匯出共用同一個版面）
+function renderEntryInfoInto(el,info){
+  let html='<div style="font-size:2.5rem;margin-bottom:8px">'+esc(info.icon||'✅')+'</div>';
   html+='<div style="font-size:1.05rem;font-weight:900;margin-bottom:4px">'+esc(info.title||'報名成功！')+'</div>';
   html+='<div style="font-size:.82rem;color:var(--muted);margin-bottom:16px">'+esc(info.eventName)+(info.eventDate?'（'+esc(info.eventDate)+'）':'')+'</div>';
   html+='<div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">';
   html+='<strong style="font-size:1.05rem">'+esc(info.name)+'</strong>';
-  html+='<span class="badge">'+esc(info.group)+'</span>';
+  html+='<span class="badge">'+esc(info.group||'-')+'</span>';
   html+='</div>';
   html+='<div style="margin:14px 0">';
   html+='<div style="font-size:.75rem;color:var(--muted);margin-bottom:2px">您的報名編號</div>';
-  html+='<div style="font-size:2.4rem;font-weight:900;color:var(--green);letter-spacing:1px;line-height:1.2">'+esc(info.bibNumber)+'</div>';
+  html+='<div style="font-size:2.4rem;font-weight:900;color:var(--green);letter-spacing:1px;line-height:1.2">'+esc(info.bibNumber||'-')+'</div>';
   html+='</div>';
-  html+='<div id="entryResultQR" style="display:flex;flex-direction:column;align-items:center;padding:20px;background:#fff;border-radius:12px;margin-top:12px"></div>';
-  html+='<div class="csv-hint" style="text-align:left;margin:16px 0 0;color:var(--text)">請儲存此圖片（或截圖）保存 QR Code，比賽當天報到時使用。或記得編號，於「查詢報名／修改」分頁重新查詢。</div>';
-  document.getElementById('entryResultCard').innerHTML=html;
-  const qrEl=document.getElementById('entryResultQR');
+  html+='<div style="display:inline-block;margin-bottom:4px;padding:6px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px">';
+  html+='<span style="font-size:.75rem;color:var(--muted);margin-right:6px">ID（查詢成績用）</span>';
+  html+='<span style="font-family:var(--mono);font-size:1.05rem;font-weight:700;color:var(--accent);letter-spacing:.5px">'+esc(info.uniqueId||'-')+'</span>';
+  html+='</div>';
+  html+='<div data-role="qr" style="display:flex;flex-direction:column;align-items:center;padding:20px;background:#fff;border-radius:12px;margin-top:12px"></div>';
+  html+='<div class="csv-hint" style="text-align:left;margin:16px 0 0;color:var(--text)">請儲存此圖片（或截圖）保存 QR Code，比賽當天報到時使用。或記得編號，於「查詢報名／修改」分頁重新查詢；查詢成績請使用上方 ID。</div>';
+  el.innerHTML=html;
+  const qrEl=el.querySelector('[data-role="qr"]');
   if(typeof QRCode!=='undefined'){
-    new QRCode(qrEl,{text:adminUtf16to8([info.uniqueId,info.bibNumber].join('|')),width:200,height:200});
+    new QRCode(qrEl,{text:adminUtf16to8([info.uniqueId,info.bibNumber||''].join('|')),width:200,height:200});
+    // qrcode.js 會另外產生一張 <img>，圖片是非同步載入的；直接顯示 canvas，批次截圖時才不會截到還沒載好的空白
+    const cv=qrEl.querySelector('canvas'), im=qrEl.querySelector('img');
+    if(cv&&im){cv.style.display='block';im.remove();}
   }else{
     qrEl.innerHTML='<div style="color:#333;font-size:.85rem">QR Code 套件載入失敗</div>';
   }
+}
+function showEntryResult(info){
+  lastEntryResultInfo=info;
+  renderEntryInfoInto(document.getElementById('entryResultCard'),info);
   document.getElementById('entryResultModal').style.display='flex';
+}
+function entryToInfo(e,ev){
+  return {title:'報名資訊',icon:'📋',uniqueId:e.uniqueId,name:e.name||e.runnerData?.name||'',
+    group:e.group||'',bibNumber:e.bibNumber||'',eventName:ev.name||'',eventDate:ev.date||''};
+}
+// 批次匯出報名資訊：有勾選→匯出勾選的；沒勾選→匯出表格目前顯示的全部（會套用搜尋條件）
+// 每人一張 PNG，打包成一個 ZIP 下載
+window.exportEntryInfoImages=async function(){
+  const eventId=document.getElementById('entryEventSelect').value;
+  if(!eventId){showToast('請先選擇賽事','error');return;}
+  if(typeof html2canvas==='undefined'||typeof JSZip==='undefined'||typeof QRCode==='undefined'){
+    showToast('圖片匯出套件載入失敗，請重新整理頁面','error');return;
+  }
+  const checked=getCheckedIds('entriesTableBody');
+  const ids=checked.length?checked
+    :[...document.querySelectorAll('#entriesTableBody .row-cb')].map(cb=>cb.dataset.id);
+  const byId=new Map(allEntries.map(e=>[e.id,e]));
+  const list=ids.map(id=>byId.get(id)).filter(Boolean);
+  if(!list.length){showToast('沒有可匯出的報名資料','error');return;}
+  const scopeText=checked.length?'勾選的 '+list.length+' 位選手':'目前列表顯示的全部 '+list.length+' 位選手';
+  if(!confirm('將匯出'+scopeText+'的報名資訊圖片（每人一張 PNG，打包成 ZIP）。\n人數較多時需要一點時間，過程中請勿關閉頁面。\n\n確定匯出？'))return;
+
+  const ev=(await getDoc(doc(db,'events',eventId))).data()||{};
+  // 畫在畫面外的暫存容器裡逐張截圖，不影響目前畫面
+  const holder=document.createElement('div');
+  holder.style.cssText='position:fixed;left:-10000px;top:0;width:420px';
+  const card=document.createElement('div');
+  card.style.cssText='width:420px;box-sizing:border-box;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px';
+  holder.appendChild(card);document.body.appendChild(holder);
+  const zip=new JSZip();
+  const usedNames=new Set();
+  const safe=v=>String(v||'').replace(/[\\/:*?"<>|\s]+/g,'_');
+  let fail=0;
+  try{
+    for(let k=0;k<list.length;k++){
+      const e=list[k];
+      const info=entryToInfo(e,ev);
+      if(k%5===0)showToast('正在產生圖片 '+(k+1)+' / '+list.length+' ...');
+      try{
+        renderEntryInfoInto(card,info);
+        const canvas=await html2canvas(card,{scale:2,useCORS:true,backgroundColor:'#0f1117'});
+        const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));
+        let fname=safe(info.bibNumber)+'_'+safe(info.name);
+        if(usedNames.has(fname))fname+='_'+safe(info.uniqueId);
+        usedNames.add(fname);
+        zip.file(fname+'.png',blob);
+      }catch(err){fail++;console.error('匯出失敗',e,err);}
+    }
+    showToast('正在打包 ZIP...');
+    const zipBlob=await zip.generateAsync({type:'blob'});
+    const url=URL.createObjectURL(zipBlob);
+    const a=document.createElement('a');
+    a.href=url;a.download=evFileName(ev.name||'賽事',ev.date||'')+'_報名資訊_'+fmtFileDateTime()+'.zip';
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),10000);
+    showToast('已匯出 '+(list.length-fail)+' 張報名資訊'+(fail?'，'+fail+' 張失敗':''),fail?'error':'success');
+  }finally{
+    holder.remove();
+  }
 }
 // 報名列表「報名資訊」按鈕：重新顯示既有報名的報名資訊（例如選手弄丟 QR Code 時）
 window.showEntryInfo=async function(entryId){
@@ -2307,14 +2378,7 @@ window.showEntryInfo=async function(entryId){
   const e=allEntries.find(x=>x.id===entryId);
   if(!e){showToast('找不到此筆報名資料，請重新整理','error');return;}
   const ev=(await getDoc(doc(db,'events',eventId))).data()||{};
-  showEntryResult({
-    title:'報名資訊',
-    uniqueId:e.uniqueId,
-    name:e.name||e.runnerData?.name||'',
-    group:e.group||'',
-    bibNumber:e.bibNumber||'',
-    eventName:ev.name||'',eventDate:ev.date||''
-  });
+  showEntryResult(entryToInfo(e,ev));
 }
 window.saveEntryResultPng=async function(){
   const el=document.getElementById('entryResultCard');
@@ -4240,6 +4304,7 @@ th[data-sort]:hover{color:var(--accent);}
           <input type="file" id="entryCsvFile" accept=".csv" style="display:none" onchange="handleEntryCSV(event)">
           <button class="btn btn-ghost" onclick="document.getElementById('entryCsvFile').click()">📥 匯入 CSV</button>
           <button class="btn btn-ghost" onclick="exportEntries()">📤 匯出 CSV</button>
+          <button class="btn btn-ghost" onclick="exportEntryInfoImages()" title="有勾選→匯出勾選的選手；沒勾選→匯出目前列表顯示的全部">🖼️ 匯出報名資訊</button>
           <button class="btn btn-primary" onclick="showAddEntry()">＋ 新增</button>
         </div>
       </div>
