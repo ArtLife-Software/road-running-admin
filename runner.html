@@ -252,6 +252,13 @@ function limitHintList(o){
   return h;
 }
 // 組別說明裡的「此組別限制」：自訂報名限制的組別列出它自己的限制；組別名額一律列出
+// 選到的組別適用的限制：組別自訂就是組別的，沒自訂就是賽事的；再加上組別名額（邀請碼另有欄位，不列）
+function limitHintsFor(ev,g){
+  const own=!!g&&groupLimitOverride(g);
+  const h=limitHintList(own?g:(ev||{})).filter(x=>x!=='需要邀請碼');
+  if(g&&g.groupCapacity>0) h.push('限'+g.groupCapacity+'人');
+  return h;
+}
 function groupLimitHints(g){
   const h=groupLimitOverride(g)?limitHintList(g).filter(x=>x!=='需要邀請碼'):[];
   if(g&&g.groupCapacity>0) h.push('限'+g.groupCapacity+'人');
@@ -530,18 +537,13 @@ async function selectSignupEvent(eventId, keepWrapper){
     formHtml+=infoCardHtml;
   }
   formHtml+='<div class="card">';
-  // 賽事層級的報名限制（組別沒有自訂報名限制時套用）
-  const evLim=limitHintList(curSignupEvent);
-  const anyGroupOwn=Object.values(window._signupGroupMap||{}).some(groupLimitOverride);
-  if(evLim.length) formHtml+='<div class="card" style="padding:10px 14px;font-size:.85rem"><strong>報名限制：</strong>'+esc(evLim.join('、'))
-    +(anyGroupOwn?'<div style="font-size:.78rem;color:var(--muted);margin-top:2px">有些組別有自己的報名限制，以組別說明為準。</div>':'')+'</div>';
+  // 報名限制說明放在組別下方：還沒選組別＝賽事的限制；選了組別＝這個組別適用的限制（見 onSignupGroupChange）
+  // 組別一律先顯示「請選擇...」，要自己選（降低選錯）；賽事一定要有組別，還沒設定就無法報名（伺服器也會擋）
   formHtml+='<div class="input-group"><label>組別 <span class="required-star">*</span></label><select id="suGroup" class="input" onchange="onSignupGroupChange()">';
-  if(groupDocs.length){
-    groupDocs.forEach(g=>{formHtml+='<option value="'+esc(g.id)+'">'+esc(g.name)+'</option>';});
-  }else{
-    formHtml+='<option value="未分組">未分組</option>';
-  }
+  formHtml+='<option value="">'+(groupDocs.length?'請選擇...':'（此賽事尚未設定組別）')+'</option>';
+  groupDocs.forEach(g=>{formHtml+='<option value="'+esc(g.id)+'">'+esc(g.name)+'</option>';});
   formHtml+='</select>'
+    +(groupDocs.length?'':'<div style="font-size:.8rem;margin-top:6px;color:var(--red)">此賽事尚未設定組別，目前無法報名，請洽主辦單位。</div>')
     +'<div id="suGroupNote" style="font-size:.8rem;margin-top:6px;color:var(--text);white-space:pre-line"></div>'
     +'<div id="suGroupHint" style="font-size:.75rem;margin-top:4px;min-height:16px;color:var(--muted)"></div>'
     +'</div>';
@@ -818,10 +820,10 @@ window.onSignupGroupChange=function(){
   refreshSignupCf();
   // 邀請碼：組別自訂報名限制就用組別的，否則用賽事的
   if(inviteRow&&g&&inviteTarget(curSignupEvent,g))inviteRow.style.display='';
-  if(!g||!hint)return;
-  // 限制摘要
-  const hints=groupLimitHints(g);
-  hint.textContent=groupHintText(g,hints);
+  if(!hint)return;
+  // 限制說明：還沒選組別＝賽事的限制；選了組別＝這個組別適用的限制（自訂的就是組別的，沒自訂就是賽事的）
+  if(!g){ const h=limitHintsFor(curSignupEvent,null); hint.textContent=h.length?'賽事報名限制：'+h.join('、'):''; return; }
+  hint.textContent=groupHintText(g,limitHintsFor(curSignupEvent,g));
   hint.style.whiteSpace='pre-line';
 }
 
@@ -1190,6 +1192,7 @@ window.submitSignup=async function(){
   try{
   const eventId=curSignupEvent.id;
   const group=document.getElementById('suGroup').value;
+  if(!group){showToast(Object.keys(window._signupGroupMap||{}).length?'請選擇組別':'此賽事尚未設定組別，目前無法報名','error');return;}
   const name=document.getElementById('suName').value.trim();
   const gender=document.getElementById('suGender').value;
   const birthday=document.getElementById('suBirthday').value.trim();
@@ -1778,6 +1781,7 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   if(idShow)html+='<div class="input-group"><label>身分證字號（1英文+9數字）'+(idReq?' <span class="required-star">*</span>':'')+'</label><input id="'+cardId+'_eIdNumber" type="text" class="input" value="'+esc(r.idNumber||'')+'" oninput="applyHalf(this)" onblur="setFieldError(\''+cardId+'_eIdNumber\',!validateId(this.value.trim()))"></div>';
   html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_eNote" type="text" class="input" value="'+esc(r.note||'')+'"></div>';
   html+='<div class="input-group"><label>組別 <span class="required-star">*</span></label><select id="'+cardId+'_eGroup" class="input" onchange="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\');updateEditCustomFieldsVisibility(\''+cardId+'\');updateEditGroupInfo(\''+cardId+'\',\''+gMapEsc+'\');renderEditBibField(\''+cardId+'\')">';
+  html+='<option value="">請選擇...</option>';
   groupList.forEach(g=>{html+='<option value="'+esc(g.id)+'"'+(g.id===e.groupId?' selected':'')+'>'+esc(g.name)+'</option>';});
   html+='</select>'
     +'<div id="'+cardId+'_eGroupNote" style="font-size:.8rem;margin-top:6px;color:var(--text);white-space:pre-line"></div>'
@@ -1875,9 +1879,8 @@ window.updateEditGroupInfo=function(cardId, gMapJson){
   const group=document.getElementById(cardId+'_eGroup')?.value;
   const g=gMap[group];
   noteEl.textContent=g?.note||'';
-  if(!g){hint.textContent='';return;}
-  const hints=groupLimitHints(g);
-  hint.textContent=groupHintText(g,hints);
+  if(!g){ const h=limitHintsFor(gMap.__ev,null); hint.textContent=h.length?'賽事報名限制：'+h.join('、'):''; return; }
+  hint.textContent=groupHintText(g,limitHintsFor(gMap.__ev,g));
   hint.style.whiteSpace='pre-line';
   hint.style.color='var(--muted)';
 }
@@ -1886,7 +1889,7 @@ window.updateEditGroupInfo=function(cardId, gMapJson){
 function groupHintText(g, limitHints){
   const info=[certDistText(g.distance,g.distanceUnit), g.timed===false?'不計時':'計時'].filter(Boolean);
   const lines=['組別資訊：'+info.join('、')];
-  if(limitHints.length)lines.push('此組別限制：'+limitHints.join('、'));
+  if(limitHints.length)lines.push('此組別報名限制：'+limitHints.join('、'));
   return lines.join('\n');
 }
 
@@ -1935,6 +1938,7 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
   const idNumber=(fs.idNumber?.show!==false)?(document.getElementById(cardId+'_eIdNumber')?.value.trim()||''):'';
   const note=document.getElementById(cardId+'_eNote').value.trim();
   const groupId=document.getElementById(cardId+'_eGroup').value;
+  if(!groupId){showToast('請選擇組別','error');return;}
   const bibEl=document.getElementById(cardId+'_eBib');
   const rangeEl=document.getElementById(cardId+'_bibRange');
   const newBibRaw=bibEl?bibEl.value.trim():'';

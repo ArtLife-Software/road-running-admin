@@ -2396,6 +2396,8 @@ async function loadEntryGroupOptions(selectedId){
   curEntryGroupMap={};
   if(!eventId)return;
   const gList=await getSortedGroupList(eventId);
+  // 一律先顯示「請選擇...」（跟選手報名表單一致）；賽事還沒設定組別時說明
+  { const o=document.createElement('option'); o.value=''; o.textContent=gList.length?'請選擇...':'（此賽事尚未設定組別）'; sel.appendChild(o); }
   gList.forEach(g=>{
     curEntryGroupMap[g.id]=g;
     const o=document.createElement('option');
@@ -2470,20 +2472,16 @@ window.onEntryGroupChange=function(){
   if(noteEl)noteEl.textContent=g?.note||'';
   document.getElementById('eInviteCode').value='';
   updateEntryCustomFieldsVisibility();
-  if(!g){inviteRow.style.display=!document.getElementById('entryDocId').value&&groupHasInvite(curEntryEv||{})?'':'none';hint.textContent='';updateAdminParentalBlock();return;}
-  const own=groupLimitOverride(g);
   inviteRow.style.display=!document.getElementById('entryDocId').value&&groupHasInvite(limitSource(curEntryEv||{},g).o)?'':'none';
-  // 限制摘要：自訂報名限制的組別列出自己的限制；組別名額一律列出
-  const hints=[];
-  if(own&&g.genderLimit) hints.push('限'+g.genderLimit+'性');
-  if(own&&g.ageMin>0) hints.push(g.ageMin+'歲以上');
-  if(own&&g.ageMax>0) hints.push(g.ageMax+'歲以下');
-  if(g.groupCapacity>0) hints.push('限'+g.groupCapacity+'人');
-  if(own&&g.parentalAge>0) hints.push(g.parentalAge+'歲以下須家長陪同聲明');
-  if(!own) hints.push('報名限制跟賽事一致');
-  // 第一行組別資訊（距離、計時方式），第二行限制摘要；跟選手報名表單一致
-  const info=[certDistText(g.distance,g.distanceUnit), g.timed===false?'不計時':'計時'].filter(Boolean);
-  hint.textContent='組別資訊：'+info.join('、')+(hints.length?'\n此組別限制：'+hints.join('、'):'');
+  // 限制說明（跟選手報名表單一致）：選了組別＝這個組別適用的限制（自訂就是組別的，沒自訂就是賽事的）＋組別名額；沒選組別＝賽事的限制
+  const src=g&&groupLimitOverride(g)?g:(curEntryEv||{}); const hints=[];
+  if(src.genderLimit) hints.push('限'+src.genderLimit+'性');
+  if(src.ageMin>0) hints.push(src.ageMin+'歲以上');
+  if(src.ageMax>0) hints.push(src.ageMax+'歲以下');
+  if(src.parentalAge>0) hints.push(src.parentalAge+'歲以下須家長陪同聲明');
+  if(g&&g.groupCapacity>0) hints.push('限'+g.groupCapacity+'人');
+  const info=g?[certDistText(g.distance,g.distanceUnit), g.timed===false?'不計時':'計時'].filter(Boolean):[];
+  hint.textContent=[info.length?'組別資訊：'+info.join('、'):'', hints.length?(g?'此組別報名限制：':'賽事報名限制：')+hints.join('、'):''].filter(Boolean).join('\n');
   hint.style.whiteSpace='pre-line';
   hint.style.color='var(--muted)';
   updateAdminParentalBlock();
@@ -2649,6 +2647,7 @@ window.saveEntry=async function(){
   let uniqueId=document.getElementById('entryUniqueId').value;
   let bibNumber=document.getElementById('eBib').value.trim();
   const groupId=document.getElementById('eGroup').value;
+  if(!groupId){showToast(Object.keys(curEntryGroupMap).length?'請選擇組別':'此賽事尚未設定組別，請先到「組別管理」新增組別','error');return;}
   const group=curEntryGroupMap[groupId]?.name||groupId; // 名稱只做顯示/CSV快取，關聯一律用 groupId
   const name=cleanNameA(document.getElementById('eName').value);
   const gender=document.getElementById('eGender').value;
