@@ -218,6 +218,45 @@ async function checkInviteCode(g,input){
   }
   return v===(g.inviteCode||'').trim();
 }
+// ── 報名限制（性別、年齡、家長陪同、邀請碼）：賽事或組別「二選一」，不合併（跟 admin.html、後端一致）──
+// 組別勾了「此組別自訂報名限制」→ 只用組別的；沒勾 → 只用賽事的。舊資料沒有 limitOverride：組別有設任何限制就當作自訂。
+// 組別名額、賽事總名額另外計算，一直有效。
+const LIMIT_KEYS=['genderLimit','ageMin','ageMax','parentalAge'];
+function groupLimitOverride(g){
+  if(!g) return false;
+  if(typeof g.limitOverride==='boolean') return g.limitOverride;
+  return LIMIT_KEYS.some(k=>g[k])||groupHasInvite(g);
+}
+function limitSource(ev,g){ return groupLimitOverride(g)?{o:g,who:'此組別'}:{o:ev||{},who:'此賽事'}; }
+function effParentalAge(ev,g){ return limitSource(ev,g).o.parentalAge||0; }
+function inviteTarget(ev,g){ const o=limitSource(ev,g).o; return groupHasInvite(o)?o:null; }
+function regLimitError(ev,g,gender,birthday,evDate){
+  const {o,who}=limitSource(ev,g);
+  if(o.genderLimit&&gender&&o.genderLimit!==gender) return who+'限'+o.genderLimit+'性報名';
+  if(birthday&&evDate){
+    const age=calcAgeRunner(birthday,evDate);
+    if(age!==null){
+      if(o.ageMin>0&&age<o.ageMin) return who+'年齡限制 '+o.ageMin+' 歲以上（您的年齡：'+age+'歲）';
+      if(o.ageMax>0&&age>o.ageMax) return who+'年齡限制 '+o.ageMax+' 歲以下（您的年齡：'+age+'歲）';
+    }
+  }
+  return '';
+}
+function limitHintList(o){
+  const h=[]; o=o||{};
+  if(o.genderLimit)h.push('限'+o.genderLimit+'性');
+  if(o.ageMin>0)h.push(o.ageMin+'歲以上');
+  if(o.ageMax>0)h.push(o.ageMax+'歲以下');
+  if(o.parentalAge>0)h.push(o.parentalAge+'歲以下須家長陪同聲明');
+  if(groupHasInvite(o))h.push('需要邀請碼');
+  return h;
+}
+// 組別說明裡的「此組別限制」：自訂報名限制的組別列出它自己的限制；組別名額一律列出
+function groupLimitHints(g){
+  const h=groupLimitOverride(g)?limitHintList(g).filter(x=>x!=='需要邀請碼'):[];
+  if(g&&g.groupCapacity>0) h.push('限'+g.groupCapacity+'人');
+  return h;
+}
 
 
 // ── HTML escape（防止使用者輸入被當作HTML/JS執行）──
@@ -383,9 +422,10 @@ function isRunnerRegOpen(ev, entryCount) {
   // 條件1：手動開關 ON → 一律可報名
   if (ev.registrationOpen) return true;
   // 未手動開放：須同時符合「時間範圍內」且「人數未滿」才能報名
-  // 時間範圍：未設定視為不限制（通過）
+  // 時間範圍：開始、結束都沒設定＝不開放；只設其中一個時，另一邊不限制
   const start = ev.registrationStartAt?.toDate?.()?.getTime() ?? null;
   const end   = ev.registrationEndAt?.toDate?.()?.getTime() ?? null;
+  if (start === null && end === null) return false; // 沒有設定報名期間＝不開放
   const afterStart = (start === null || now >= start);
   const beforeEnd  = (end   === null || now <= end);
   const inTimeRange = afterStart && beforeEnd;
@@ -490,6 +530,11 @@ async function selectSignupEvent(eventId, keepWrapper){
     formHtml+=infoCardHtml;
   }
   formHtml+='<div class="card">';
+  // 賽事層級的報名限制（組別沒有自訂報名限制時套用）
+  const evLim=limitHintList(curSignupEvent);
+  const anyGroupOwn=Object.values(window._signupGroupMap||{}).some(groupLimitOverride);
+  if(evLim.length) formHtml+='<div class="card" style="padding:10px 14px;font-size:.85rem"><strong>報名限制：</strong>'+esc(evLim.join('、'))
+    +(anyGroupOwn?'<div style="font-size:.78rem;color:var(--muted);margin-top:2px">有些組別有自己的報名限制，以組別說明為準。</div>':'')+'</div>';
   formHtml+='<div class="input-group"><label>組別 <span class="required-star">*</span></label><select id="suGroup" class="input" onchange="onSignupGroupChange()">';
   if(groupDocs.length){
     groupDocs.forEach(g=>{formHtml+='<option value="'+esc(g.id)+'">'+esc(g.name)+'</option>';});
@@ -529,17 +574,22 @@ async function selectSignupEvent(eventId, keepWrapper){
   formHtml+='<div class="input-group" id="suBibRow" style="display:none"><label id="suBibLabel">選手號碼（選填）</label>'
     +'<div class="input-row"><input id="suBib" type="text" class="input" oninput="applyHalf(this)" onfocus="checkBibExhausted()" onblur="checkBibAvailable()">'
     +'<button type="button" class="btn btn-ghost btn-sm" onclick="toggleAvailableBibs()">查看可用號碼</button></div>'
+    +'<div id="suBibNote" style="font-size:.75rem;color:var(--text);margin-top:4px;white-space:pre-line"></div>'
     +'<div id="suBibHint" style="font-size:.75rem;margin-top:4px;min-height:18px"></div>'
     +'<div id="suBibAvailPanel" style="display:none;margin-top:6px;padding:8px;background:var(--surface2);border-radius:8px"></div>'
     +'</div>';
 
-  // 自訂欄位（依「適用組別」決定顯示/隱藏，由 onSignupGroupChange 動態切換）
+  // 自訂欄位（依適用組別、顯示條件決定顯示/隱藏，由 refreshSignupCf 動態切換）
   curSignupCustomFields.forEach(f=>{
     const id='su_cf_'+f.id;
     const reqMark=f.required?' <span class="required-star">*</span>':'';
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     formHtml+='<div id="su_cf_row_'+f.id+'">';
-    if(f.type==='select'){
+    if(f.type==='section'){
+      formHtml+=cfSectionHtml(f);
+    } else if(f.type==='multi'){
+      formHtml+=multiFieldHtml(id, f, [], reqMark, descHtml);
+    } else if(f.type==='select'){
       formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"'+(f.allowOther?' onchange="document.getElementById(\''+id+'_other\').style.display=this.value===\'__other__\'?\'block\':\'none\'"':'')+'><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{formHtml+='<option value="'+esc(o)+'">'+esc(o)+'</option>';});
       if(f.allowOther)formHtml+='<option value="__other__">其他（請輸入）</option>';
@@ -591,9 +641,11 @@ async function selectSignupEvent(eventId, keepWrapper){
 function refreshSignupBibField(g){
   const row=document.getElementById('suBibRow');
   if(!row)return;
-  const {pad,allowCustomBib,min,max}=getEffBibSettings(g);
+  const {pad,allowCustomBib,min,max,note}=getEffBibSettings(g);
   if(!allowCustomBib){row.style.display='none';return;}
   row.style.display='';
+  const noteEl=document.getElementById('suBibNote');
+  if(noteEl)noteEl.textContent=note;
   const label=document.getElementById('suBibLabel');
   if(label)label.textContent='選手號碼（選填，號碼須在 '+min+'～'+max+' 之間，留空系統自動配號）';
   const el=document.getElementById('suBib');
@@ -605,6 +657,150 @@ function refreshSignupBibField(g){
   const panel=document.getElementById('suBibAvailPanel');
   if(panel)panel.style.display='none';
 }
+
+// ── 複選欄位（自訂欄位 type:'multi'）──
+// 值存成字串陣列；勾「其他」時把輸入的文字也放進陣列。
+// 必填＝至少選一項；最少（minSel）、最多（maxSel）留空＝不限。選填時可以都不選，有選就要符合最少／最多。
+function multiRangeText(f){
+  const mn=f.minSel||0, mx=f.maxSel||0;
+  if(mn&&mx) return mn===mx?'請選 '+mn+' 項':'請選 '+mn+'～'+mx+' 項';
+  if(mn) return '至少選 '+mn+' 項';
+  if(mx) return '最多選 '+mx+' 項';
+  return '可複選';
+}
+function multiFieldHtml(id, f, cur, reqMark, descHtml){
+  cur=Array.isArray(cur)?cur:(cur?[String(cur)]:[]);
+  const opts=f.options||[];
+  const others=cur.filter(v=>!opts.includes(v));
+  let h='<div class="input-group"><label>'+esc(f.label)+reqMark+' <span style="font-weight:400;color:var(--muted);font-size:.75rem">（'+multiRangeText(f)+'）</span></label>'
+    +'<div id="'+id+'" class="cf-multi" style="display:flex;flex-wrap:wrap;gap:6px 16px;padding:4px 0">';
+  opts.forEach(o=>{ h+='<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:.88rem"><input type="checkbox" value="'+esc(o)+'"'+(cur.includes(o)?' checked':'')+'> '+esc(o)+'</label>'; });
+  if(f.allowOther) h+='<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:.88rem"><input type="checkbox" data-other="1"'+(others.length?' checked':'')
+    +' onchange="document.getElementById(\''+id+'_other\').style.display=this.checked?\'block\':\'none\'"> 其他（請輸入）</label>';
+  h+='</div>';
+  if(f.allowOther) h+='<input type="text" id="'+id+'_other" class="input" style="margin-top:6px;display:'+(others.length?'block':'none')+'" placeholder="請輸入..." value="'+esc(others.join('、'))+'">';
+  return h+descHtml+'</div>';
+}
+function multiCheck(f, vals){
+  const n=vals.length;
+  if(f.required&&!n) return '「'+f.label+'」為必填，請至少選一項';
+  if(n){
+    if(f.minSel&&n<f.minSel) return '「'+f.label+'」至少要選 '+f.minSel+' 項';
+    if(f.maxSel&&n>f.maxSel) return '「'+f.label+'」最多只能選 '+f.maxSel+' 項';
+  }
+  return '';
+}
+// 讀出複選欄位的值：回傳 {value:[...]} 或 {error:'訊息'}
+function readMultiField(id, f){
+  const box=document.getElementById(id); if(!box) return {value:[]};
+  const vals=[...box.querySelectorAll('input[type=checkbox]:not([data-other]):checked')].map(el=>el.value);
+  const oc=box.querySelector('input[data-other]');
+  if(oc&&oc.checked){
+    const t=(document.getElementById(id+'_other')?.value||'').trim();
+    if(!t) return {error:'「'+f.label+'」勾選了「其他」，請輸入內容'};
+    vals.push(t);
+  }
+  const err=multiCheck(f, vals);
+  return err?{error:err}:{value:vals};
+}
+// 自訂欄位的顯示文字（列表、匯出用）
+function cfDisplayValue(f, v){
+  if(f.type==='checkbox') return v?'是':'否';
+  if(Array.isArray(v)) return v.join('、');
+  return v===undefined||v===null?'':String(v);
+}
+
+// ── 自訂欄位的顯示條件與區塊（admin.html／runner.html／staff.html／後端各放一份，判斷邏輯必須一致）──
+// 欄位可設 cond：{ src, op, val }
+//   src：排在上面的某個自訂欄位 id，或 '__gender'（性別）、'__age'（年齡，以賽事日期計算）
+//   op：in（等於其中任一項：下拉、性別）、has（有勾其中任一項：複選）、checked／unchecked（勾選框）、
+//       filled／empty（文字有填／沒填）、age（年齡介於 val.min～val.max，留空不限）
+// 區塊標題（type:'section'）：到下一個區塊標題前的欄位都屬於它；區塊隱藏時，裡面的欄位全部隱藏。
+// 隱藏的欄位不顯示、不驗證、不送出（跟「適用組別」一樣）；條件來源被隱藏時，依賴它的欄位也隱藏。
+// ctx：{ groupId, gender, age }；values：{ 欄位id: 目前的值 }
+// 單一條件是否成立。srcVisible：來源欄位是否顯示中；v：來源欄位的值
+function cfCondMatch(c, ctx, srcVisible, v){
+  if(!c||!c.src) return true;
+  if(c.src==='__gender') return (c.val||[]).includes(ctx.gender||'');
+  if(c.src==='__age'){
+    const a=ctx.age; if(a===null||a===undefined||isNaN(a)) return false;
+    const mn=c.val&&c.val.min, mx=c.val&&c.val.max;
+    return (!(mn>0)||a>=mn)&&(!(mx>0)||a<=mx);
+  }
+  if(!srcVisible) return false; // 來源被隱藏、排在下面或已刪除
+  switch(c.op){
+    case 'in': return typeof v==='string'&&(c.val||[]).includes(v);
+    case 'has': return Array.isArray(v)&&v.some(x=>(c.val||[]).includes(x));
+    case 'checked': return v===true;
+    case 'unchecked': return v!==true;
+    case 'filled': return Array.isArray(v)?v.length>0:(typeof v==='string'?!!v.trim():!!v);
+    case 'empty': return !(Array.isArray(v)?v.length>0:(typeof v==='string'?!!v.trim():!!v));
+    default: return true;
+  }
+}
+function cfGroupOk(f, ctx){ return !f.groups||!f.groups.length||f.groups.includes(ctx.groupId||''); }
+function cfVisibility(fields, values, ctx){
+  const vis={}; let sec=true;
+  for(const f of fields){
+    const ok=cfGroupOk(f,ctx)&&cfCondMatch(f.cond,ctx,f.cond&&vis[f.cond.src],f.cond&&values[f.cond.src]);
+    if(f.type==='section'){ sec=ok; vis[f.id]=sec; continue; }
+    vis[f.id]=sec&&ok;
+  }
+  return vis;
+}
+// 表單、列表、匯出用的「有資料的欄位」（排除區塊標題）
+function cfDataFields(fields){ return (fields||[]).filter(f=>f.type!=='section'); }
+// 讀出表單上某個自訂欄位目前的值（判斷顯示條件用）
+function cfReadRaw(id, f){
+  const el=document.getElementById(id); if(!el) return undefined;
+  if(f.type==='multi'){
+    const vals=[...el.querySelectorAll('input[type=checkbox]:not([data-other]):checked')].map(x=>x.value);
+    const oc=el.querySelector('input[data-other]');
+    if(oc&&oc.checked){ const t=(document.getElementById(id+'_other')?.value||'').trim(); if(t) vals.push(t); }
+    return vals;
+  }
+  if(f.type==='checkbox') return el.checked;
+  let v=(el.value||'').trim();
+  if(f.type==='select'&&f.allowOther&&v==='__other__') v=(document.getElementById(id+'_other')?.value||'').trim();
+  return v;
+}
+// 依目前填寫內容切換欄位的顯示；回傳 vis（欄位id → 是否顯示）
+function cfApplyVisibility(fields, idPrefix, rowPrefix, ctx){
+  const values={};
+  (fields||[]).forEach(f=>{ if(f.type!=='section') values[f.id]=cfReadRaw(idPrefix+f.id,f); });
+  const vis=cfVisibility(fields||[], values, ctx);
+  (fields||[]).forEach(f=>{ const row=document.getElementById(rowPrefix+f.id); if(row) row.style.display=vis[f.id]?'':'none'; });
+  return vis;
+}
+// 表單上的年齡（以賽事日期計算；生日沒填或格式不對＝null）
+function cfAgeFrom(birthday, evDate){
+  if(!birthday||!/^\d{4}\/\d{2}\/\d{2}$/.test(birthday)) return null;
+  const [by,bm,bd]=birthday.split('/').map(Number);
+  const base=evDate?new Date(String(evDate).replace(/\//g,'-')+'T00:00:00'):new Date();
+  if(isNaN(base)) return null;
+  let age=base.getFullYear()-by;
+  if(base.getMonth()+1<bm||(base.getMonth()+1===bm&&base.getDate()<bd)) age--;
+  return age>=0?age:null;
+}
+function cfSectionHtml(f){
+  return '<div class="cf-section" style="margin:18px 0 12px;padding-top:12px;border-top:1px solid var(--border)">'
+    +'<div style="font-weight:800;font-size:.95rem">'+esc(f.label)+'</div>'
+    +(f.description?'<div style="font-size:.78rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'')+'</div>';
+}
+
+// 報名表單：依組別、性別、年齡與已填內容切換自訂欄位（顯示條件、區塊、適用組別）
+function signupCfCtx(){
+  return {groupId:document.getElementById('suGroup')?.value||'', gender:document.getElementById('suGender')?.value||'',
+    age:cfAgeFrom(document.getElementById('suBirthday')?.value.trim(), curSignupEvent?.date||'')};
+}
+function refreshSignupCf(){ return cfApplyVisibility(curSignupCustomFields,'su_cf_','su_cf_row_',signupCfCtx()); }
+// 任何輸入變動都重新判斷顯示條件（報名表單、各張修改表單）
+['input','change'].forEach(evt=>document.addEventListener(evt,e=>{
+  const t=e.target; if(!t||!t.closest) return;
+  if(t.closest('#signupContent')) setTimeout(refreshSignupCf,0); // 等目前的事件處理完（例如日期選擇器填入生日）再判斷
+  const box=t.closest('[id$="_edit"]'); if(box&&box.dataset.customFields) setTimeout(()=>updateEditCustomFieldsVisibility(box.id.slice(0,-5)),0);
+},true));
+
 // ── 組別切換時動態顯示限制欄位 ──
 window.onSignupGroupChange=function(){
   const group=document.getElementById('suGroup')?.value;
@@ -619,25 +815,14 @@ window.onSignupGroupChange=function(){
   // 家長區塊的顯示與旗標一律交給 updateParentalBlock 統一維護
   //（放在提早 return 之前，「未選組別」時旗標也會被正確重設為 false）
   updateParentalBlock();
+  refreshSignupCf();
+  // 邀請碼：組別自訂報名限制就用組別的，否則用賽事的
+  if(inviteRow&&g&&inviteTarget(curSignupEvent,g))inviteRow.style.display='';
   if(!g||!hint)return;
   // 限制摘要
-  const hints=[];
-  if(g.genderLimit)hints.push('限'+g.genderLimit+'性');
-  if(g.ageMin>0)hints.push(g.ageMin+'歲以上');
-  if(g.ageMax>0)hints.push(g.ageMax+'歲以下');
-  if(g.groupCapacity>0)hints.push('限'+g.groupCapacity+'人');
-  if(g.parentalAge>0)hints.push(g.parentalAge+'歲以下須家長陪同聲明');
+  const hints=groupLimitHints(g);
   hint.textContent=groupHintText(g,hints);
   hint.style.whiteSpace='pre-line';
-  // 邀請碼
-  if(inviteRow&&groupHasInvite(g))inviteRow.style.display='';
-  // 自訂欄位：依「適用組別」設定切換顯示（groups 未設定或空陣列＝全部組別皆顯示）
-  curSignupCustomFields.forEach(f=>{
-    const row=document.getElementById('su_cf_row_'+f.id);
-    if(!row)return;
-    const applicable=!f.groups||!f.groups.length||f.groups.includes(group);
-    row.style.display=applicable?'':'none';
-  });
 }
 
 // 依目前填寫的生日判斷是否需要顯示家長聲明區塊，並更新模組變數 curSignupNeedsParental
@@ -646,13 +831,14 @@ window.updateParentalBlock=function updateParentalBlock(){
   const g=window._signupGroupMap?.[group];
   const block=document.getElementById('suParentalBlock');
   if(!block)return;
-  if(!g||!(g.parentalAge>0)){curSignupNeedsParental=false;block.style.display='none';return;}
+  const pAge=g?effParentalAge(curSignupEvent,g):0; // 組別自訂報名限制就用組別的，否則用賽事的
+  if(!(pAge>0)){curSignupNeedsParental=false;block.style.display='none';return;}
   const birthday=document.getElementById('suBirthday')?.value.trim();
   if(birthday&&validateBirthday(birthday)){
     const evDate=curSignupEvent?.date||new Date().getFullYear()+'-01-01';
     const age=calcAgeRunner(birthday,evDate);
     // 算不出年齡（日期異常）時保守隱藏——伺服器端會用權威資料做最終判斷
-    if(age===null||age>=g.parentalAge){curSignupNeedsParental=false;block.style.display='none';return;}
+    if(age===null||age>=pAge){curSignupNeedsParental=false;block.style.display='none';return;}
     curSignupNeedsParental=true;block.style.display='';
   }else{
     curSignupNeedsParental=false;block.style.display='none';
@@ -695,7 +881,8 @@ function getEffBibSettings(g,evOverride){
   const cMin=useGroup?(g.customBibRangeMin||0):(ev.customBibRangeMin||0);
   const cMax=useGroup?(g.customBibRangeMax||0):(ev.customBibRangeMax||0);
   const {min,max}=resolveSelfSelectBibRange(cMin,cMax,rMin,rMax,pad);
-  return {pad,allowCustomBib,allowBibChange,min,max};
+  const note=String((useGroup?g.bibNote:ev.bibNote)||'');
+  return {pad,allowCustomBib,allowBibChange,min,max,note};
 }
 
 // ── 即時號碼重複檢查（自選號碼用）──
@@ -898,53 +1085,99 @@ function waitForFreshTurnstileToken(timeoutMs=8000){
     })();
   });
 }
-// 顯示「找到相似資料」確認對話框，回傳 Promise<'same'|'new'|'refill'>（報名表單、選手自助改資料共用）
-// fields: 伺服器回傳的欄位差異清單 [{label,status,value}]；curValues: 這次送出的值 {姓名:...,性別:...,...}
-async function showSamePersonDialog(fields,curValues,opts){
-  opts=opts||{};
-  const rows=(fields||[]).map(f=>{
-    let dbCell,rowStyle='';
-    if(f.status==='match'){rowStyle='color:var(--green)';dbCell=esc(f.value||'');}
-    else if(f.status==='db-empty'){dbCell='';}
-    else{rowStyle='color:var(--accent)';dbCell='<span style="font-size:.75rem;padding:2px 6px;background:rgba(249,115,22,.12);border-radius:4px;border:1px solid rgba(249,115,22,.3)">有差異</span>';}
-    const cur=curValues[f.label]||'';
-    return '<tr style="'+rowStyle+'">'
-      +'<td style="padding:4px 8px;font-size:.78rem;color:var(--muted);white-space:nowrap;border:none">'+esc(f.label)+'</td>'
-      +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+dbCell+'</td>'
-      +'<td style="padding:4px 8px;font-size:.85rem;word-break:break-all;border:none">'+esc(cur)+'</td>'
-      +'</tr>';
-  }).join('');
-  const hintHtml=(opts.suggestRefill||[]).length
-    ?'<div style="font-size:.75rem;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.25);border-radius:8px;padding:8px 12px;margin-bottom:12px;line-height:1.6">'
-      +'💡 建議補填 <strong>'+esc(opts.suggestRefill.join('、'))+'</strong>，有助於進一步確認是否為同一人。'
-      +'<br><span style="color:var(--muted)">可點「重填」回到表單補充資料。</span></div>'
-    :'';
-  const warningText=opts.warningText||'⚠️ 若選「同一人」，則以新資料取代舊資料！';
-  const dialog=document.createElement('div');
-  dialog.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box';
-  let btnsHtml='<button id="dlgSame" class="btn btn-primary btn-sm">✅ 同一人</button>'
-    +'<button id="dlgNew" class="btn btn-ghost btn-sm">👤 非同一人</button>';
-  if(opts.showRefillButton!==false)btnsHtml+='<button id="dlgRefill" class="btn btn-ghost btn-sm">✏️ 重填</button>';
-  dialog.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:480px;width:100%;box-sizing:border-box;overflow:hidden">'
-    +'<div style="font-size:1rem;font-weight:700;margin-bottom:4px">找到相似的資料</div>'
-    +'<div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">綠色為相符欄位；橘色欄位有差異，請確認是否為同一人。</div>'
-    +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:14px">'
-    +'<colgroup><col style="width:52px"><col><col></colgroup>'
-    +'<thead><tr><th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left;border:none"></th>'
-    +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left;border:none">資料庫</th>'
-    +'<th style="padding:4px 8px;font-size:.72rem;color:var(--muted);text-align:left;border:none">您填寫的</th></tr></thead>'
-    +'<tbody>'+rows+'</tbody></table>'
-    +hintHtml
-    +'<div style="font-size:.75rem;color:var(--accent);margin-bottom:12px">'+warningText+'</div>'
-    +'<div style="display:flex;gap:8px;flex-wrap:wrap">'+btnsHtml+'</div></div>';
-  document.body.appendChild(dialog);
+// ── 確認身分（新增報名時，伺服器找到同名、同性別、同生日的人，需要報名者回答）──
+// step：ever＝以前報名過嗎；contact＝以前用的手機或 Email；idNumber＝身分證字號；uid＝ID
+// 回傳更新後的 idq（答案累積在裡面，再送一次）；按「取消」回傳 null
+function idDialog(o){
+  const dlg=document.createElement('div');
+  dlg.className='id-dialog';
+  dlg.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box';
+  const btns=(o.buttons||[]).map((b,i)=>'<button type="button" data-i="'+i+'" class="btn '+(b.primary?'btn-primary':'btn-ghost')+' btn-sm">'+esc(b.label)+'</button>').join('');
+  dlg.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:480px;width:100%;box-sizing:border-box;max-height:90vh;overflow:auto">'
+    +'<div style="font-size:1rem;font-weight:700;margin-bottom:8px">'+(o.who?esc(o.who)+'：':'')+esc(o.title)+'</div>'
+    +(o.html||'')
+    +(o.input?'<input id="idDlgInput" class="input" style="width:100%;box-sizing:border-box;margin:6px 0 4px" placeholder="'+esc(o.input.placeholder||'')+'">'+'<div id="idDlgErr" style="font-size:.75rem;color:var(--red);min-height:1em"></div>':'')
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'+btns+'</div></div>';
+  document.body.appendChild(dlg);
+  const inp=dlg.querySelector('#idDlgInput');
+  if(inp) setTimeout(()=>inp.focus(),30);
   return new Promise(resolve=>{
-    dialog.querySelector('#dlgSame').onclick=()=>{dialog.remove();resolve('same');};
-    dialog.querySelector('#dlgNew').onclick=()=>{dialog.remove();resolve('new');};
-    const refillBtn=dialog.querySelector('#dlgRefill');
-    if(refillBtn)refillBtn.onclick=()=>{dialog.remove();resolve('refill');};
+    dlg.querySelectorAll('button[data-i]').forEach(el=>el.onclick=()=>{
+      const b=o.buttons[+el.dataset.i];
+      const v=inp?inp.value.trim():'';
+      if(b.needInput){ const err=b.needInput(v); if(err){ dlg.querySelector('#idDlgErr').textContent=err; return; } }
+      dlg.remove(); resolve({value:b.value, input:v});
+    });
   });
 }
+const idWhyHtml='<div style="font-size:.82rem;line-height:1.7;margin-bottom:6px">系統裡已經有同姓名、同性別、同生日的選手，需要確認你是不是同一人，才不會建立兩筆資料。</div>';
+async function askIdentity(step, idq, who){
+  idq={...(idq||{})};
+  if(step==='ever'){
+    const r=await idDialog({who, title:'以前報名過本單位的賽事嗎？', html:idWhyHtml,
+      buttons:[{label:'是，報名過',value:'yes',primary:true},{label:'否，第一次報名',value:'no'},{label:'取消',value:'cancel'}]});
+    if(r.value==='cancel') return null;
+    idq.ever=r.value; return idq;
+  }
+  if(step==='contact'){
+    const r=await idDialog({who, title:'請填以前報名用的手機或 Email',
+      html:'<div style="font-size:.82rem;line-height:1.7">有好幾位同姓名、同性別、同生日的選手，請填你以前報名時用的手機或 Email，用來找出你的資料。</div>',
+      input:{placeholder:'09xxxxxxxx 或 Email'},
+      buttons:[{label:'確定',value:'ok',primary:true,needInput:v=>(!v?'請填手機或 Email':(validatePhone(v)||/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v))?'':'格式不正確')},
+        {label:'不記得／沒填過',value:'skip'},{label:'取消',value:'cancel'}]});
+    if(r.value==='cancel') return null;
+    if(r.value==='skip'){ idq.noContact=true; return idq; }
+    if(r.input.includes('@')) idq.email=r.input; else idq.phone=r.input;
+    return idq;
+  }
+  if(step==='idNumber'){
+    const r=await idDialog({who, title:'請填身分證字號',
+      html:'<div style="font-size:.82rem;line-height:1.7">還是無法確定是哪一位，請填你的身分證字號（只用來比對，不會顯示）。</div>',
+      input:{placeholder:'A123456789'},
+      buttons:[{label:'確定',value:'ok',primary:true,needInput:v=>validateId(v.toUpperCase())&&v?'':'請填正確的身分證字號'},
+        {label:'以前沒填過',value:'skip'},{label:'取消',value:'cancel'}]});
+    if(r.value==='cancel') return null;
+    if(r.value==='skip'){ idq.noIdNumber=true; return idq; }
+    idq.idNumber=r.input.toUpperCase(); return idq;
+  }
+  if(step==='uid'){
+    const r=await idDialog({who, title:'請填你的 ID',
+      html:'<div style="font-size:.82rem;line-height:1.7">還是無法確定是哪一位，請填你的 ID。<br><span style="color:var(--muted)">ID 在以前的報名資訊卡上；也可以先到「查詢成績」用身分證＋生日查以前的紀錄。查不到請聯絡主辦單位。</span></div>',
+      input:{placeholder:'ID'},
+      buttons:[{label:'確定',value:'ok',primary:true,needInput:v=>v?'':'請填 ID'},{label:'取消',value:'cancel'}]});
+    if(r.value==='cancel') return null;
+    idq.uid=r.input.toUpperCase(); return idq;
+  }
+  return null;
+}
+// 修改時改了姓名／性別／生日／身分證：警告不能換人，確定才繼續
+async function confirmIdentityChange(fields, who){
+  const r=await idDialog({who, title:'確定是同一人修改資料嗎？',
+    html:(fields&&fields.length?'<div style="font-size:.82rem;margin-bottom:6px">你改了：<strong>'+esc(fields.join('、'))+'</strong></div>':'')
+      +'<div style="font-size:.82rem;line-height:1.7;color:var(--accent)">系統不允許同一筆資料換不同人，若要換人，請先申請取消報名，再新增報名。</div>',
+    buttons:[{label:'確定，是同一人',value:'yes',primary:true},{label:'取消',value:'no'}]});
+  return r.value==='yes';
+}
+// 送出前的確認畫面：sections＝[{title,rows}]，rows＝[[標籤,值]]（空白的列不顯示）（跟報名系統一致）
+async function confirmBeforeSubmit(sections, title){
+  const tbl=rows=>'<table style="width:100%;border-collapse:collapse;margin-bottom:8px">'+rows.filter(r=>r[1]!==''&&r[1]!=null).map(r=>'<tr><td style="padding:3px 8px 3px 0;font-size:.78rem;color:var(--muted);white-space:nowrap;vertical-align:top;border:none">'+esc(r[0])+'</td><td style="padding:3px 0;font-size:.88rem;word-break:break-all;border:none">'+esc(String(r[1]))+'</td></tr>').join('')+'</table>';
+  const html=sections.map(s=>(s.title?'<div style="font-weight:700;font-size:.88rem;margin-top:8px;border-top:1px solid var(--border);padding-top:8px">'+esc(s.title)+'</div>':'')+tbl(s.rows)).join('')
+    +'<div style="font-size:.78rem;color:var(--accent);margin-top:4px">請確認資料正確，尤其是姓名、性別、生日。</div>';
+  const r=await idDialog({title:title||'請確認報名資料', html, buttons:[{label:'確認送出',value:'ok',primary:true},{label:'返回修改',value:'back'}]});
+  return r.value==='ok';
+}
+// 自訂欄位顯示成確認畫面的列（區塊標題不列；複選用頓號連接；勾選框顯示是／否）
+function cfConfirmRows(fields, data){
+  const rows=[];
+  (fields||[]).forEach(f=>{
+    if(f.type==='section'||!(f.id in (data||{}))) return;
+    let v=data[f.id];
+    if(Array.isArray(v)) v=v.join('、'); else if(v===true) v='是'; else if(v===false) v='否';
+    rows.push([f.label,v]);
+  });
+  return rows;
+}
+// 送出前的確認畫面：rows＝[[標籤,值]]，或 sections＝[{title,rows}]
 
 window.submitSignup=async function(){
   // 防止快速連點：從點擊到真正鎖住按鈕之間，中間有好幾個 await（邀請碼檢查、名額查詢等），
@@ -1000,16 +1233,11 @@ window.submitSignup=async function(){
     showToast(msg,'error');
   };
   if(g){
-    const evDate=curSignupEvent?.date||'';
-    if(g.genderLimit&&gender&&g.genderLimit!==gender){failGroup('此組別限'+g.genderLimit+'性報名');return;}
-    if(birthday&&evDate){
-      const age=calcAgeRunner(birthday,evDate);
-      if(age!==null){
-        if(g.ageMin>0&&age<g.ageMin){failGroup('此組別年齡限制 '+g.ageMin+' 歲以上（您的年齡：'+age+'歲）');return;}
-        if(g.ageMax>0&&age>g.ageMax){failGroup('此組別年齡限制 '+g.ageMax+' 歲以下（您的年齡：'+age+'歲）');return;}
-      }
-    }
-    if(groupHasInvite(g)&&!(await checkInviteCode(g,inviteInput))){failGroup('邀請碼不正確');return;}
+    // 報名限制：組別自訂報名限制就用組別的，否則用賽事的（伺服器端同一套規則）
+    const limErr=regLimitError(curSignupEvent,g,gender,birthday,curSignupEvent?.date||'');
+    if(limErr){failGroup(limErr);return;}
+    const invT=inviteTarget(curSignupEvent,g);
+    if(invT&&!(await checkInviteCode(invT,inviteInput))){failGroup('邀請碼不正確');return;}
     // 家長陪同聲明：送出前即時重算（依目前的組別＋生日），
     // 不依賴可能殘留的旗標
     updateParentalBlock();
@@ -1028,12 +1256,14 @@ window.submitSignup=async function(){
     }
   }
 
-  // 自訂欄位必填驗證 + 收集（只處理「適用此組別」的欄位，其餘已隱藏、不驗證也不送出）
+  // 自訂欄位必填驗證 + 收集（只處理顯示中的欄位；隱藏的欄位不驗證也不送出）
   const customData={};
+  const suVis=refreshSignupCf();
   for(const f of curSignupCustomFields){
-    if(f.groups&&f.groups.length&&!f.groups.includes(group))continue;
+    if(f.type==='section'||!suVis[f.id])continue;
     const el=document.getElementById('su_cf_'+f.id);
     if(!el)continue;
+    if(f.type==='multi'){ const r=readMultiField('su_cf_'+f.id,f); if(r.error){showToast(r.error,'error');return;} customData[f.id]=r.value; continue; }
     if(f.type==='checkbox'){
       if(f.required&&!el.checked){showToast('「'+f.label+'」為必填，請勾選','error');return;}
       customData[f.id]=el.checked;
@@ -1098,6 +1328,11 @@ window.submitSignup=async function(){
     //   - 重複報名檢查、流水號與號碼配發（不會撞號）
     // 上面的前端檢查只是使用體驗的預檢，把關以伺服器為準。
     // ══════════════════════════════════════════════════════════
+    // 送出前確認資料
+    btn.textContent='送出報名'; btn.disabled=false;
+    const okGo=await confirmBeforeSubmit([{rows:[['賽事',curSignupEvent.name||''],['組別',g?.name||''],['姓名',name],['性別',gender],['生日',birthday],['手機',phone],['Email',email],['身分證',idNumber],['號碼',customBib],['備註',note]].concat(cfConfirmRows(curSignupCustomFields,customData))}]);
+    if(!okGo) return;
+    btn.textContent='送出中...'; btn.disabled=true;
     if(!currentTurnstileToken){showToast('請稍候，人機驗證還在進行中，請幾秒後再試一次','error');btn.textContent='送出報名';btn.disabled=false;return;}
     const runnerSignupFn=httpsCallable(functions,'runnerSignup');
     const payload={
@@ -1108,26 +1343,21 @@ window.submitSignup=async function(){
       parental:(parentalDataForSet.parentalConsentAgreed
         ?{consent:true,parentName:parentalDataForSet.parentName,parentPhone:parentalDataForSet.parentPhone}
         :null),
-      matchDecision:null,matchDocId:''
+      identity:{}
     };
+    let idq={};
     let res=(await runnerSignupFn(payload)).data;
-
-    // 找到相似選手：顯示確認對話框（伺服器只回傳「哪些欄位有差異」，
-    // 不回傳資料庫裡的舊值，避免個資外洩），再帶著使用者的決定重新呼叫
-    if(res.status==='needs-confirmation'){
+    // 找到同姓名、同性別、同生日的人：一題一題確認身分，再帶著答案重送
+    // （伺服器只回傳要問哪一題，不回傳任何欄位的相符或差異，避免被拿來探測別人的資料）
+    while(res.status==='needs-identity'){
       btn.textContent='送出報名'; btn.disabled=false;
-      const curValues={'姓名':name,'性別':gender,'生日':birthday,'手機':phone,'Email':email,'身分證':idNumber};
-      const choice=await showSamePersonDialog(res.fields,curValues,{suggestRefill:res.suggestRefill});
-      if(choice==='refill') return;
+      const nx=await askIdentity(res.step,idq,'');
+      if(!nx){ resetTurnstileWidget(); return; }
+      idq=nx;
       btn.textContent='送出中...'; btn.disabled=true;
       resetTurnstileWidget();
       const freshToken=await waitForFreshTurnstileToken();
-      res=(await runnerSignupFn({...payload,turnstileToken:freshToken,matchDecision:choice,matchDocId:res.matchDocId})).data;
-      // 極少見：兩次呼叫之間比對對象變了，伺服器要求重新確認
-      if(res.status==='needs-confirmation'){
-        showToast('資料剛有變動，請再送出一次確認','error');
-        btn.textContent='送出報名'; btn.disabled=false; return;
-      }
+      res=(await runnerSignupFn({...payload,turnstileToken:freshToken,identity:idq})).data;
     }
 
     // 已報名過這場活動的情況，伺服器現在會直接拋錯（引導去用修改功能），
@@ -1307,9 +1537,11 @@ async function selectStatusEvent(eventId, keepWrapper){
   const bibPlaceholder=String(1).padStart(pad,'0');
   document.getElementById('statusResult').innerHTML='';
 
+  // 賽事可設定「查詢、修改報名時一定要填編號」；沒設定時編號選填，用姓名＋性別＋生日查
+  const needBib=curStatusEvent.queryRequireBib===true;
   const formHtml='<div class="card">'
-    +'<div class="csv-hint">輸入編號、姓名、性別、生日查詢報名記錄，開放報名期間可修改資料。</div>'
-    +'<div class="input-group"><label>編號</label>'
+    +'<div class="csv-hint">'+(needBib?'輸入編號、姓名、性別、生日查詢報名記錄':'輸入姓名、性別、生日查詢報名記錄（編號可不填）')+'，開放報名期間可修改資料。</div>'
+    +'<div class="input-group"><label>'+(needBib?'編號':'編號（選填）')+'</label>'
     +'<input id="statusBib" type="text" class="input" placeholder="例：'+bibPlaceholder+'" oninput="applyHalf(this)"></div>'
     +'<div class="input-group"><label>姓名</label>'
     +'<input id="statusName" type="text" class="input" placeholder="王小明"></div>'
@@ -1344,7 +1576,8 @@ window.doStatusQuery=async function(){
   const gender=document.getElementById('statusGender').value;
   const birthday=document.getElementById('statusBirthday').value.trim();
   const result=document.getElementById('statusResult');
-  if(!bib||!name||!gender||!birthday){showToast('請填寫全部四個欄位','error');return;}
+  const needBib=curStatusEvent.queryRequireBib===true;
+  if(!name||!gender||!birthday||(needBib&&!bib)){showToast(needBib?'請填寫全部四個欄位':'請填寫姓名、性別、生日','error');return;}
   result.innerHTML='<div class="card"><div class="loading-cell">查詢中...</div></div>';
 
   const eventId=curStatusEvent.id;
@@ -1358,6 +1591,10 @@ window.doStatusQuery=async function(){
   }
   statusCred={name,gender,birthday};
   statusCache={};
+  if(res.needBib){
+    result.innerHTML='<div class="card"><div class="loading-cell" style="color:var(--red)">找到多筆相同姓名、性別、生日的資料，請加填編號再查詢</div></div>';
+    return;
+  }
 
   let html=''; let found=false;
   const matched=[];
@@ -1513,31 +1750,15 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   // 精簡版 groupMap 供 inline onchange 使用（key 是組別ID）：parentalAge 判斷家長陪同，
   // 其餘欄位供組別註解／限制摘要顯示（跟選手新增表單的 onSignupGroupChange 一致）
   const gMapJson=JSON.stringify(Object.fromEntries(groupList.map(g=>[g.id,{
-    parentalAge:g.parentalAge||0, genderLimit:g.genderLimit||'', ageMin:g.ageMin||0, ageMax:g.ageMax||0,
+    parentalAge:g.parentalAge||0, genderLimit:g.genderLimit||'', ageMin:g.ageMin||0, ageMax:g.ageMax||0, limitOverride:groupLimitOverride(g),
     groupCapacity:g.groupCapacity||0, note:g.note||'',
     distance:g.distance||0, distanceUnit:g.distanceUnit||'km', timed:g.timed!==false
-  }])));
+  }]).concat([['__ev',{parentalAge:evDoc.data()?.parentalAge||0, genderLimit:evDoc.data()?.genderLimit||'', ageMin:evDoc.data()?.ageMin||0, ageMax:evDoc.data()?.ageMax||0}]])));
 
   let html='<div class="card" style="background:var(--surface2)">';
-  // 號碼規則依「這筆報名目前所屬的組別」判斷（組別有開啟自訂號碼規則就依組別，沒開啟就依賽事）
-  const editG=groupMap[e.groupId];
-  const editBibCfg=getEffBibSettings(editG,evDoc.data());
-  const canChangeBib=editBibCfg.allowBibChange&&isRunnerRegOpen(evDoc.data(),0);
-  html+='<div class="csv-hint">'+(canChangeBib?'可修改以下資料，包含選手號碼。':'可修改以下資料，ID 與編號無法變更。')+'</div>';
-  if(canChangeBib){
-    const editPad=editBibCfg.pad;
-    // 選手自助改號碼＝「選手自選」，範圍依組別/賽事解析好的 editBibCfg，解析好的值直接存進 hidden dataset，
-    // 下面所有函式（checkEditBibAvailable／checkBibExhaustedEdit／toggleAvailableBibsEdit／送出驗證）都讀這裡，不用各自重算
-    const editEffMin=editBibCfg.min, editEffMax=editBibCfg.max;
-    const rangeLabel='（號碼須在 '+editEffMin+'～'+editEffMax+' 之間，留空可重新自動配號）';
-    html+='<div class="input-group"><label>選手號碼'+rangeLabel+'</label>'
-      +'<div class="input-row"><input id="'+cardId+'_eBib" type="text" class="input" value="'+esc(e.bibNumber||'')+'" data-old-bib="'+esc(e.bibNumber||'')+'" oninput="applyHalf(this)" onfocus="checkBibExhaustedEdit(\''+eventId+'\',\''+cardId+'\')" onblur="checkEditBibAvailable(\''+eventId+'\',\''+entryDocId+'\',\''+cardId+'\')">'
-      +'<button type="button" class="btn btn-ghost btn-sm" onclick="toggleAvailableBibsEdit(\''+eventId+'\',\''+cardId+'\')">查看可用號碼</button></div>'
-      +'<div id="'+cardId+'_eBibHint" style="font-size:.75rem;margin-top:4px;min-height:18px"></div>'
-      +'<div id="'+cardId+'_eBibAvailPanel" style="display:none;margin-top:6px;padding:8px;background:var(--surface2);border-radius:8px"></div>'
-      +'</div>';
-    html+='<input type="hidden" id="'+cardId+'_bibRange" data-min="'+editEffMin+'" data-max="'+editEffMax+'" data-pad="'+editPad+'" data-old-bib="'+esc(e.bibNumber||'')+'" data-uid="'+esc(e.uniqueId||'')+'">';
-  }
+  // 號碼欄位：規則依「表單上目前選的組別」（組別有開啟自訂號碼規則就依組別，沒開啟就依賽事），
+  // 換組別時由 renderEditBibField 重畫（範圍、能不能改號碼、編號註解都跟著換）
+  html+='<div id="'+cardId+'_eBibIntro" class="csv-hint"></div><div id="'+cardId+'_eBibWrap"></div>';
   html+='<div class="input-group"><label>姓名 <span class="required-star">*</span></label><input id="'+cardId+'_eName" type="text" class="input" value="'+esc(r.name||'')+'"></div>';
   html+='<div class="input-group"><label>性別 <span class="required-star">*</span></label><select id="'+cardId+'_eGender" class="input"><option value="男"'+(r.gender==='男'?' selected':'')+'>男</option><option value="女"'+(r.gender==='女'?' selected':'')+'>女</option></select></div>';
   const gMapEsc=escJs(gMapJson);
@@ -1556,7 +1777,7 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   if(emailShow)html+='<div class="input-group"><label>E-Mail'+(emailReq?' <span class="required-star">*</span>':'')+'</label><input id="'+cardId+'_eEmail" type="email" class="input" value="'+esc(r.email||'')+'" oninput="applyHalf(this)" onblur="setFieldError(\''+cardId+'_eEmail\',!validateEmail(this.value.trim()))"></div>';
   if(idShow)html+='<div class="input-group"><label>身分證字號（1英文+9數字）'+(idReq?' <span class="required-star">*</span>':'')+'</label><input id="'+cardId+'_eIdNumber" type="text" class="input" value="'+esc(r.idNumber||'')+'" oninput="applyHalf(this)" onblur="setFieldError(\''+cardId+'_eIdNumber\',!validateId(this.value.trim()))"></div>';
   html+='<div class="input-group"><label>備註</label><input id="'+cardId+'_eNote" type="text" class="input" value="'+esc(r.note||'')+'"></div>';
-  html+='<div class="input-group"><label>組別 <span class="required-star">*</span></label><select id="'+cardId+'_eGroup" class="input" onchange="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\');updateEditCustomFieldsVisibility(\''+cardId+'\');updateEditGroupInfo(\''+cardId+'\',\''+gMapEsc+'\')">';
+  html+='<div class="input-group"><label>組別 <span class="required-star">*</span></label><select id="'+cardId+'_eGroup" class="input" onchange="updateEditParentalBlock(\''+cardId+'\',\''+gMapEsc+'\',\''+evDateEsc+'\');updateEditCustomFieldsVisibility(\''+cardId+'\');updateEditGroupInfo(\''+cardId+'\',\''+gMapEsc+'\');renderEditBibField(\''+cardId+'\')">';
   groupList.forEach(g=>{html+='<option value="'+esc(g.id)+'"'+(g.id===e.groupId?' selected':'')+'>'+esc(g.name)+'</option>';});
   html+='</select>'
     +'<div id="'+cardId+'_eGroupNote" style="font-size:.8rem;margin-top:6px;color:var(--text);white-space:pre-line"></div>'
@@ -1582,7 +1803,11 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
     const reqMark=f.required?' <span class="required-star">*</span>':'';
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
     html+='<div id="'+cardId+'_ecf_row_'+f.id+'">';
-    if(f.type==='select'){
+    if(f.type==='section'){
+      html+=cfSectionHtml(f);
+    }else if(f.type==='multi'){
+      html+=multiFieldHtml(fid, f, customData[f.id], reqMark, descHtml);
+    }else if(f.type==='select'){
       const isOtherVal=f.allowOther&&customData[f.id]!==undefined&&customData[f.id]!==''&&!(f.options||[]).includes(customData[f.id]);
       html+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+fid+'" class="input"'+(f.allowOther?' onchange="document.getElementById(\''+fid+'_other\').style.display=this.value===\'__other__\'?\'block\':\'none\'"':'')+'><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{html+='<option value="'+esc(o)+'"'+(customData[f.id]===o?' selected':'')+'>'+esc(o)+'</option>';});
@@ -1607,9 +1832,39 @@ window.showEditForm=async function(eventId,entryDocId,uniqueId,cardId){
   //（與之後改生日/組別時走同一條判斷路徑，不會有初始不判斷的問題）
   updateEditParentalBlock(cardId,gMapJson,evDate);
   updateEditCustomFieldsVisibility(cardId);
+  const BIB_KEYS=['bibOverride','allowCustomBib','allowBibChange','bibRangeMin','bibRangeMax','customBibRangeMin','customBibRangeMax','bibNote'];
+  const pick=o=>Object.fromEntries(BIB_KEYS.concat(['bibPadLength']).filter(k=>o&&o[k]!==undefined).map(k=>[k,o[k]]));
+  box.dataset.bibctx=JSON.stringify({ev:pick(evDoc.data()),groups:Object.fromEntries(groupList.map(g=>[g.id,pick(g)])),
+    regOpen:isRunnerRegOpen(evDoc.data(),0),oldBib:e.bibNumber||'',uid:e.uniqueId||'',eventId,entryDocId});
+  renderEditBibField(cardId);
   updateEditGroupInfo(cardId,gMapJson);
 }
 
+// 修改表單：依目前選擇的組別畫號碼欄位（範圍、能不能改號碼、編號註解）。
+// 已經填的號碼保留；換到不能改號碼的組別時不顯示欄位（號碼維持原本的）。
+// 下面的 checkEditBibAvailable／checkBibExhaustedEdit／toggleAvailableBibsEdit／送出驗證都讀 hidden 的 _bibRange。
+window.renderEditBibField=function(cardId){
+  const box=document.getElementById(cardId+'_edit'); const wrap=document.getElementById(cardId+'_eBibWrap');
+  if(!box||!wrap)return;
+  let c={}; try{c=JSON.parse(box.dataset.bibctx||'{}');}catch(err){return;}
+  const gid=document.getElementById(cardId+'_eGroup')?.value||'';
+  const cfg=getEffBibSettings((c.groups||{})[gid],c.ev||{});
+  const canChange=cfg.allowBibChange&&c.regOpen;
+  const intro=document.getElementById(cardId+'_eBibIntro');
+  if(intro)intro.textContent=canChange?'可修改以下資料，包含選手號碼。':'可修改以下資料，ID 與編號無法變更。';
+  const cur=document.getElementById(cardId+'_eBib');
+  const val=cur?cur.value:(c.oldBib||'');
+  if(!canChange){wrap.innerHTML='';return;}
+  const ev=c.eventId, en=c.entryDocId;
+  wrap.innerHTML='<div class="input-group"><label>選手號碼（號碼須在 '+cfg.min+'～'+cfg.max+' 之間，留空可重新自動配號）</label>'
+    +'<div class="input-row"><input id="'+cardId+'_eBib" type="text" class="input" value="'+esc(val)+'" data-old-bib="'+esc(c.oldBib||'')+'" oninput="applyHalf(this)" onfocus="checkBibExhaustedEdit(\''+ev+'\',\''+cardId+'\')" onblur="checkEditBibAvailable(\''+ev+'\',\''+en+'\',\''+cardId+'\')">'
+    +'<button type="button" class="btn btn-ghost btn-sm" onclick="toggleAvailableBibsEdit(\''+ev+'\',\''+cardId+'\')">查看可用號碼</button></div>'
+    +(cfg.note?'<div style="font-size:.75rem;color:var(--text);margin-top:4px;white-space:pre-line">'+esc(cfg.note)+'</div>':'')
+    +'<div id="'+cardId+'_eBibHint" style="font-size:.75rem;margin-top:4px;min-height:18px"></div>'
+    +'<div id="'+cardId+'_eBibAvailPanel" style="display:none;margin-top:6px;padding:8px;background:var(--surface2);border-radius:8px"></div>'
+    +'</div>'
+    +'<input type="hidden" id="'+cardId+'_bibRange" data-min="'+cfg.min+'" data-max="'+cfg.max+'" data-pad="'+cfg.pad+'" data-old-bib="'+esc(c.oldBib||'')+'" data-uid="'+esc(c.uid||'')+'">';
+};
 // 修改表單：依目前選擇的組別，顯示組別註解與限制摘要
 // （跟新報名表單的 onSignupGroupChange 邏輯一致；灰字=純資訊提示，真的驗證失敗時另外在 saveEditEntry 裡改成紅字）
 window.updateEditGroupInfo=function(cardId, gMapJson){
@@ -1621,12 +1876,7 @@ window.updateEditGroupInfo=function(cardId, gMapJson){
   const g=gMap[group];
   noteEl.textContent=g?.note||'';
   if(!g){hint.textContent='';return;}
-  const hints=[];
-  if(g.genderLimit)hints.push('限'+g.genderLimit+'性');
-  if(g.ageMin>0)hints.push(g.ageMin+'歲以上');
-  if(g.ageMax>0)hints.push(g.ageMax+'歲以下');
-  if(g.groupCapacity>0)hints.push('限'+g.groupCapacity+'人');
-  if(g.parentalAge>0)hints.push(g.parentalAge+'歲以下須家長陪同聲明');
+  const hints=groupLimitHints(g);
   hint.textContent=groupHintText(g,hints);
   hint.style.whiteSpace='pre-line';
   hint.style.color='var(--muted)';
@@ -1640,20 +1890,16 @@ function groupHintText(g, limitHints){
   return lines.join('\n');
 }
 
-// 修改表單：依目前選擇的組別，動態顯示/隱藏對應的自訂欄位
-// （groups 未設定或空陣列＝全部組別皆顯示，跟新報名表單的 onSignupGroupChange 邏輯一致）
+// 修改表單：依目前的組別、性別、生日與已填內容，切換自訂欄位的顯示（顯示條件、區塊、適用組別）
+// 回傳 vis（欄位id → 是否顯示）
 window.updateEditCustomFieldsVisibility=function(cardId){
   const editBox=document.getElementById(cardId+'_edit');
-  if(!editBox)return;
+  if(!editBox)return {};
   let customFields=[];
-  try{customFields=JSON.parse(editBox.dataset.customFields||'[]');}catch(e){return;}
-  const group=document.getElementById(cardId+'_eGroup')?.value;
-  customFields.forEach(f=>{
-    const row=document.getElementById(cardId+'_ecf_row_'+f.id);
-    if(!row)return;
-    const applicable=!f.groups||!f.groups.length||f.groups.includes(group);
-    row.style.display=applicable?'':'none';
-  });
+  try{customFields=JSON.parse(editBox.dataset.customFields||'[]');}catch(e){return {};}
+  const ctx={groupId:document.getElementById(cardId+'_eGroup')?.value||'', gender:document.getElementById(cardId+'_eGender')?.value||'',
+    age:cfAgeFrom(document.getElementById(cardId+'_eBirthday')?.value.trim(), editBox.dataset.evdate||'')};
+  return cfApplyVisibility(customFields, cardId+'_ecf_', cardId+'_ecf_row_', ctx);
 }
 
 // 修改表單：依生日/組別更新家長陪同區塊顯示
@@ -1669,12 +1915,13 @@ window.updateEditParentalBlock=function(cardId, gMapJson, evDate){
     const group=document.getElementById(cardId+'_eGroup')?.value;
     const birthday=document.getElementById(cardId+'_eBirthday')?.value.trim();
     const g=gMap[group];
-    if(!g||!(g.parentalAge>0))return set(false);
+    const pAge=g?effParentalAge(gMap.__ev,g):0; // 組別自訂報名限制就用組別的，否則用賽事的
+    if(!(pAge>0))return set(false);
     if(!(birthday&&validateBirthday(birthday)))return set(false);
     const base=evDate||new Date().getFullYear()+'-01-01';
     const age=calcAgeRunner(birthday,base);
     // 算不出年齡（日期異常）時保守隱藏——伺服器端會做最終判斷
-    return set(!(age===null||age>=g.parentalAge));
+    return set(!(age===null||age>=pAge));
   }catch(e){return set(false);}
 }
 
@@ -1758,14 +2005,9 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
       showToast(msg,'error');
     };
     if(g0){
-      if(g0.genderLimit&&gender&&g0.genderLimit!==gender){failGroup('此組別限'+g0.genderLimit+'性報名');return;}
-      if(birthday){
-        const age=calcAgeRunner(birthday,editBox0?.dataset.evdate||'');
-        if(age!==null){
-          if(g0.ageMin>0&&age<g0.ageMin){failGroup('此組別年齡限制 '+g0.ageMin+' 歲以上（您的年齡：'+age+'歲）');return;}
-          if(g0.ageMax>0&&age>g0.ageMax){failGroup('此組別年齡限制 '+g0.ageMax+' 歲以下（您的年齡：'+age+'歲）');return;}
-        }
-      }
+      // 報名限制：組別自訂報名限制就用組別的，否則用賽事的
+      const limErr=regLimitError(gMap0.__ev,g0,gender,birthday,editBox0?.dataset.evdate||'');
+      if(limErr){failGroup(limErr);return;}
       // 名額只在「真的換到不同組別」時才檢查，避免原本就在額滿組別的人被自己卡住
       const origGroupId=statusCache[entryDocId]?.entry?.groupId;
       if(groupId!==origGroupId&&g0.groupCapacity>0){
@@ -1776,9 +2018,11 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
   }
   const customFields=JSON.parse(document.getElementById(cardId+'_edit').dataset.customFields||'[]');
   const customData={};
+  const editVis=updateEditCustomFieldsVisibility(cardId);
   for(const f of customFields){
-    if(f.groups&&f.groups.length&&!f.groups.includes(groupId))continue; // 不適用目前組別：不送出，等同清除
+    if(f.type==='section'||!editVis[f.id])continue; // 隱藏的欄位（不適用組別、顯示條件不成立）：不送出，等同清除
     const el=document.getElementById(cardId+'_ecf_'+f.id); if(!el)continue;
+    if(f.type==='multi'){ const r=readMultiField(cardId+'_ecf_'+f.id,f); if(r.error){showToast(r.error,'error');return;} customData[f.id]=r.value; continue; }
     if(f.type==='checkbox'){
       if(f.required&&!el.checked){showToast('「'+f.label+'」為必填，請勾選','error');return;}
       customData[f.id]=el.checked;
@@ -1816,19 +2060,13 @@ window.saveEditEntry=async function(eventId,entryDocId,cardId){
         ?{consent:document.getElementById(cardId+'_eParentalConsent')?.checked||false,
           parentName:document.getElementById(cardId+'_eParentName')?.value.trim()||'',
           parentPhone:document.getElementById(cardId+'_eParentPhone')?.value.trim()||''}
-        :null),
-      matchDecision:null,matchDocId:''
+        :null)
     };
     let res=(await httpsCallable(functions,'runnerAction')(callPayload)).data;
-    // 身分欄位（姓名/性別/生日/手機/Email/身分證）改了之後跟別人的資料模糊相符：
-    // 顯示確認對話框，讓使用者確認是否為同一人（若真的是同一人，伺服器會直接拒絕這次修改）
-    if(res.status==='needs-confirmation'){
-      const curValues={'姓名':name,'性別':gender,'生日':birthday,'手機':phone,'Email':email,'身分證':idNumber};
-      const choice=await showSamePersonDialog(res.fields,curValues,{
-        showRefillButton:false,
-        warningText:'⚠️ 若選「同一人」，這次修改會被拒絕（身分資料不能跟別人重複）；選「非同一人」才會繼續送出修改。'
-      });
-      res=(await httpsCallable(functions,'runnerAction')({...callPayload,matchDecision:choice,matchDocId:res.matchDocId})).data;
+    // 改了姓名、性別、生日或身分證（從一個號碼改成另一個）：確認是同一人修改資料（不能換人）
+    if(res.status==='confirm-identity-change'){
+      if(!(await confirmIdentityChange(res.fields||[],''))) return;
+      res=(await httpsCallable(functions,'runnerAction')({...callPayload,confirmIdentityChange:true})).data;
     }
     // 憑證與快取更新（姓名/性別/生日可能被改了，之後的動作要用新值驗證）
     statusCred=res.updatedCredentials||statusCred;

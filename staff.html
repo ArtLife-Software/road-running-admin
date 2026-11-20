@@ -246,9 +246,10 @@ function isStaffRegOpen(ev) {
   const now = Date.now();
   // 條件1：手動開關 ON → 一律可報名
   if (ev.staffRegistrationOpen) return true;
-  // 未手動開放：須在時間範圍內才能報名（未設定視為不限制）
+  // 未手動開放：須在時間範圍內才能報名（開始、結束都沒設定＝不開放；只設其中一個時，另一邊不限制）
   const start = ev.staffRegistrationStartAt?.toDate?.()?.getTime() ?? null;
   const end   = ev.staffRegistrationEndAt?.toDate?.()?.getTime() ?? null;
+  if (start === null && end === null) return false; // 沒有設定報名期間＝不開放
   const afterStart = (start === null || now >= start);
   const beforeEnd  = (end   === null || now <= end);
   return afterStart && beforeEnd;
@@ -334,7 +335,12 @@ async function selectSignupEvent(eventId,keepWrapper){
   curSignupCustomFields.forEach(f=>{
     const id='su_cf_'+f.id; const reqMark=f.required?' <span class="required-star">*</span>':'';
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
-    if(f.type==='select'){
+    formHtml+='<div id="su_cf_row_'+f.id+'">';
+    if(f.type==='section'){
+      formHtml+=cfSectionHtml(f);
+    }else if(f.type==='multi'){
+      formHtml+=multiFieldHtml(id, f, [], reqMark, descHtml);
+    }else if(f.type==='select'){
       formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+id+'" class="input"'+(f.allowOther?' onchange="document.getElementById(\''+id+'_other\').style.display=this.value===\'__other__\'?\'block\':\'none\'"':'')+'><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{formHtml+='<option value="'+esc(o)+'">'+esc(o)+'</option>';});
       if(f.allowOther)formHtml+='<option value="__other__">其他（請輸入）</option>';
@@ -344,11 +350,13 @@ async function selectSignupEvent(eventId,keepWrapper){
     }else{
       formHtml+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+id+'" type="text" class="input">'+descHtml+'</div>';
     }
+    formHtml+='</div>';
   });
   formHtml+='<div id="turnstileContainer" style="margin:12px 0;display:flex;justify-content:center;min-height:65px"></div>';
   formHtml+='<button class="btn btn-primary btn-full" onclick="submitSignup()">送出報名</button></div>';
   if(keepWrapper){document.getElementById('signupForm').innerHTML=formHtml;}
   else{document.getElementById('signupContent').innerHTML=formHtml;}
+  refreshSignupCf();
   renderTurnstileWidget('turnstileContainer');
 }
 
@@ -378,6 +386,157 @@ function resetTurnstileWidget(){
   if(typeof turnstile!=='undefined'&&turnstileWidgetId!==null) turnstile.reset(turnstileWidgetId);
 }
 
+
+// ── 複選欄位（自訂欄位 type:'multi'）──
+// 值存成字串陣列；勾「其他」時把輸入的文字也放進陣列。
+// 必填＝至少選一項；最少（minSel）、最多（maxSel）留空＝不限。選填時可以都不選，有選就要符合最少／最多。
+function multiRangeText(f){
+  const mn=f.minSel||0, mx=f.maxSel||0;
+  if(mn&&mx) return mn===mx?'請選 '+mn+' 項':'請選 '+mn+'～'+mx+' 項';
+  if(mn) return '至少選 '+mn+' 項';
+  if(mx) return '最多選 '+mx+' 項';
+  return '可複選';
+}
+function multiFieldHtml(id, f, cur, reqMark, descHtml){
+  cur=Array.isArray(cur)?cur:(cur?[String(cur)]:[]);
+  const opts=f.options||[];
+  const others=cur.filter(v=>!opts.includes(v));
+  let h='<div class="input-group"><label>'+esc(f.label)+reqMark+' <span style="font-weight:400;color:var(--muted);font-size:.75rem">（'+multiRangeText(f)+'）</span></label>'
+    +'<div id="'+id+'" class="cf-multi" style="display:flex;flex-wrap:wrap;gap:6px 16px;padding:4px 0">';
+  opts.forEach(o=>{ h+='<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:.88rem"><input type="checkbox" value="'+esc(o)+'"'+(cur.includes(o)?' checked':'')+'> '+esc(o)+'</label>'; });
+  if(f.allowOther) h+='<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:.88rem"><input type="checkbox" data-other="1"'+(others.length?' checked':'')
+    +' onchange="document.getElementById(\''+id+'_other\').style.display=this.checked?\'block\':\'none\'"> 其他（請輸入）</label>';
+  h+='</div>';
+  if(f.allowOther) h+='<input type="text" id="'+id+'_other" class="input" style="margin-top:6px;display:'+(others.length?'block':'none')+'" placeholder="請輸入..." value="'+esc(others.join('、'))+'">';
+  return h+descHtml+'</div>';
+}
+function multiCheck(f, vals){
+  const n=vals.length;
+  if(f.required&&!n) return '「'+f.label+'」為必填，請至少選一項';
+  if(n){
+    if(f.minSel&&n<f.minSel) return '「'+f.label+'」至少要選 '+f.minSel+' 項';
+    if(f.maxSel&&n>f.maxSel) return '「'+f.label+'」最多只能選 '+f.maxSel+' 項';
+  }
+  return '';
+}
+// 讀出複選欄位的值：回傳 {value:[...]} 或 {error:'訊息'}
+function readMultiField(id, f){
+  const box=document.getElementById(id); if(!box) return {value:[]};
+  const vals=[...box.querySelectorAll('input[type=checkbox]:not([data-other]):checked')].map(el=>el.value);
+  const oc=box.querySelector('input[data-other]');
+  if(oc&&oc.checked){
+    const t=(document.getElementById(id+'_other')?.value||'').trim();
+    if(!t) return {error:'「'+f.label+'」勾選了「其他」，請輸入內容'};
+    vals.push(t);
+  }
+  const err=multiCheck(f, vals);
+  return err?{error:err}:{value:vals};
+}
+// 自訂欄位的顯示文字（列表、匯出用）
+function cfDisplayValue(f, v){
+  if(f.type==='checkbox') return v?'是':'否';
+  if(Array.isArray(v)) return v.join('、');
+  return v===undefined||v===null?'':String(v);
+}
+
+// ── 自訂欄位的顯示條件與區塊（admin.html／runner.html／staff.html／後端各放一份，判斷邏輯必須一致）──
+// 欄位可設 cond：{ src, op, val }
+//   src：排在上面的某個自訂欄位 id，或 '__gender'（性別）、'__age'（年齡，以賽事日期計算）
+//   op：in（等於其中任一項：下拉、性別）、has（有勾其中任一項：複選）、checked／unchecked（勾選框）、
+//       filled／empty（文字有填／沒填）、age（年齡介於 val.min～val.max，留空不限）
+// 區塊標題（type:'section'）：到下一個區塊標題前的欄位都屬於它；區塊隱藏時，裡面的欄位全部隱藏。
+// 隱藏的欄位不顯示、不驗證、不送出（跟「適用組別」一樣）；條件來源被隱藏時，依賴它的欄位也隱藏。
+// ctx：{ groupId, gender, age }；values：{ 欄位id: 目前的值 }
+// 單一條件是否成立。srcVisible：來源欄位是否顯示中；v：來源欄位的值
+function cfCondMatch(c, ctx, srcVisible, v){
+  if(!c||!c.src) return true;
+  if(c.src==='__gender') return (c.val||[]).includes(ctx.gender||'');
+  if(c.src==='__age'){
+    const a=ctx.age; if(a===null||a===undefined||isNaN(a)) return false;
+    const mn=c.val&&c.val.min, mx=c.val&&c.val.max;
+    return (!(mn>0)||a>=mn)&&(!(mx>0)||a<=mx);
+  }
+  if(!srcVisible) return false; // 來源被隱藏、排在下面或已刪除
+  switch(c.op){
+    case 'in': return typeof v==='string'&&(c.val||[]).includes(v);
+    case 'has': return Array.isArray(v)&&v.some(x=>(c.val||[]).includes(x));
+    case 'checked': return v===true;
+    case 'unchecked': return v!==true;
+    case 'filled': return Array.isArray(v)?v.length>0:(typeof v==='string'?!!v.trim():!!v);
+    case 'empty': return !(Array.isArray(v)?v.length>0:(typeof v==='string'?!!v.trim():!!v));
+    default: return true;
+  }
+}
+function cfGroupOk(f, ctx){ return !f.groups||!f.groups.length||f.groups.includes(ctx.groupId||''); }
+function cfVisibility(fields, values, ctx){
+  const vis={}; let sec=true;
+  for(const f of fields){
+    const ok=cfGroupOk(f,ctx)&&cfCondMatch(f.cond,ctx,f.cond&&vis[f.cond.src],f.cond&&values[f.cond.src]);
+    if(f.type==='section'){ sec=ok; vis[f.id]=sec; continue; }
+    vis[f.id]=sec&&ok;
+  }
+  return vis;
+}
+// 表單、列表、匯出用的「有資料的欄位」（排除區塊標題）
+function cfDataFields(fields){ return (fields||[]).filter(f=>f.type!=='section'); }
+// 讀出表單上某個自訂欄位目前的值（判斷顯示條件用）
+function cfReadRaw(id, f){
+  const el=document.getElementById(id); if(!el) return undefined;
+  if(f.type==='multi'){
+    const vals=[...el.querySelectorAll('input[type=checkbox]:not([data-other]):checked')].map(x=>x.value);
+    const oc=el.querySelector('input[data-other]');
+    if(oc&&oc.checked){ const t=(document.getElementById(id+'_other')?.value||'').trim(); if(t) vals.push(t); }
+    return vals;
+  }
+  if(f.type==='checkbox') return el.checked;
+  let v=(el.value||'').trim();
+  if(f.type==='select'&&f.allowOther&&v==='__other__') v=(document.getElementById(id+'_other')?.value||'').trim();
+  return v;
+}
+// 依目前填寫內容切換欄位的顯示；回傳 vis（欄位id → 是否顯示）
+function cfApplyVisibility(fields, idPrefix, rowPrefix, ctx){
+  const values={};
+  (fields||[]).forEach(f=>{ if(f.type!=='section') values[f.id]=cfReadRaw(idPrefix+f.id,f); });
+  const vis=cfVisibility(fields||[], values, ctx);
+  (fields||[]).forEach(f=>{ const row=document.getElementById(rowPrefix+f.id); if(row) row.style.display=vis[f.id]?'':'none'; });
+  return vis;
+}
+// 表單上的年齡（以賽事日期計算；生日沒填或格式不對＝null）
+function cfAgeFrom(birthday, evDate){
+  if(!birthday||!/^\d{4}\/\d{2}\/\d{2}$/.test(birthday)) return null;
+  const [by,bm,bd]=birthday.split('/').map(Number);
+  const base=evDate?new Date(String(evDate).replace(/\//g,'-')+'T00:00:00'):new Date();
+  if(isNaN(base)) return null;
+  let age=base.getFullYear()-by;
+  if(base.getMonth()+1<bm||(base.getMonth()+1===bm&&base.getDate()<bd)) age--;
+  return age>=0?age:null;
+}
+function cfSectionHtml(f){
+  return '<div class="cf-section" style="margin:18px 0 12px;padding-top:12px;border-top:1px solid var(--border)">'
+    +'<div style="font-weight:800;font-size:.95rem">'+esc(f.label)+'</div>'
+    +(f.description?'<div style="font-size:.78rem;color:var(--muted);margin-top:2px">'+esc(f.description)+'</div>':'')+'</div>';
+}
+
+// 報名表單：依性別、年齡與已填內容切換自訂欄位（工作人員沒有組別）
+function signupCfCtx(){
+  return {groupId:'', gender:document.getElementById('suGender')?.value||'',
+    age:cfAgeFrom(document.getElementById('suBirthday')?.value.trim(), curSignupEvent?.date||'')};
+}
+function refreshSignupCf(){ return cfApplyVisibility(curSignupCustomFields,'su_cf_','su_cf_row_',signupCfCtx()); }
+// 修改表單：依性別、生日與已填內容切換自訂欄位；回傳 vis
+function updateEditCustomFieldsVisibility(cardId){
+  const box=document.getElementById(cardId+'_edit'); if(!box) return {};
+  let fields=[]; try{fields=JSON.parse(box.dataset.customFields||'[]');}catch(e){return {};}
+  return cfApplyVisibility(fields, cardId+'_cf_', cardId+'_cf_row_', {groupId:'', gender:document.getElementById(cardId+'_gender')?.value||'',
+    age:cfAgeFrom(document.getElementById(cardId+'_birthday')?.value.trim(), box.dataset.evdate||'')});
+}
+// 任何輸入變動都重新判斷顯示條件（等目前的事件處理完，例如日期選擇器填入生日之後再判斷）
+['input','change'].forEach(evt=>document.addEventListener(evt,e=>{
+  const t=e.target; if(!t||!t.closest) return;
+  if(t.closest('#signupContent')) setTimeout(refreshSignupCf,0);
+  const box=t.closest('[id$="_edit"]'); if(box&&box.dataset.customFields) setTimeout(()=>updateEditCustomFieldsVisibility(box.id.slice(0,-5)),0);
+},true));
+
 window.submitSignup=async function(){
   const eventId=curSignupEvent.id;
   const sfs=curSignupEvent.staffFieldSettings||{};
@@ -406,8 +565,11 @@ window.submitSignup=async function(){
   }
   // 自訂欄位
   const customData={};
+  const suVis=refreshSignupCf();
   for(const f of curSignupCustomFields){
+    if(f.type==='section'||!suVis[f.id])continue; // 隱藏的欄位：不驗證、不送出
     const el=document.getElementById('su_cf_'+f.id); if(!el)continue;
+    if(f.type==='multi'){ const r=readMultiField('su_cf_'+f.id,f); if(r.error){showToast(r.error,'error');return;} customData[f.id]=r.value; continue; }
     if(f.type==='checkbox'){
       if(f.required&&!el.checked){showToast('「'+f.label+'」為必填，請勾選','error');return;}
       customData[f.id]=el.checked;
@@ -423,6 +585,9 @@ window.submitSignup=async function(){
   }
   const runnerData={name,gender,birthday,phone,email,idNumber,note};
   const btn=document.querySelector('#signupContent .btn-primary, #signupForm .btn-primary');
+  if(!currentTurnstileToken){showToast('請稍候，人機驗證還在進行中，請幾秒後再試一次','error');return;}
+  // 送出前確認資料
+  if(!(await confirmBeforeSubmit([{rows:[['賽事',curSignupEvent.name||''],['姓名',name],['性別',gender],['生日',birthday],['身分證',idNumber.toUpperCase()],['手機',phone],['Email',email],['備註',note]].concat(cfConfirmRows(curSignupCustomFields,customData))}]))) return;
   btn.textContent='送出中...'; btn.disabled=true;
   try{
     // 報名改走 Cloud Function（staffAction）：工作人員個資已從公開可讀的
@@ -561,9 +726,11 @@ window.doStatusQuery=async function(){
   result.innerHTML=html;
 }
 // ── 撤銷取消申請 ──
+// 送給伺服器的是「目前的身分證」（修改過身分證後文件 ID 就對不上，伺服器用 idNumber 欄位找資料）
+const staffKey=docId=>(staffCache[docId]&&staffCache[docId].idNumber)||docId;
 window.withdrawStaffCancelRequest=async function(eventId, staffDocId, cardId){
   try{
-    await httpsCallable(functions,'staffAction')({eventId,action:'withdraw',idNumber:staffDocId});
+    await httpsCallable(functions,'staffAction')({eventId,action:'withdraw',idNumber:staffKey(staffDocId)});
     const actions=document.getElementById(cardId+'_actions');
     if(actions) actions.outerHTML='<div id="'+cardId+'_actions">'
       +'<div style="display:flex;gap:8px;margin-top:12px">'
@@ -579,7 +746,7 @@ window.withdrawStaffCancelRequest=async function(eventId, staffDocId, cardId){
 window.requestCancelStaffEntry=async function(eventId, staffDocId, cardId){
   if(!confirm('確定要送出取消報名申請？\n（送出後請等待主辦方審核確認，不會立即取消）'))return;
   try{
-    await httpsCallable(functions,'staffAction')({eventId,action:'cancel',idNumber:staffDocId});
+    await httpsCallable(functions,'staffAction')({eventId,action:'cancel',idNumber:staffKey(staffDocId)});
     const actions=document.getElementById(cardId+'_actions');
     if(actions) actions.outerHTML='<div style="margin-top:12px;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:.82rem;color:var(--muted)">⏳ 已送出取消申請，請等待主辦方確認</div>';
     showToast('已送出取消申請');
@@ -620,7 +787,12 @@ window.showEditForm=async function(eventId,staffDocId,cardId){
     const fid=cardId+'_cf_'+f.id;
     const reqMark=f.required?' <span class="required-star">*</span>':'';
     const descHtml=f.description?'<div style="font-size:.75rem;color:var(--text);margin-top:2px">'+esc(f.description)+'</div>':'';
-    if(f.type==='select'){
+    html+='<div id="'+cardId+'_cf_row_'+f.id+'">';
+    if(f.type==='section'){
+      html+=cfSectionHtml(f);
+    }else if(f.type==='multi'){
+      html+=multiFieldHtml(fid, f, cd[f.id], reqMark, descHtml);
+    }else if(f.type==='select'){
       const isOtherVal=f.allowOther&&cd[f.id]!==undefined&&cd[f.id]!==''&&!(f.options||[]).includes(cd[f.id]);
       html+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><select id="'+fid+'" class="input"'+(f.allowOther?' onchange="document.getElementById(\''+fid+'_other\').style.display=this.value===\'__other__\'?\'block\':\'none\'"':'')+'><option value="">請選擇...</option>';
       (f.options||[]).forEach(o=>{html+='<option value="'+esc(o)+'"'+(cd[f.id]===o?' selected':'')+'>'+esc(o)+'</option>';});
@@ -631,12 +803,66 @@ window.showEditForm=async function(eventId,staffDocId,cardId){
     }else{
       html+='<div class="input-group"><label>'+esc(f.label)+reqMark+'</label><input id="'+fid+'" type="text" class="input" value="'+esc(cd[f.id]||'')+'">'+descHtml+'</div>';
     }
+    html+='</div>';
   });
   html+='<button class="btn btn-primary btn-full" onclick="saveEdit(\''+eventId+'\',\''+staffDocId+'\',\''+cardId+'\')">儲存修改</button>';
   html+='</div>';
   box.innerHTML=html;
   box.dataset.customFields=JSON.stringify(customFields);
   box.dataset.sfs=JSON.stringify(sfs);
+  box.dataset.evdate=evDoc.data()?.date||'';
+  updateEditCustomFieldsVisibility(cardId);
+}
+
+// ── 對話框：修改不能換人的警告（跟選手頁同一套）──
+function idDialog(o){
+  const dlg=document.createElement('div');
+  dlg.className='id-dialog';
+  dlg.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box';
+  const btns=(o.buttons||[]).map((b,i)=>'<button type="button" data-i="'+i+'" class="btn '+(b.primary?'btn-primary':'btn-ghost')+' btn-sm">'+esc(b.label)+'</button>').join('');
+  dlg.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:480px;width:100%;box-sizing:border-box;max-height:90vh;overflow:auto">'
+    +'<div style="font-size:1rem;font-weight:700;margin-bottom:8px">'+(o.who?esc(o.who)+'：':'')+esc(o.title)+'</div>'
+    +(o.html||'')
+    +(o.input?'<input id="idDlgInput" class="input" style="width:100%;box-sizing:border-box;margin:6px 0 4px" placeholder="'+esc(o.input.placeholder||'')+'">'+'<div id="idDlgErr" style="font-size:.75rem;color:var(--red);min-height:1em"></div>':'')
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'+btns+'</div></div>';
+  document.body.appendChild(dlg);
+  const inp=dlg.querySelector('#idDlgInput');
+  if(inp) setTimeout(()=>inp.focus(),30);
+  return new Promise(resolve=>{
+    dlg.querySelectorAll('button[data-i]').forEach(el=>el.onclick=()=>{
+      const b=o.buttons[+el.dataset.i];
+      const v=inp?inp.value.trim():'';
+      if(b.needInput){ const err=b.needInput(v); if(err){ dlg.querySelector('#idDlgErr').textContent=err; return; } }
+      dlg.remove(); resolve({value:b.value, input:v});
+    });
+  });
+}
+// 修改時改了姓名／性別／生日／身分證：警告不能換人，確定才繼續
+async function confirmIdentityChange(fields, who){
+  const r=await idDialog({who, title:'確定是同一人修改資料嗎？',
+    html:(fields&&fields.length?'<div style="font-size:.82rem;margin-bottom:6px">你改了：<strong>'+esc(fields.join('、'))+'</strong></div>':'')
+      +'<div style="font-size:.82rem;line-height:1.7;color:var(--accent)">系統不允許同一筆資料換不同人，若要換人，請先申請取消報名，再新增報名。</div>',
+    buttons:[{label:'確定，是同一人',value:'yes',primary:true},{label:'取消',value:'no'}]});
+  return r.value==='yes';
+}
+// 送出前的確認畫面：sections＝[{title,rows}]，rows＝[[標籤,值]]（空白的列不顯示）（跟報名系統一致）
+async function confirmBeforeSubmit(sections, title){
+  const tbl=rows=>'<table style="width:100%;border-collapse:collapse;margin-bottom:8px">'+rows.filter(r=>r[1]!==''&&r[1]!=null).map(r=>'<tr><td style="padding:3px 8px 3px 0;font-size:.78rem;color:var(--muted);white-space:nowrap;vertical-align:top;border:none">'+esc(r[0])+'</td><td style="padding:3px 0;font-size:.88rem;word-break:break-all;border:none">'+esc(String(r[1]))+'</td></tr>').join('')+'</table>';
+  const html=sections.map(s=>(s.title?'<div style="font-weight:700;font-size:.88rem;margin-top:8px;border-top:1px solid var(--border);padding-top:8px">'+esc(s.title)+'</div>':'')+tbl(s.rows)).join('')
+    +'<div style="font-size:.78rem;color:var(--accent);margin-top:4px">請確認資料正確，尤其是姓名、性別、生日。</div>';
+  const r=await idDialog({title:title||'請確認報名資料', html, buttons:[{label:'確認送出',value:'ok',primary:true},{label:'返回修改',value:'back'}]});
+  return r.value==='ok';
+}
+// 自訂欄位顯示成確認畫面的列（區塊標題不列；複選用頓號連接；勾選框顯示是／否）
+function cfConfirmRows(fields, data){
+  const rows=[];
+  (fields||[]).forEach(f=>{
+    if(f.type==='section'||!(f.id in (data||{}))) return;
+    let v=data[f.id];
+    if(Array.isArray(v)) v=v.join('、'); else if(v===true) v='是'; else if(v===false) v='否';
+    rows.push([f.label,v]);
+  });
+  return rows;
 }
 
 window.saveEdit=async function(eventId,staffDocId,cardId){
@@ -664,8 +890,11 @@ window.saveEdit=async function(eventId,staffDocId,cardId){
   }
   const customFields=JSON.parse(document.getElementById(cardId+'_edit').dataset.customFields||'[]');
   const customData={};
+  const editVis=updateEditCustomFieldsVisibility(cardId);
   for(const f of customFields){
+    if(f.type==='section'||!editVis[f.id])continue; // 隱藏的欄位：不驗證、不送出
     const el=document.getElementById(cardId+'_cf_'+f.id); if(!el)continue;
+    if(f.type==='multi'){ const r=readMultiField(cardId+'_cf_'+f.id,f); if(r.error){showToast(r.error,'error');return;} customData[f.id]=r.value; continue; }
     if(f.type==='checkbox'){
       if(f.required&&!el.checked){showToast('「'+f.label+'」為必填，請勾選','error');return;}
       customData[f.id]=el.checked;
@@ -682,11 +911,17 @@ window.saveEdit=async function(eventId,staffDocId,cardId){
   try{
     // 儲存改走 Cloud Function（伺服器端驗證後就地更新；文件ID＝查詢用的
     // 原身分證，欄位裡的身分證可修改）
-    await httpsCallable(functions,'staffAction')({
-      eventId,action:'save',idNumber:staffDocId,
-      profile:{name,gender,birthday,phone,email,note,newIdNumber:idNumber},customData
-    });
-    Object.assign(staffCache[staffDocId]||{},{name,gender,birthday,idNumber,phone,email,note,customData});
+    const payload={
+      eventId,action:'save',idNumber:staffKey(staffDocId),
+      profile:{name,gender,birthday,phone,email,note,newIdNumber:idNumber.toUpperCase()},customData
+    };
+    let res=(await httpsCallable(functions,'staffAction')(payload)).data;
+    // 改了姓名、性別、生日或身分證：確認是同一人修改資料（不能換人）
+    if(res.status==='confirm-identity-change'){
+      if(!(await confirmIdentityChange(res.fields||[],''))) return;
+      res=(await httpsCallable(functions,'staffAction')({...payload,confirmIdentityChange:true})).data;
+    }
+    Object.assign(staffCache[staffDocId]||{},{name,gender,birthday,idNumber:idNumber.toUpperCase(),phone,email,note,customData});
     showToast('已儲存修改');
     document.getElementById(cardId+'_edit').innerHTML='<div class="csv-hint" style="margin-top:12px">✅ 修改已儲存，如有修改身分證，下次請用新號碼查詢。</div>';
   }catch(err){showToast('儲存失敗：'+err.message,'error');}
