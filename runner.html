@@ -2550,8 +2550,8 @@ const CERT_ORN_COLORS = {
 // density 華麗程度 0 只有四角、1 加上下中央、2 再加左右中央；seed 變化（0＝標準樣式，其他數字＝分支位置、角度、長度略有不同）
 // curl 捲曲方式 end 分支末端捲起／whole 整條分支就是一條螺旋；spiral 螺旋 log 對數／golden 黃金（每 1/4 圈縮小 φ 倍）／arch 等距（阿基米德）；
 // turns 捲幾圈
-// cornerA、cornerB 角花橫邊、直邊的角度（從紙邊往內傾斜幾度，0＝貼著紙邊）；bendDir 主幹彎曲方向 s S 形／rs 反 S 形／out 向紙邊拱／in 向文字拱；stem 主幹長度（倍數）；cornerBranch 角花分支 in 一律往內／alt 交錯（往外的較短）
-const CERT_ORN_DEFAULT = { color: 'gold', bend: 0.7, bendDir: 's', cornerA: 0, cornerB: 0, branch: 'alt', branches: 3, stem: 1, cornerBranch: 'in', twigs: true, leaves: true, weight: 1, corner: 1, divider: 1, density: 1, seed: 0, curl: 'end', spiral: 'log', turns: 0.85 };
+// cornerA、cornerB 角花橫邊、直邊的角度（從紙邊往內傾斜幾度，0＝貼著紙邊）；bendDir 主幹彎曲方向 s S 形／rs 反 S 形／out 向紙邊拱／in 向文字拱；stem 主幹長度（倍數）；cornerBranches 角花分支數；cornerBranch 角花分支方向 in 往內／alt 交錯／out 往外（往外的較短，整組往內挪）
+const CERT_ORN_DEFAULT = { color: 'gold', bend: 0.7, bendDir: 's', cornerA: 0, cornerB: 0, branch: 'alt', branches: 3, stem: 1, cornerBranches: 2, cornerBranch: 'in', twigs: true, leaves: true, weight: 1, corner: 1, divider: 1, density: 1, seed: 0, curl: 'end', spiral: 'log', turns: 0.85 };
 const CERT_ORN_BENDS = { s: 'S 形', rs: '反 S 形', out: '向紙邊拱', in: '向文字拱' };
 const CERT_ORN_SPIRALS = { log: '對數螺旋', golden: '黃金螺旋', arch: '等距螺旋' };
 function certOrnOpts(bg) {
@@ -2560,7 +2560,7 @@ function certOrnOpts(bg) {
   return {
     color: CERT_ORN_COLORS[o.color] ? o.color : 'gold',
     bend: num(o.bend, 0, 2, 0.7), cornerA: num(o.cornerA, 0, 40, 0), cornerB: num(o.cornerB, 0, 40, 0), bendDir: ['s', 'rs', 'out', 'in'].includes(o.bendDir) ? o.bendDir : 's', branch: ['alt', 'out', 'in'].includes(o.branch) ? o.branch : 'alt',
-    branches: Math.round(num(o.branches, 1, 8, 3)), stem: num(o.stem, 0.6, 1.6, 1), cornerBranch: o.cornerBranch === 'alt' ? 'alt' : 'in', twigs: o.twigs !== false, leaves: o.leaves !== false,
+    branches: Math.round(num(o.branches, 1, 8, 3)), stem: num(o.stem, 0.6, 1.6, 1), cornerBranches: Math.round(num(o.cornerBranches, 1, 8, 2)), cornerBranch: ['in', 'alt', 'out'].includes(o.cornerBranch) ? o.cornerBranch : 'in', twigs: o.twigs !== false, leaves: o.leaves !== false,
     weight: num(o.weight, 0.5, 1.8, 1), corner: num(o.corner, 0.5, 1.5, 1), divider: num(o.divider, 0.5, 1.5, 1),
     density: Math.round(num(o.density, 0, 2, 1)), seed: Math.round(num(o.seed, 0, 999999, 0)),
     curl: o.curl === 'whole' ? 'whole' : 'end', spiral: CERT_ORN_SPIRALS[o.spiral] ? o.spiral : 'log', turns: num(o.turns, 0.4, 2.5, 0.85),
@@ -2651,10 +2651,10 @@ function certOrnBough(p0, ang, len, side, turns, whole) {
   const na = a2 + side * Math.PI / 2;
   return certOrnCurl(pts, len * 0.24, turns, [p3[0] + Math.cos(na), p3[1] + Math.sin(na)]);
 }
-// 一條藤蔓（本機座標：主幹沿 +x，-y 是紙邊）。v：{stem, len, n, w, side, alternate, curlTo, twigs, leaves, seed}
+// 一條藤蔓（本機座標：主幹沿 +x，-y 是紙邊）。v：{stem 主幹控制點, unit 基準大小, n, w, side, alternate, curlTo, twigs, leaves, seed}
 function certOrnVine(ctx, v) {
   const R = v.seed ? certOrnRng(v.seed) : null, jit = (a, b) => (R ? a + (b - a) * R() : (a + b) / 2);
-  const L = v.len, turns = v.turns;
+  const L = v.unit, turns = v.turns; // 分支長度、粗細、捲曲半徑都照基準大小，不跟主幹長度一起變
   let main = certOrnBez(v.stem[0], v.stem[1], v.stem[2], v.stem[3], 60);
   main = certOrnCurl(main, L * 0.09, turns, v.curlTo);
   certOrnStroke(ctx, main, L * v.w, 0.2, 0.45, L * v.w * 0.7);
@@ -2681,11 +2681,11 @@ function certOrnVine(ctx, v) {
 // 中央花飾（畫在原點、左右對稱，-y 是紙邊）
 function certOrnDivider(ctx, o, s, seed) {
   const b = o.bend, side = o.branch === 'in' ? 1 : -1;
-  const Y = { s: [70, -70, -10], rs: [-70, 70, 10], out: [-80, -80, -15], in: [80, 80, 15] }[o.bendDir];
-  const v = {
-    stem: [[8 * s, 0], [110 * s * o.stem, Y[0] * b * s], [250 * s * o.stem, Y[1] * b * s], [345 * s * o.stem, Y[2] * b * s]],
-    len: 360 * s * o.stem, n: o.branches, w: 0.05 * o.weight, side, alternate: o.branch === 'alt',
-    curlTo: [320 * s * o.stem, (Y[2] * b + (o.branch === 'out' || o.branch === 'alt' ? 30 : -30)) * s], twigs: o.twigs, leaves: o.leaves, seed, turns: o.turns, whole: o.curl === 'whole',
+  const Y = { s: [70, -70, -10], rs: [-70, 70, 10], out: [-80, -80, -15], in: [80, 80, 15] }[o.bendDir], L = o.stem;
+  const v = { // 主幹長度只拉長主幹（彎曲幅度跟著等比例），分支大小不變
+    stem: [[8 * s, 0], [110 * s * L, Y[0] * b * s * L], [250 * s * L, Y[1] * b * s * L], [345 * s * L, Y[2] * b * s * L]],
+    unit: 360 * s, n: o.branches, w: 0.05 * o.weight, side, alternate: o.branch === 'alt',
+    curlTo: [320 * s * L, (Y[2] * b * L + (o.branch === 'out' || o.branch === 'alt' ? 30 : -30)) * s], twigs: o.twigs, leaves: o.leaves, seed, turns: o.turns, whole: o.curl === 'whole',
   };
   certOrnVine(ctx, v);
   ctx.save(); ctx.scale(-1, 1); certOrnVine(ctx, v); ctx.restore();
@@ -2694,12 +2694,13 @@ function certOrnDivider(ctx, o, s, seed) {
 }
 // 角花（畫在原點，x 沿紙邊往外、y 往內；沿對角線鏡射）。分支一律往內長，不會穿出外框
 function certOrnCorner(ctx, o, s, seed) {
-  const b = o.bend, L = o.stem, alt = o.cornerBranch === 'alt';
-  const Y = { s: [-20, 30, 0], rs: [30, -20, 0], out: [-25, -25, -6], in: [30, 30, 6] }[o.bendDir];
+  const b = o.bend, L = o.stem, dirB = o.cornerBranch;
+  // 彎曲幅度跟中央花飾同一個比例（中央主幹長 345、幅度 70）
+  const Y = { s: [-60, 60, -9], rs: [60, -60, 9], out: [-70, -70, -13], in: [70, 70, 13] }[o.bendDir];
   const v = {
-    stem: [[30 * s, 30 * s], [90 * s * L, Y[0] * b * s], [200 * s * L, (10 + Y[1] * b) * s], [300 * s * L, (4 + Y[2] * b) * s]],
-    len: 320 * s * L, n: Math.max(1, o.branches - 1), w: 0.055 * o.weight, side: 1, alternate: alt, outK: alt ? 0.55 : 0,
-    curlTo: [300 * s * L, (40 + Y[2] * b) * s], twigs: o.twigs, leaves: false, seed, turns: o.turns, whole: o.curl === 'whole',
+    stem: [[30 * s, 30 * s], [90 * s * L, Y[0] * b * s * L], [200 * s * L, (10 + Y[1] * b * L) * s], [300 * s * L, (4 + Y[2] * b * L) * s]],
+    unit: 320 * s, n: o.cornerBranches, w: 0.055 * o.weight, side: dirB === 'out' ? -1 : 1, alternate: dirB === 'alt', outK: dirB === 'in' ? 0 : dirB === 'alt' ? 0.55 : 0.7,
+    curlTo: [300 * s * L, (40 + Y[2] * b * L) * s], twigs: o.twigs, leaves: false, seed, turns: o.turns, whole: o.curl === 'whole',
   };
   const ra = o.cornerA * Math.PI / 180, rb = o.cornerB * Math.PI / 180;
   ctx.save(); ctx.rotate(ra); certOrnVine(ctx, v); ctx.restore(); // 橫邊：往內傾斜 cornerA 度
@@ -2721,7 +2722,7 @@ function certOrnDraw(ctx, W, H, o) {
   ctx.lineWidth = 2 * u; ctx.strokeRect(62 * u, 62 * u, W - 124 * u, H - 124 * u);
   const seed = o.seed, m = 80 * u;
   const corners = (cs) => [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]].forEach(([x, y, dx, dy]) => {
-    const inset = o.cornerBranch === 'alt' ? 45 * cs : 0; // 交錯時往外也有分支，整組往內挪一點
+    const inset = { in: 0, alt: 45, out: 70 }[o.cornerBranch] * cs; // 有往外的分支時，整組往內挪一點
     ctx.save(); ctx.translate(x + dx * inset, y + dy * inset); ctx.scale(dx, dy); certOrnCorner(ctx, o, cs, seed && seed * 3 + 1); ctx.restore();
   });
   const dividers = (ds) => {
