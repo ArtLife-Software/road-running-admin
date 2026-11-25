@@ -4693,7 +4693,8 @@ const CERT_PAPERS = {
   'letter-landscape': { w: 279.4, h: 215.9, label: 'Letter 橫式' },
   'letter-portrait':  { w: 215.9, h: 279.4, label: 'Letter 直式' },
 };
-const CERT_DPI = 150;
+const CERT_DPI = 150; // 輸出解析度「自動」時，內建底圖用的 dpi
+const CERT_DPI_OPTIONS = [150, 200, 300]; // 範本可指定的輸出解析度（tpl.dpi；沒設或 0＝自動）
 function certPaper(tpl) {
   const bg = (tpl && tpl.bg) || {};
   if (bg.size === 'custom' && bg.pw > 0 && bg.ph > 0) return { w: +bg.pw, h: +bg.ph };
@@ -4708,6 +4709,7 @@ function certGuessPaper(wPx, hPx) {
   return { size: 'custom', pw: land ? long : short, ph: land ? short : long, lock: true };
 }
 const CERT_MAX_SIDE = 4000; // 底圖長邊上限，太大手機會記憶體不足而產生失敗
+const CERT_OUT_MAX_SIDE = 5000; // 輸出圖片的長邊上限（A3 用 300dpi 約 4961）
 
 // ── 預設範本 ──
 // classic：重現原本的完賽證書（內建古典金框底圖＋完整文字）
@@ -4886,14 +4888,46 @@ function certRoundRect(ctx, x, y, w, h, r) {
 }
 
 // 證書像素尺寸（見 CERT_PAPERS 的說明）
-function certCanvasSize(tpl, bgImg) {
+function certCanvasSize(tpl, bgImg, opts) {
   const p = certPaper(tpl);
+  // 輸出解析度：範本有指定就照指定（文字與內建底圖照這個解析度重畫；自己的底圖只能縮放）；
+  // 自動＝內建底圖 150dpi、自己的底圖照底圖原本的寬度。opts.preview：後台編輯畫面的預覽一律用自動，拖曳才不會卡
+  const dpi = opts && opts.preview ? 0 : certTplDpi(tpl);
   let w;
-  if (tpl.bg && (tpl.bg.type === 'upload' || tpl.bg.type === 'url') && bgImg && bgImg.naturalWidth) w = bgImg.naturalWidth;
+  if (dpi) w = p.w / 25.4 * dpi;
+  else if (certHasOwnBg(tpl) && bgImg && bgImg.naturalWidth) w = bgImg.naturalWidth;
   else w = p.w / 25.4 * CERT_DPI;
   let h = w * p.h / p.w;
-  const k = Math.min(1, CERT_MAX_SIDE / Math.max(w, h));
+  const k = Math.min(1, CERT_OUT_MAX_SIDE / Math.max(w, h));
   return { w: Math.round(w * k), h: Math.round(h * k) };
+}
+function certTplDpi(tpl) { const d = +(tpl && tpl.dpi) || 0; return CERT_DPI_OPTIONS.includes(d) ? d : 0; }
+function certHasOwnBg(tpl) { return !!(tpl && tpl.bg && (tpl.bg.type === 'upload' || tpl.bg.type === 'url')); }
+// 像素寬度換算成這個紙張大小的 dpi
+function certDpiOf(tpl, wPx) { return wPx / (certPaper(tpl).w / 25.4); }
+// PNG 寫入 dpi（pHYs 區塊）：用 Word、Photoshop 等軟體開啟或列印時，才會是設定的紙張大小（瀏覽器產生的 PNG 沒有這項）
+async function certPngWithDpi(blob, dpi) {
+  try {
+    if (!blob || !(dpi > 0)) return blob;
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    if (buf.length < 33 || String.fromCharCode(buf[12], buf[13], buf[14], buf[15]) !== 'IHDR') return blob;
+    const ppm = Math.round(dpi / 0.0254); // 每公尺幾個像素
+    const chunk = new Uint8Array(21), dv = new DataView(chunk.buffer);
+    dv.setUint32(0, 9); chunk.set([0x70, 0x48, 0x59, 0x73], 4); dv.setUint32(8, ppm); dv.setUint32(12, ppm); chunk[16] = 1;
+    dv.setUint32(17, certCrc32(chunk.subarray(4, 17)));
+    const at = 33; // PNG 簽名 8 bytes＋IHDR 區塊 25 bytes，pHYs 放在 IHDR 後面
+    return new Blob([buf.subarray(0, at), chunk, buf.subarray(at)], { type: 'image/png' });
+  } catch (e) { return blob; }
+}
+let _certCrcTable = null;
+function certCrc32(bytes) {
+  if (!_certCrcTable) {
+    _certCrcTable = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; _certCrcTable[n] = c >>> 0; }
+  }
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = _certCrcTable[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
 }
 
 // 讀取底圖。http(s) 網址要用 crossOrigin 載入，否則畫進 canvas 後就不能存成 PNG
@@ -4910,22 +4944,24 @@ function certLoadImage(src) {
 
 // ── 主程式：把證書畫到 canvas 上（同步；呼叫前先 await certEnsureFonts） ──
 // 回傳每個文字方塊在畫布上的範圍（後台拖曳、點選用）
-// opts.noBg：不畫底圖、只畫文字（後台「套印」匯出用；這是匯出當下的選項，不存進設定，選手端永遠有底圖）
+// opts.noBg：不畫底圖、只畫文字，透明背景；opts.bgOnly：只畫底圖（都是後台匯出當下的選項，不存進設定，選手端永遠是完整的）
+// opts.preview：後台編輯畫面預覽，一律用自動解析度
 function certDraw(canvas, tpl, data, bgImg, opts) {
   opts = opts || {};
-  const { w: W, h: H } = certCanvasSize(tpl, bgImg);
+  const { w: W, h: H } = certCanvasSize(tpl, bgImg, opts);
   if (canvas.width !== W) canvas.width = W;
   if (canvas.height !== H) canvas.height = H;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, W, H);
   if (opts.noBg) {
-    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+    // 套印：透明背景，只有文字（拿到其他軟體疊在底圖上也不會蓋住；印出來跟白底一樣）
   } else if (tpl.bg && tpl.bg.type !== 'preset') {
     // 自訂底圖；還沒上傳或載入失敗時畫白底（不要退回內建底圖，以免誤以為設定沒生效）
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
     if (bgImg) ctx.drawImage(bgImg, 0, 0, W, H);
   } else certDrawPresetBg(ctx, W, H, (tpl.bg && tpl.bg.preset) || 'classic');
 
+  if (opts.bgOnly) return []; // 只有底圖（後台匯出用）
   const rects = [];
   for (const b of (tpl.boxes || [])) {
     const r = certResolveText(b, data);
@@ -5116,9 +5152,10 @@ window.openCertEditor = async function (eventId, kind) {
     bgImg: null, bgDataUrl: '', bgDirty: false, bgUrlOk: null,
     sel: tpl.boxes[0] ? tpl.boxes[0].id : null, rects: [], samples: certEdSamples(ev), sample: 0, drag: null,
     real: null, realInfo: null, // 實際選手預覽：第一次選用時才載入報名與打卡資料
-    noBg: false, // 套印：預覽與匯出不含底圖。只是畫面上的選項，不存檔
+    mode: 'full', // 輸出內容：full 完整／noBg 套印（只有文字、透明背景）／bgOnly 只有底圖。只是畫面上的選項，不存檔
   };
-  document.getElementById('certEdNoBg').checked = false;
+  document.getElementById('certEdMode').value = 'full';
+  document.getElementById('certEdCanvas').classList.remove('cert-transparent');
   document.getElementById('certEdTitle').textContent = K.label + '設定 — ' + (ev.name || '');
   document.getElementById('certEdOpenLabel').textContent = '開放選手下載' + K.label;
   document.getElementById('certEdOpen').checked = certEd.open;
@@ -5164,6 +5201,8 @@ function certEdFillStaticSelects() {
   document.getElementById('cbFontEn').innerHTML = CERT_FONTS_EN.map((f) => '<option value="' + esc(f.id) + '">' + esc(f.label) + '</option>').join('');
   document.getElementById('certEdBgSize').innerHTML = Object.entries(CERT_PAPERS).map(([k, p]) => '<option value="' + k + '">' + p.label + '（' + p.w + '×' + p.h + 'mm）</option>').join('')
     + '<option value="custom">自訂</option>';
+  document.getElementById('certEdDpi').innerHTML = '<option value="0">自動（內建底圖 150 dpi；上傳／網址底圖照底圖原本的像素）</option>'
+    + CERT_DPI_OPTIONS.map((d) => '<option value="' + d + '">' + d + ' dpi</option>').join('');
   document.getElementById('cbHide').innerHTML = '<option value="">一律顯示</option>'
     + '<option value="*">內容中的變數有任一沒有值時隱藏</option>'
     + CERT_VARS.map((v) => '<option value="' + esc(v.key) + '">{' + esc(v.key) + '} 沒有值時隱藏</option>').join('');
@@ -5183,8 +5222,8 @@ async function certEdRedraw(needFonts) {
     if (!certEd || token !== _certEdFontTimer) return; // 期間又有新的變動，交給最新那次畫
   }
   const cv = document.getElementById('certEdCanvas');
-  certEd.rects = certDraw(cv, certEd.tpl, data, certEd.bgImg, { noBg: certEd.noBg });
-  document.getElementById('certEdSizeInfo').textContent = '證書尺寸：' + cv.width + ' × ' + cv.height + ' px';
+  certEd.rects = certDraw(cv, certEd.tpl, data, certEd.bgImg, { preview: true, noBg: certEd.mode === 'noBg', bgOnly: certEd.mode === 'bgOnly' });
+  certEdShowOutSize();
   certEdDrawSelection();
 }
 function certEdDrawSelection() {
@@ -5480,10 +5519,32 @@ window.certEdCopyFrom = async function (otherKind) {
 };
 
 // ── 套印：預覽與匯出不含底圖（只是畫面上的選項，不存檔，選手端不受影響）──
-window.certEdToggleNoBg = function () {
-  certEd.noBg = document.getElementById('certEdNoBg').checked;
+window.certEdModeChange = function () {
+  certEd.mode = document.getElementById('certEdMode').value;
+  document.getElementById('certEdCanvas').classList.toggle('cert-transparent', certEd.mode === 'noBg'); // 棋盤格表示透明，只影響畫面
   certEdRedraw(false);
 };
+// 輸出解析度（存在範本，後台匯出與選手下載都用）
+window.certEdDpiChange = function () {
+  const d = +document.getElementById('certEdDpi').value || 0;
+  if (d) certEd.tpl.dpi = d; else delete certEd.tpl.dpi;
+  certEdRedraw(false);
+};
+// 輸出尺寸：預覽用自動解析度，這裡另外算實際輸出的像素
+function certEdShowOutSize() {
+  const o = certCanvasSize(certEd.tpl, certEd.bgImg);
+  let t = '輸出尺寸：' + o.w + ' × ' + o.h + ' px（約 ' + Math.round(certDpiOf(certEd.tpl, o.w)) + ' dpi）';
+  if (certHasOwnBg(certEd.tpl) && certEd.bgImg && certEd.bgImg.naturalWidth && o.w > certEd.bgImg.naturalWidth * 1.05)
+    t += '；底圖會放大 ' + (o.w / certEd.bgImg.naturalWidth).toFixed(1) + ' 倍，可能變糊';
+  document.getElementById('certEdSizeInfo').textContent = t;
+}
+// 自己的底圖換算成目前紙張大小的 dpi；低於 150 印出來可能會糊
+function certEdBgDpiHtml() {
+  const img = certEd.bgImg; if (!img || !img.naturalWidth) return '';
+  const p = certPaper(certEd.tpl), d = Math.round(certDpiOf(certEd.tpl, img.naturalWidth));
+  return '，以 ' + p.w + '×' + p.h + 'mm 計約 <b>' + d + ' dpi</b>'
+    + (d < 150 ? ' <span style="color:var(--accent)">（低於 150 dpi，印出來可能會糊）</span>' : '');
+}
 
 // ── 匯出全部：符合頒發條件的每位選手各一張 ──
 // PNG：依組別分資料夾打包成 ZIP；PDF：一個檔案、每人一頁，頁面＝設定的紙張大小（列印選「實際大小」即可套印）
@@ -5493,6 +5554,7 @@ window.certEdExportAll = async function () {
   if (fmt === 'zip' && typeof JSZip === 'undefined') { showToast('ZIP 套件載入失敗，請重新整理頁面', 'error'); return; }
   if (fmt === 'pdf' && !(window.jspdf && window.jspdf.jsPDF)) { showToast('PDF 套件載入失敗，請重新整理頁面', 'error'); return; }
   const btn = document.getElementById('certEdExportBtn');
+  if (certEd.mode === 'bgOnly') return certEdExportBgOnly(fmt, btn);
   if (!certEd.real) {
     showToast('載入報名與打卡資料中...');
     try { await certEdLoadReal(); } catch (e) { showToast('資料載入失敗：' + e.message, 'error'); return; }
@@ -5502,11 +5564,11 @@ window.certEdExportAll = async function () {
     .sort((a, b) => (a.groupOrder - b.groupOrder) || ((a.info.rank || 1e9) - (b.info.rank || 1e9))
       || String(a.info.bibNumber).localeCompare(String(b.info.bibNumber), undefined, { numeric: true }));
   if (!list.length) { showToast('目前沒有符合頒發條件的選手', 'error'); return; }
-  const blank = ed.noBg; // 套印：不含底圖
+  const blank = ed.mode === 'noBg'; // 套印：只有文字、透明背景
   const paper = certPaper(ed.tpl);
   if (!confirm('將匯出 ' + list.length + ' 位符合頒發條件選手的' + ed.K.label
     + (fmt === 'pdf' ? '，存成一個 PDF（每人一頁，紙張 ' + paper.w + '×' + paper.h + 'mm）' : '，打包成 ZIP')
-    + (blank ? '。\n「套印」已勾選：不含底圖，只有文字。' : '。')
+    + (blank ? '。\n套印：只有文字（透明背景），不含底圖。' : '。')
     + '\n（依目前畫面上的設定，含尚未存檔的修改）\n人數多時需要一點時間，過程中請勿關閉頁面。\n\n確定匯出？')) return;
   btn.disabled = true;
   const cv = document.createElement('canvas');
@@ -5528,8 +5590,9 @@ window.certEdExportAll = async function () {
         if (k > 0) pdf.addPage([paper.w, paper.h], paper.w >= paper.h ? 'landscape' : 'portrait');
         pdf.addImage(img, blank ? 'PNG' : 'JPEG', 0, 0, paper.w, paper.h, undefined, 'FAST');
       } else {
-        const blob = await new Promise((res, rej) => { try { cv.toBlob(res, 'image/png'); } catch (e) { rej(e); } });
+        let blob = await new Promise((res, rej) => { try { cv.toBlob(res, 'image/png'); } catch (e) { rej(e); } });
         if (!blob) throw new Error('圖片產生失敗');
+        blob = await certPngWithDpi(blob, certDpiOf(ed.tpl, cv.width));
         let name = (x.info.rank ? String(x.info.rank).padStart(3, '0') : safe(x.info.bibNumber)) + '_' + safe(x.info.name);
         const folder = safe(x.groupName);
         while (used.has(folder + '/' + name)) name += '_' + safe(x.info.uniqueId);
@@ -5618,6 +5681,7 @@ function certEdSyncBgUi() {
   document.getElementById('certEdBgUploadRow').style.display = bg.type === 'upload' ? 'block' : 'none';
   document.getElementById('certEdBgUrlRow').style.display = bg.type === 'url' ? 'block' : 'none';
   document.getElementById('certEdBgUrl').value = bg.url || '';
+  document.getElementById('certEdDpi').value = String(certTplDpi(certEd.tpl));
   const info = document.getElementById('certEdBgInfo');
   let warn = '';
   // 底圖比例跟紙張比例不同時，底圖會被拉伸，提醒一下
@@ -5627,9 +5691,11 @@ function certEdSyncBgUi() {
   }
   if (bg.type === 'upload') {
     info.innerHTML = (certEd.bgImg
-      ? '目前底圖：' + certEd.bgImg.naturalWidth + ' × ' + certEd.bgImg.naturalHeight + ' px，約 ' + Math.round(certEd.bgDataUrl.length * 0.75 / 1024) + ' KB'
+      ? '目前底圖：' + certEd.bgImg.naturalWidth + ' × ' + certEd.bgImg.naturalHeight + ' px' + certEdBgDpiHtml() + '，檔案約 ' + Math.round(certEd.bgDataUrl.length * 0.75 / 1024) + ' KB'
       : '<span style="color:var(--red)">尚未上傳底圖</span>') + warn;
-  } else if (bg.type === 'url') { if (warn && certEd.bgUrlOk) info.innerHTML = info.innerHTML.replace(/<br><span style="color:var\(--accent\)">⚠️ 底圖比例.*$/, '') + warn; }
+  } else if (bg.type === 'url') {
+    if (certEd.bgUrlOk && certEd.bgImg) info.innerHTML = '<span style="color:var(--green)">✅ 可以使用</span>，尺寸 ' + certEd.bgImg.naturalWidth + ' × ' + certEd.bgImg.naturalHeight + ' px' + certEdBgDpiHtml() + warn;
+  }
   else info.textContent = '';
 }
 window.certEdBgTypeChange = function () {
@@ -5733,17 +5799,49 @@ async function certEdCheckUrl(url, silent) {
   certEdRedraw(false);
 }
 
-window.certEdDownloadTest = function () {
-  const cv = document.getElementById('certEdCanvas');
+window.certEdDownloadTest = async function () {
+  const ed = certEd; if (!ed) return;
+  // 照實際輸出的解析度與輸出內容另外畫一張（編輯畫面的預覽是自動解析度）
+  const cv = document.createElement('canvas');
   try {
-    cv.toBlob((blob) => {
-      if (!blob) { showToast('產生失敗', 'error'); return; }
-      const url = URL.createObjectURL(blob); const a = document.createElement('a');
-      a.href = url; a.download = certEd.K.label + '_預覽.png'; document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-    }, 'image/png');
-  } catch (e) { showToast('無法存成 PNG：底圖主機不允許跨網域使用', 'error'); }
+    const data = certBuildData(certEdCurrentInfo());
+    await certEnsureFonts(ed.tpl, data);
+    certDraw(cv, ed.tpl, data, ed.bgImg, { noBg: ed.mode === 'noBg', bgOnly: ed.mode === 'bgOnly' });
+    let blob = await new Promise((res, rej) => { try { cv.toBlob(res, 'image/png'); } catch (e) { rej(e); } });
+    if (!blob) throw new Error('產生失敗');
+    blob = await certPngWithDpi(blob, certDpiOf(ed.tpl, cv.width));
+    certEdSaveBlob(blob, ed.K.label + (ed.mode === 'noBg' ? '_套印' : ed.mode === 'bgOnly' ? '_底圖' : '') + '_預覽.png');
+  } catch (e) { showToast(e && e.name === 'SecurityError' ? '無法存成 PNG：底圖主機不允許跨網域使用' : '產生失敗：' + ((e && e.message) || e), 'error'); }
 };
+function certEdSaveBlob(blob, fname) {
+  const url = URL.createObjectURL(blob); const a = document.createElement('a');
+  a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+// 只輸出底圖：一個檔案（不分人），照紙張大小與輸出解析度。用在內建底圖拿去先印，之後再套印文字
+async function certEdExportBgOnly(fmt, btn) {
+  const ed = certEd;
+  if (certHasOwnBg(ed.tpl) && !ed.bgImg) { showToast('還沒有可用的底圖', 'error'); return; }
+  if (fmt === 'pdf' && !(window.jspdf && window.jspdf.jsPDF)) { showToast('PDF 套件載入失敗，請重新整理頁面', 'error'); return; }
+  btn.disabled = true;
+  try {
+    const cv = document.createElement('canvas');
+    certDraw(cv, ed.tpl, {}, ed.bgImg, { bgOnly: true });
+    const base = evFileName(ed.ev.name || '', ed.ev.date || '') + '_' + ed.K.label + '_底圖_' + fmtFileDateTime();
+    if (fmt === 'pdf') {
+      const paper = certPaper(ed.tpl);
+      const pdf = new window.jspdf.jsPDF({ orientation: paper.w >= paper.h ? 'landscape' : 'portrait', unit: 'mm', format: [paper.w, paper.h], compress: true });
+      pdf.addImage(cv.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, paper.w, paper.h, undefined, 'FAST');
+      certEdSaveBlob(pdf.output('blob'), base + '.pdf');
+    } else {
+      let blob = await new Promise((res, rej) => { try { cv.toBlob(res, 'image/png'); } catch (e) { rej(e); } });
+      if (!blob) throw new Error('圖片產生失敗');
+      certEdSaveBlob(await certPngWithDpi(blob, certDpiOf(ed.tpl, cv.width)), base + '.png');
+    }
+    showToast('已匯出底圖（' + cv.width + ' × ' + cv.height + ' px）');
+  } catch (e) { showToast(e && e.name === 'SecurityError' ? '匯出失敗：底圖主機不允許跨網域使用' : '匯出失敗：' + ((e && e.message) || e), 'error'); }
+  finally { btn.disabled = false; }
+}
 
 // ── 儲存 ──
 window.saveCertEditor = async function () {
@@ -6005,6 +6103,7 @@ th[data-sort]:hover{color:var(--accent);}
 .cert-ed-stage{position:relative;background:repeating-conic-gradient(#2a2e3e 0% 25%,#232736 0% 50%) 50%/20px 20px;border:1px solid var(--border);border-radius:10px;padding:0;outline:none;line-height:0;}
 .cert-ed-stage:focus{border-color:var(--accent);}
 #certEdCanvas{width:100%;height:auto;display:block;border-radius:9px;touch-action:none;}
+#certEdCanvas.cert-transparent{background:repeating-conic-gradient(#e6e6e6 0% 25%,#fff 0% 50%) 50%/16px 16px;}
 .cert-sel-box{position:absolute;display:none;border:2px dashed var(--accent);border-radius:4px;pointer-events:none;box-shadow:0 0 0 1px rgba(0,0,0,.35);}
 .cert-sel-box.is-hidden{border-color:var(--muted);}
 .cert-sel-box.is-hidden::after{content:'此測試資料下隱藏';position:absolute;top:-22px;left:0;font-size:11px;line-height:1.6;background:var(--surface2);color:var(--muted);padding:0 6px;border-radius:4px;white-space:nowrap;}
@@ -6778,7 +6877,7 @@ th[data-sort]:hover{color:var(--accent);}
           <button class="btn btn-ghost btn-sm" onclick="certEdDownloadTest()">📥 下載預覽 PNG</button>
           <select id="certEdExportFmt" class="input" style="width:auto;padding:6px 8px" title="PNG：依組別分資料夾打包；PDF：每人一頁、頁面為設定的紙張大小，適合列印與套印">
             <option value="zip">PNG（ZIP）</option><option value="pdf">PDF（每人一頁）</option></select>
-          <label class="cert-switch" style="font-size:.78rem;gap:4px" title="預覽與匯出只有文字、不含底圖，用來套印在現成的證書紙上。這個選項不會存檔，選手下載的永遠有底圖。"><input type="checkbox" id="certEdNoBg" onchange="certEdToggleNoBg()"> 套印：不含底圖</label>
+          <select id="certEdMode" class="input" style="width:auto;padding:6px 8px" onchange="certEdModeChange()" title="完整：底圖＋文字。套印：只有文字、透明背景，用來套印在現成的證書紙上，或拿到其他軟體疊圖。只有底圖：不含文字，只輸出一個檔案。這個選項不會存檔，選手下載的永遠是完整的。"><option value="full">完整</option><option value="noBg">套印：只有文字</option><option value="bgOnly">只有底圖</option></select>
           <button class="btn btn-ghost btn-sm" id="certEdExportBtn" onclick="certEdExportAll()">📦 匯出全部</button>
         </div>
         <div id="certEdRealRow" class="cert-ed-toolbar" style="display:none">
@@ -6827,10 +6926,15 @@ th[data-sort]:hover{color:var(--accent);}
               <label style="display:flex;align-items:center;gap:4px;margin-left:4px;cursor:pointer"><input type="checkbox" id="certEdLock" onchange="certEdLockChange()"> 維持比例</label>
             </div>
           </div>
+          <div style="margin-top:8px">
+            <label class="cert-lbl" style="margin-top:0">輸出解析度</label>
+            <select id="certEdDpi" class="input" onchange="certEdDpiChange()"></select>
+            <div class="cert-sub">匯出、下載預覽、選手下載都用這個解析度。文字和內建底圖會照解析度重畫，一樣清晰；上傳或網址的底圖只能縮放，解析度比底圖高時底圖會變糊。編輯畫面的預覽一律用自動解析度。</div>
+          </div>
           <div id="certEdBgUploadRow" style="margin-top:8px">
             <input type="file" id="certEdBgFile" accept="image/*" style="display:none" onchange="certEdBgFile(this)">
             <button class="btn btn-ghost btn-sm" onclick="document.getElementById('certEdBgFile').click()">📁 選擇圖片檔</button>
-            <div class="cert-sub">建議用與紙張比例相同的圖，例如 A4 橫式 3508×2480 或 1754×1240 的 JPG／PNG（證書解析度沿用底圖）。為了能存進資料庫，會自動壓縮到約 700KB 以內。要套印在現成的證書紙上時，可上傳證書紙的掃描檔來對位置，匯出時勾選「套印：不含底圖」。</div>
+            <div class="cert-sub">建議用與紙張比例相同的圖，例如 A4 橫式 3508×2480 或 1754×1240 的 JPG／PNG（輸出解析度選「自動」時沿用底圖）。為了能存進資料庫，會自動壓縮到約 700KB 以內。要套印在現成的證書紙上時，可上傳證書紙的掃描檔來對位置，匯出時選「套印：只有文字」。</div>
           </div>
           <div id="certEdBgUrlRow" style="margin-top:8px">
             <div style="display:flex;gap:6px"><input id="certEdBgUrl" type="url" class="input" placeholder="https://...（直接的圖片連結）"><button class="btn btn-ghost btn-sm" onclick="certEdCheckUrlBtn()">檢查</button></div>
