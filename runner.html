@@ -2547,12 +2547,13 @@ const CERT_ORN_COLORS = {
 };
 // bend 主幹彎曲度 0～1；branch 分支方向 alt 交錯／out 朝紙邊／in 朝文字；branches 每條主幹的分支數；
 // twigs 分支上的小枝；leaves 葉片；weight 粗細；corner、divider 角花與中央花飾大小；
-// density 華麗程度 0 只有四角、1 加上下中央、2 再加左右中央；seed 變化（0＝標準樣式，其他數字＝分支位置、角度、長度略有不同）
+// show 八個花飾各自要不要（tl tr bl br 四角、t b l r 四邊中央；舊範本只有 density：0 只有四角、1 加上下、2 全部）；
+// margin 邊距（mm）：有外框時從最內側的框線算，沒外框時從紙邊算，負數會壓到框線；seed 變化（0＝標準樣式，其他數字＝分支位置、角度、長度略有不同）
 // curl 捲曲方式 end 分支末端捲起／whole 整條分支就是一條螺旋；spiral 螺旋 log 對數／golden 黃金（每 1/4 圈縮小 φ 倍）／arch 等距（阿基米德）；
 // turns 捲幾圈
 // cornerA、cornerB 角花橫邊、直邊的角度（從紙邊往內傾斜幾度，0＝貼著紙邊）；bendDir 主幹彎曲方向 s S 形／rs 反 S 形／out 向紙邊拱／in 向文字拱；stem 主幹長度（倍數）；角花用跟中央花飾一樣的手臂，只另外調角度與大小
 // frame 外框 double 雙線／single 單線／none 不要
-const CERT_ORN_DEFAULT = { frame: 'double', color: 'gold', bend: 0.7, bendDir: 's', cornerA: 0, cornerB: 0, branch: 'alt', branches: 3, stem: 1, twigs: true, leaves: true, weight: 1, corner: 1, divider: 1, density: 1, seed: 0, curl: 'end', spiral: 'log', turns: 0.85 };
+const CERT_ORN_DEFAULT = { frame: 'double', color: 'gold', bend: 0.7, bendDir: 's', cornerA: 0, cornerB: 0, branch: 'alt', branches: 3, stem: 1, twigs: true, leaves: true, weight: 1, corner: 1, divider: 1, margin: 0, show: { tl: true, tr: true, bl: true, br: true, t: true, b: true, l: false, r: false }, seed: 0, curl: 'end', spiral: 'log', turns: 0.85 };
 const CERT_ORN_BENDS = { s: 'S 形', rs: '反 S 形', out: '向紙邊拱', in: '向文字拱' };
 const CERT_ORN_SPIRALS = { log: '對數螺旋', golden: '黃金螺旋', arch: '等距螺旋' };
 function certOrnOpts(bg) {
@@ -2562,10 +2563,16 @@ function certOrnOpts(bg) {
     frame: ['double', 'single', 'none'].includes(o.frame) ? o.frame : 'double', color: CERT_ORN_COLORS[o.color] ? o.color : 'gold',
     bend: num(o.bend, 0, 2, 0.7), cornerA: num(o.cornerA, 0, 40, 0), cornerB: num(o.cornerB, 0, 40, 0), bendDir: ['s', 'rs', 'out', 'in'].includes(o.bendDir) ? o.bendDir : 's', branch: ['alt', 'out', 'in'].includes(o.branch) ? o.branch : 'alt',
     branches: Math.round(num(o.branches, 1, 8, 3)), stem: num(o.stem, 0.6, 2, 1), twigs: o.twigs !== false, leaves: o.leaves !== false,
-    weight: num(o.weight, 0.5, 1.8, 1), corner: num(o.corner, 0.5, 1.5, 1), divider: num(o.divider, 0.5, 1.5, 1),
-    density: Math.round(num(o.density, 0, 2, 1)), seed: Math.round(num(o.seed, 0, 999999, 0)),
+    weight: num(o.weight, 0.5, 1.8, 1), corner: num(o.corner, 0.2, 1.5, 1), divider: num(o.divider, 0.2, 1.5, 1), margin: num(o.margin, -10, 40, 0),
+    show: certOrnShow(o), seed: Math.round(num(o.seed, 0, 999999, 0)),
     curl: o.curl === 'whole' ? 'whole' : 'end', spiral: CERT_ORN_SPIRALS[o.spiral] ? o.spiral : 'log', turns: num(o.turns, 0.4, 2.5, 0.85),
   };
+}
+const CERT_ORN_SPOTS = ['tl', 't', 'tr', 'l', 'r', 'bl', 'b', 'br'];
+function certOrnShow(o) {
+  const raw = (o.show && typeof o.show === 'object') ? o.show : null, d = Math.round(Number(o.density) || 0), out = {};
+  for (const k of CERT_ORN_SPOTS) out[k] = raw ? raw[k] === true : (k.length === 2 || (d >= 1 && (k === 't' || k === 'b')) || (d >= 2 && (k === 'l' || k === 'r')));
+  return out;
 }
 function certOrnRng(seed) {
   let a = seed >>> 0;
@@ -2710,7 +2717,7 @@ function certOrnCorner(ctx, o, s, seed) {
   certOrnDot(ctx, [56 * s, 56 * s], 8 * s);
   ctx.restore();
 }
-function certOrnDraw(ctx, W, H, o) {
+function certOrnDraw(ctx, W, H, o, paper) {
   const u = Math.min(W, H) / 1240, C = CERT_ORN_COLORS[o.color];
   certOrnSpiralKind = o.spiral;
   ctx.fillStyle = C.paper; ctx.fillRect(0, 0, W, H);
@@ -2724,38 +2731,44 @@ function certOrnDraw(ctx, W, H, o) {
   } else if (o.frame === 'single') {
     ctx.lineWidth = 4 * u; ctx.strokeRect(52 * u, 52 * u, W - 104 * u, H - 104 * u);
   }
-  const seed = o.seed, m = 80 * u;
-  const corners = (cs) => [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]].forEach(([x, y, dx, dy]) => {
-    const inset = { in: 0, alt: 80, out: 105 }[o.branch] * cs; // 分支有往紙邊長的，整組角花往內挪一點
-    ctx.save(); ctx.translate(x + dx * inset, y + dy * inset); ctx.scale(dx, dy); certOrnCorner(ctx, o, cs, seed && seed * 3 + 1); ctx.restore();
-  });
-  const dividers = (ds) => {
-    const gap = 122 * u + (o.bendDir === 'out' ? 60 * o.bend * ds : 0); // 向紙邊拱時往內挪
-    const place = (x, y, rot, flip, k) => { ctx.save(); ctx.translate(x, y); ctx.rotate(rot); if (flip) ctx.scale(1, -1); certOrnDivider(ctx, o, ds * k, seed && seed * 3 + 2); ctx.restore(); };
-    if (o.density >= 1) { place(W / 2, gap, 0, false, 1); place(W / 2, H - gap, 0, true, 1); }
-    if (o.density >= 2) { place(gap * 0.8, H / 2, -Math.PI / 2, false, 0.7); place(W - gap * 0.8, H / 2, Math.PI / 2, false, 0.7); }
+  // 邊距：有外框時從最內側框線的內緣算，沒外框時從紙邊算；mm 換成像素用紙張寬度
+  const ref = o.frame === 'double' ? 63 * u : o.frame === 'single' ? 54 * u : 0;
+  const lim = ref + o.margin * W / (paper && paper.w > 0 ? paper.w : 297), seed = o.seed, show = o.show;
+  const measure = (fn) => { certOrnBox = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }; ctx.save(); fn(); ctx.restore(); const b = certOrnBox; certOrnBox = null; return b; };
+  // 每個花飾先畫在原點量出範圍，再移到「外緣剛好貼齊邊距線」的位置；太大放不下就縮小（最多 8 次）
+  const corner = (cs) => (fill) => { ctx.save(); ctx.scale(fill.dx, fill.dy); certOrnCorner(ctx, o, cs, seed && seed * 3 + 1); ctx.restore(); };
+  const divider = (ds) => (rot) => { ctx.save(); ctx.rotate(rot); certOrnDivider(ctx, o, ds, seed && seed * 3 + 2); ctx.restore(); };
+  let cs = u * o.corner * 0.62, ds = u * o.divider * 0.6, cb = null, tb = null, lb = null;
+  for (let t = 0; t < 8; t++) { // 角花：寬、高各不超過半張紙
+    cb = measure(() => corner(cs)({ dx: 1, dy: 1 }));
+    if (cb.x1 - cb.x0 <= W / 2 - lim && cb.y1 - cb.y0 <= H / 2 - lim) break;
+    cs *= 0.9;
+  }
+  for (let t = 0; t < 8; t++) { // 中央花飾：上下的寬度、左右的高度都要放得下，深度不超過半張紙
+    tb = measure(() => divider(ds)(0)); lb = measure(() => divider(ds)(-Math.PI / 2));
+    const okT = !(show.t || show.b) || (tb.x1 - tb.x0 <= W - 2 * lim && tb.y1 - tb.y0 <= H / 2 - lim);
+    const okL = !(show.l || show.r) || (lb.y1 - lb.y0 <= H - 2 * lim && lb.x1 - lb.x0 <= W / 2 - lim);
+    if (okT && okL) break;
+    ds *= 0.9;
+  }
+  const all = () => {
+    const cx = lim - cb.x0, cy = lim - cb.y0; // 左上角花外緣貼齊邊距線，其他三個鏡射
+    [['tl', cx, cy, 1, 1], ['tr', W - cx, cy, -1, 1], ['bl', cx, H - cy, 1, -1], ['br', W - cx, H - cy, -1, -1]].forEach(([k, x, y, dx, dy]) => {
+      if (!show[k]) return;
+      ctx.save(); ctx.translate(x, y); corner(cs)({ dx, dy }); ctx.restore();
+    });
+    const ty = lim - tb.y0, lx = lim - lb.x0; // 上方花飾的上緣、左方花飾的左緣貼齊邊距線
+    const put = (k, x, y, rot, flip) => { if (!show[k]) return; ctx.save(); ctx.translate(x, y); if (flip) ctx.scale(flip[0], flip[1]); divider(ds)(rot); ctx.restore(); };
+    put('t', W / 2, ty, 0); put('b', W / 2, H - ty, 0, [1, -1]);
+    put('l', lx, H / 2, -Math.PI / 2); put('r', W - lx, H / 2, -Math.PI / 2, [-1, 1]);
   };
-  // 參數調大時花飾可能超出紙邊：先量範圍，超出就整組縮小（最多縮 6 次）
-  const fit = (draw, size) => {
-    const edge = 34 * u; // 不超出外框線
-    for (let t = 0; t < 6; t++) {
-      certOrnBox = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
-      ctx.save(); draw(size); ctx.restore();
-      const b = certOrnBox; certOrnBox = null;
-      if (!(b.x0 < edge || b.y0 < edge || b.x1 > W - edge || b.y1 > H - edge)) break;
-      size *= 0.9;
-    }
-    return size;
-  };
-  const cs = fit(corners, u * o.corner * 0.62), ds = fit(dividers, u * o.divider * 0.6);
-  const all = () => { corners(cs); dividers(ds); };
   ctx.fillStyle = ctx.strokeStyle = C.paper; certOrnHalo = 10 * u; all();
   ctx.fillStyle = ctx.strokeStyle = ink; certOrnHalo = 0; all();
   ctx.restore();
 }
 
 function certDrawPresetBg(ctx, W, H, preset, bg) {
-  if (preset === 'baroque') { certOrnDraw(ctx, W, H, certOrnOpts(bg)); return; }
+  if (preset === 'baroque') { certOrnDraw(ctx, W, H, certOrnOpts(bg), certPaper({ bg })); return; }
   const u = Math.min(W, H) / 1240; // 以 A4 短邊 1240 為基準等比例
   if (preset === 'classic') {
     const g = ctx.createRadialGradient(W / 2, 0, 0, W / 2, 0, Math.max(W, H) * 0.8);

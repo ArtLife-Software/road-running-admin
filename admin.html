@@ -4869,12 +4869,13 @@ const CERT_ORN_COLORS = {
 };
 // bend 主幹彎曲度 0～1；branch 分支方向 alt 交錯／out 朝紙邊／in 朝文字；branches 每條主幹的分支數；
 // twigs 分支上的小枝；leaves 葉片；weight 粗細；corner、divider 角花與中央花飾大小；
-// density 華麗程度 0 只有四角、1 加上下中央、2 再加左右中央；seed 變化（0＝標準樣式，其他數字＝分支位置、角度、長度略有不同）
+// show 八個花飾各自要不要（tl tr bl br 四角、t b l r 四邊中央；舊範本只有 density：0 只有四角、1 加上下、2 全部）；
+// margin 邊距（mm）：有外框時從最內側的框線算，沒外框時從紙邊算，負數會壓到框線；seed 變化（0＝標準樣式，其他數字＝分支位置、角度、長度略有不同）
 // curl 捲曲方式 end 分支末端捲起／whole 整條分支就是一條螺旋；spiral 螺旋 log 對數／golden 黃金（每 1/4 圈縮小 φ 倍）／arch 等距（阿基米德）；
 // turns 捲幾圈
 // cornerA、cornerB 角花橫邊、直邊的角度（從紙邊往內傾斜幾度，0＝貼著紙邊）；bendDir 主幹彎曲方向 s S 形／rs 反 S 形／out 向紙邊拱／in 向文字拱；stem 主幹長度（倍數）；角花用跟中央花飾一樣的手臂，只另外調角度與大小
 // frame 外框 double 雙線／single 單線／none 不要
-const CERT_ORN_DEFAULT = { frame: 'double', color: 'gold', bend: 0.7, bendDir: 's', cornerA: 0, cornerB: 0, branch: 'alt', branches: 3, stem: 1, twigs: true, leaves: true, weight: 1, corner: 1, divider: 1, density: 1, seed: 0, curl: 'end', spiral: 'log', turns: 0.85 };
+const CERT_ORN_DEFAULT = { frame: 'double', color: 'gold', bend: 0.7, bendDir: 's', cornerA: 0, cornerB: 0, branch: 'alt', branches: 3, stem: 1, twigs: true, leaves: true, weight: 1, corner: 1, divider: 1, margin: 0, show: { tl: true, tr: true, bl: true, br: true, t: true, b: true, l: false, r: false }, seed: 0, curl: 'end', spiral: 'log', turns: 0.85 };
 const CERT_ORN_BENDS = { s: 'S 形', rs: '反 S 形', out: '向紙邊拱', in: '向文字拱' };
 const CERT_ORN_SPIRALS = { log: '對數螺旋', golden: '黃金螺旋', arch: '等距螺旋' };
 function certOrnOpts(bg) {
@@ -4884,10 +4885,16 @@ function certOrnOpts(bg) {
     frame: ['double', 'single', 'none'].includes(o.frame) ? o.frame : 'double', color: CERT_ORN_COLORS[o.color] ? o.color : 'gold',
     bend: num(o.bend, 0, 2, 0.7), cornerA: num(o.cornerA, 0, 40, 0), cornerB: num(o.cornerB, 0, 40, 0), bendDir: ['s', 'rs', 'out', 'in'].includes(o.bendDir) ? o.bendDir : 's', branch: ['alt', 'out', 'in'].includes(o.branch) ? o.branch : 'alt',
     branches: Math.round(num(o.branches, 1, 8, 3)), stem: num(o.stem, 0.6, 2, 1), twigs: o.twigs !== false, leaves: o.leaves !== false,
-    weight: num(o.weight, 0.5, 1.8, 1), corner: num(o.corner, 0.5, 1.5, 1), divider: num(o.divider, 0.5, 1.5, 1),
-    density: Math.round(num(o.density, 0, 2, 1)), seed: Math.round(num(o.seed, 0, 999999, 0)),
+    weight: num(o.weight, 0.5, 1.8, 1), corner: num(o.corner, 0.2, 1.5, 1), divider: num(o.divider, 0.2, 1.5, 1), margin: num(o.margin, -10, 40, 0),
+    show: certOrnShow(o), seed: Math.round(num(o.seed, 0, 999999, 0)),
     curl: o.curl === 'whole' ? 'whole' : 'end', spiral: CERT_ORN_SPIRALS[o.spiral] ? o.spiral : 'log', turns: num(o.turns, 0.4, 2.5, 0.85),
   };
+}
+const CERT_ORN_SPOTS = ['tl', 't', 'tr', 'l', 'r', 'bl', 'b', 'br'];
+function certOrnShow(o) {
+  const raw = (o.show && typeof o.show === 'object') ? o.show : null, d = Math.round(Number(o.density) || 0), out = {};
+  for (const k of CERT_ORN_SPOTS) out[k] = raw ? raw[k] === true : (k.length === 2 || (d >= 1 && (k === 't' || k === 'b')) || (d >= 2 && (k === 'l' || k === 'r')));
+  return out;
 }
 function certOrnRng(seed) {
   let a = seed >>> 0;
@@ -5032,7 +5039,7 @@ function certOrnCorner(ctx, o, s, seed) {
   certOrnDot(ctx, [56 * s, 56 * s], 8 * s);
   ctx.restore();
 }
-function certOrnDraw(ctx, W, H, o) {
+function certOrnDraw(ctx, W, H, o, paper) {
   const u = Math.min(W, H) / 1240, C = CERT_ORN_COLORS[o.color];
   certOrnSpiralKind = o.spiral;
   ctx.fillStyle = C.paper; ctx.fillRect(0, 0, W, H);
@@ -5046,38 +5053,44 @@ function certOrnDraw(ctx, W, H, o) {
   } else if (o.frame === 'single') {
     ctx.lineWidth = 4 * u; ctx.strokeRect(52 * u, 52 * u, W - 104 * u, H - 104 * u);
   }
-  const seed = o.seed, m = 80 * u;
-  const corners = (cs) => [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]].forEach(([x, y, dx, dy]) => {
-    const inset = { in: 0, alt: 80, out: 105 }[o.branch] * cs; // 分支有往紙邊長的，整組角花往內挪一點
-    ctx.save(); ctx.translate(x + dx * inset, y + dy * inset); ctx.scale(dx, dy); certOrnCorner(ctx, o, cs, seed && seed * 3 + 1); ctx.restore();
-  });
-  const dividers = (ds) => {
-    const gap = 122 * u + (o.bendDir === 'out' ? 60 * o.bend * ds : 0); // 向紙邊拱時往內挪
-    const place = (x, y, rot, flip, k) => { ctx.save(); ctx.translate(x, y); ctx.rotate(rot); if (flip) ctx.scale(1, -1); certOrnDivider(ctx, o, ds * k, seed && seed * 3 + 2); ctx.restore(); };
-    if (o.density >= 1) { place(W / 2, gap, 0, false, 1); place(W / 2, H - gap, 0, true, 1); }
-    if (o.density >= 2) { place(gap * 0.8, H / 2, -Math.PI / 2, false, 0.7); place(W - gap * 0.8, H / 2, Math.PI / 2, false, 0.7); }
+  // 邊距：有外框時從最內側框線的內緣算，沒外框時從紙邊算；mm 換成像素用紙張寬度
+  const ref = o.frame === 'double' ? 63 * u : o.frame === 'single' ? 54 * u : 0;
+  const lim = ref + o.margin * W / (paper && paper.w > 0 ? paper.w : 297), seed = o.seed, show = o.show;
+  const measure = (fn) => { certOrnBox = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }; ctx.save(); fn(); ctx.restore(); const b = certOrnBox; certOrnBox = null; return b; };
+  // 每個花飾先畫在原點量出範圍，再移到「外緣剛好貼齊邊距線」的位置；太大放不下就縮小（最多 8 次）
+  const corner = (cs) => (fill) => { ctx.save(); ctx.scale(fill.dx, fill.dy); certOrnCorner(ctx, o, cs, seed && seed * 3 + 1); ctx.restore(); };
+  const divider = (ds) => (rot) => { ctx.save(); ctx.rotate(rot); certOrnDivider(ctx, o, ds, seed && seed * 3 + 2); ctx.restore(); };
+  let cs = u * o.corner * 0.62, ds = u * o.divider * 0.6, cb = null, tb = null, lb = null;
+  for (let t = 0; t < 8; t++) { // 角花：寬、高各不超過半張紙
+    cb = measure(() => corner(cs)({ dx: 1, dy: 1 }));
+    if (cb.x1 - cb.x0 <= W / 2 - lim && cb.y1 - cb.y0 <= H / 2 - lim) break;
+    cs *= 0.9;
+  }
+  for (let t = 0; t < 8; t++) { // 中央花飾：上下的寬度、左右的高度都要放得下，深度不超過半張紙
+    tb = measure(() => divider(ds)(0)); lb = measure(() => divider(ds)(-Math.PI / 2));
+    const okT = !(show.t || show.b) || (tb.x1 - tb.x0 <= W - 2 * lim && tb.y1 - tb.y0 <= H / 2 - lim);
+    const okL = !(show.l || show.r) || (lb.y1 - lb.y0 <= H - 2 * lim && lb.x1 - lb.x0 <= W / 2 - lim);
+    if (okT && okL) break;
+    ds *= 0.9;
+  }
+  const all = () => {
+    const cx = lim - cb.x0, cy = lim - cb.y0; // 左上角花外緣貼齊邊距線，其他三個鏡射
+    [['tl', cx, cy, 1, 1], ['tr', W - cx, cy, -1, 1], ['bl', cx, H - cy, 1, -1], ['br', W - cx, H - cy, -1, -1]].forEach(([k, x, y, dx, dy]) => {
+      if (!show[k]) return;
+      ctx.save(); ctx.translate(x, y); corner(cs)({ dx, dy }); ctx.restore();
+    });
+    const ty = lim - tb.y0, lx = lim - lb.x0; // 上方花飾的上緣、左方花飾的左緣貼齊邊距線
+    const put = (k, x, y, rot, flip) => { if (!show[k]) return; ctx.save(); ctx.translate(x, y); if (flip) ctx.scale(flip[0], flip[1]); divider(ds)(rot); ctx.restore(); };
+    put('t', W / 2, ty, 0); put('b', W / 2, H - ty, 0, [1, -1]);
+    put('l', lx, H / 2, -Math.PI / 2); put('r', W - lx, H / 2, -Math.PI / 2, [-1, 1]);
   };
-  // 參數調大時花飾可能超出紙邊：先量範圍，超出就整組縮小（最多縮 6 次）
-  const fit = (draw, size) => {
-    const edge = 34 * u; // 不超出外框線
-    for (let t = 0; t < 6; t++) {
-      certOrnBox = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
-      ctx.save(); draw(size); ctx.restore();
-      const b = certOrnBox; certOrnBox = null;
-      if (!(b.x0 < edge || b.y0 < edge || b.x1 > W - edge || b.y1 > H - edge)) break;
-      size *= 0.9;
-    }
-    return size;
-  };
-  const cs = fit(corners, u * o.corner * 0.62), ds = fit(dividers, u * o.divider * 0.6);
-  const all = () => { corners(cs); dividers(ds); };
   ctx.fillStyle = ctx.strokeStyle = C.paper; certOrnHalo = 10 * u; all();
   ctx.fillStyle = ctx.strokeStyle = ink; certOrnHalo = 0; all();
   ctx.restore();
 }
 
 function certDrawPresetBg(ctx, W, H, preset, bg) {
-  if (preset === 'baroque') { certOrnDraw(ctx, W, H, certOrnOpts(bg)); return; }
+  if (preset === 'baroque') { certOrnDraw(ctx, W, H, certOrnOpts(bg), certPaper({ bg })); return; }
   const u = Math.min(W, H) / 1240; // 以 A4 短邊 1240 為基準等比例
   if (preset === 'classic') {
     const g = ctx.createRadialGradient(W / 2, 0, 0, W / 2, 0, Math.max(W, H) * 0.8);
@@ -5946,7 +5959,7 @@ function certEdSyncOrnUi() {
   $('certOrnCornerA').value = o.cornerA; $('certOrnCornerB').value = o.cornerB;
   $('certOrnStem').value = o.stem;
   $('certOrnCurl').value = o.curl; $('certOrnSpiral').value = o.spiral; $('certOrnTurns').value = o.turns;
-  $('certOrnColor').value = o.color; $('certOrnFrame').value = o.frame; $('certOrnDensity').value = String(o.density); $('certOrnBranch').value = o.branch;
+  $('certOrnColor').value = o.color; $('certOrnFrame').value = o.frame; $('certOrnMargin').value = o.margin; CERT_ORN_SPOTS.forEach((k) => { $('certOrnShow_' + k).checked = o.show[k]; }); $('certOrnBranch').value = o.branch;
   $('certOrnBranches').value = o.branches; $('certOrnBend').value = o.bend; $('certOrnWeight').value = o.weight;
   $('certOrnCorner').value = o.corner; $('certOrnDivider').value = o.divider;
   $('certOrnTwigs').checked = o.twigs; $('certOrnLeaves').checked = o.leaves; $('certOrnSeed').value = o.seed;
@@ -5955,12 +5968,12 @@ function certEdSyncOrnUi() {
 function certEdOrnLabels(o) {
   const t = (id, v) => { document.getElementById(id).textContent = v; };
   t('certOrnBranchesV', o.branches); t('certOrnBendV', o.bend === 0 ? '直' : o.bend.toFixed(2)); t('certOrnWeightV', o.weight.toFixed(2));
-  t('certOrnCornerV', o.corner.toFixed(2)); t('certOrnDividerV', o.divider.toFixed(2)); t('certOrnTurnsV', o.turns.toFixed(2) + ' 圈'); t('certOrnStemV', o.stem.toFixed(2)); t('certOrnCornerAV', o.cornerA + '°'); t('certOrnCornerBV', o.cornerB + '°');
+  t('certOrnCornerV', o.corner.toFixed(2)); t('certOrnDividerV', o.divider.toFixed(2)); t('certOrnTurnsV', o.turns.toFixed(2) + ' 圈'); t('certOrnStemV', o.stem.toFixed(2)); t('certOrnMarginV', o.margin + ' mm（' + (o.frame === 'none' ? '從紙邊算' : '從框線算') + '）'); t('certOrnCornerAV', o.cornerA + '°'); t('certOrnCornerBV', o.cornerB + '°');
 }
 window.certEdOrnChange = function () {
   const $ = (id) => document.getElementById(id);
   certEd.tpl.bg.orn = certOrnOpts({ orn: {
-    color: $('certOrnColor').value, frame: $('certOrnFrame').value, density: +$('certOrnDensity').value, branch: $('certOrnBranch').value,
+    color: $('certOrnColor').value, frame: $('certOrnFrame').value, margin: +$('certOrnMargin').value, show: Object.fromEntries(CERT_ORN_SPOTS.map((k) => [k, $('certOrnShow_' + k).checked])), branch: $('certOrnBranch').value,
     branches: +$('certOrnBranches').value, bend: +$('certOrnBend').value, weight: +$('certOrnWeight').value,
     corner: +$('certOrnCorner').value, divider: +$('certOrnDivider').value,
     twigs: $('certOrnTwigs').checked, leaves: $('certOrnLeaves').checked, seed: +$('certOrnSeed').value || 0,
@@ -6392,6 +6405,9 @@ th[data-sort]:hover{color:var(--accent);}
 .cert-orn-line label{display:flex;align-items:center;gap:4px;cursor:pointer}
 .cert-orn-h{font-size:.75rem;font-weight:700;color:var(--text);margin:8px 0 4px;padding-top:6px;border-top:1px dashed var(--border)}
 .cert-orn-h:first-child{margin-top:0;padding-top:0;border-top:0}
+.cert-orn-spots{grid-column:1/-1;display:flex;align-items:center;gap:10px;font-size:.75rem;color:var(--muted)}
+.cert-orn-spot-grid{display:grid;grid-template-columns:repeat(3,22px);grid-template-rows:repeat(3,18px);gap:2px;padding:3px;border:1px solid var(--border);border-radius:4px}
+.cert-orn-spot-grid label{display:flex;align-items:center;justify-content:center;cursor:pointer}
 .cert-orn-chks{display:flex;gap:12px;align-items:center;grid-column:1/-1}
 .cert-orn-chk{flex-direction:row!important;align-items:center;gap:4px!important;cursor:pointer}
 #certEdCanvas.cert-transparent{background:repeating-conic-gradient(#e6e6e6 0% 25%,#fff 0% 50%) 50%/16px 16px;}
@@ -7210,7 +7226,7 @@ th[data-sort]:hover{color:var(--accent);}
             <option value="upload">上傳圖片</option>
             <option value="url">圖片網址</option>
           </select>
-          <div id="certEdOrnRow" class="cert-orn" style="display:none"><div class="cert-orn-h">整體</div><div class="cert-orn-grid"><label>配色<select id="certOrnColor" class="input" onchange="certEdOrnChange()"></select></label><label>外框<select id="certOrnFrame" class="input" onchange="certEdOrnChange()"><option value="double">雙線</option><option value="single">單線</option><option value="none">不要外框</option></select></label><label>華麗程度<select id="certOrnDensity" class="input" onchange="certEdOrnChange()"><option value="0">只有四角</option><option value="1">四角＋上下中央</option><option value="2">四角＋上下左右</option></select></label><label>粗細 <span id="certOrnWeightV"></span><input id="certOrnWeight" type="range" min="0.5" max="1.8" step="0.05" oninput="certEdOrnChange()"></label></div><div class="cert-orn-h">主幹</div><div class="cert-orn-grid"><label>主幹長度 <span id="certOrnStemV"></span><input id="certOrnStem" type="range" min="0.6" max="2" step="0.05" oninput="certEdOrnChange()"></label><label>主幹彎曲度 <span id="certOrnBendV"></span><input id="certOrnBend" type="range" min="0" max="2" step="0.05" oninput="certEdOrnChange()"></label><label>彎曲方向<select id="certOrnBendDir" class="input" onchange="certEdOrnChange()"></select></label></div><div class="cert-orn-h">分支</div><div class="cert-orn-grid"><label>分支數 <span id="certOrnBranchesV"></span><input id="certOrnBranches" type="range" min="1" max="8" step="1" oninput="certEdOrnChange()"></label><label>分支方向<select id="certOrnBranch" class="input" onchange="certEdOrnChange()"><option value="alt">交錯</option><option value="out">朝紙邊</option><option value="in">朝文字</option></select></label><label>捲曲方式<select id="certOrnCurl" class="input" onchange="certEdOrnChange()"><option value="end">分支末端捲</option><option value="whole">整條分支捲</option></select></label><label>螺旋<select id="certOrnSpiral" class="input" onchange="certEdOrnChange()"></select></label><label>捲曲圈數 <span id="certOrnTurnsV"></span><input id="certOrnTurns" type="range" min="0.4" max="2.5" step="0.05" oninput="certEdOrnChange()"></label><div class="cert-orn-chks"><label class="cert-orn-chk"><input type="checkbox" id="certOrnTwigs" onchange="certEdOrnChange()"> 小枝</label><label class="cert-orn-chk"><input type="checkbox" id="certOrnLeaves" onchange="certEdOrnChange()"> 葉片</label></div></div><div class="cert-orn-h">角花（樣式跟中央花飾一樣，另外調大小和兩邊角度）</div><div class="cert-orn-grid"><label>角花大小 <span id="certOrnCornerV"></span><input id="certOrnCorner" type="range" min="0.5" max="1.5" step="0.05" oninput="certEdOrnChange()"></label><label>橫邊角度 <span id="certOrnCornerAV"></span><input id="certOrnCornerA" type="range" min="0" max="40" step="1" oninput="certEdOrnChange()"></label><label>直邊角度 <span id="certOrnCornerBV"></span><input id="certOrnCornerB" type="range" min="0" max="40" step="1" oninput="certEdOrnChange()"></label></div><div class="cert-orn-h">中央花飾</div><div class="cert-orn-grid"><label>中央花飾大小 <span id="certOrnDividerV"></span><input id="certOrnDivider" type="range" min="0.5" max="1.5" step="0.05" oninput="certEdOrnChange()"></label></div>
+          <div id="certEdOrnRow" class="cert-orn" style="display:none"><div class="cert-orn-h">整體</div><div class="cert-orn-grid"><label>配色<select id="certOrnColor" class="input" onchange="certEdOrnChange()"></select></label><label>外框<select id="certOrnFrame" class="input" onchange="certEdOrnChange()"><option value="double">雙線</option><option value="single">單線</option><option value="none">不要外框</option></select></label><label>邊距 <span id="certOrnMarginV"></span><input id="certOrnMargin" type="range" min="-10" max="40" step="1" oninput="certEdOrnChange()"></label><div class="cert-orn-spots"><span>要畫哪些花飾</span><div class="cert-orn-spot-grid"><label title="左上角"><input type="checkbox" id="certOrnShow_tl" onchange="certEdOrnChange()"></label><label title="上方中央"><input type="checkbox" id="certOrnShow_t" onchange="certEdOrnChange()"></label><label title="右上角"><input type="checkbox" id="certOrnShow_tr" onchange="certEdOrnChange()"></label><label title="左方中央"><input type="checkbox" id="certOrnShow_l" onchange="certEdOrnChange()"></label><i></i><label title="右方中央"><input type="checkbox" id="certOrnShow_r" onchange="certEdOrnChange()"></label><label title="左下角"><input type="checkbox" id="certOrnShow_bl" onchange="certEdOrnChange()"></label><label title="下方中央"><input type="checkbox" id="certOrnShow_b" onchange="certEdOrnChange()"></label><label title="右下角"><input type="checkbox" id="certOrnShow_br" onchange="certEdOrnChange()"></label></div></div><label>粗細 <span id="certOrnWeightV"></span><input id="certOrnWeight" type="range" min="0.5" max="1.8" step="0.05" oninput="certEdOrnChange()"></label></div><div class="cert-orn-h">主幹</div><div class="cert-orn-grid"><label>主幹長度 <span id="certOrnStemV"></span><input id="certOrnStem" type="range" min="0.6" max="2" step="0.05" oninput="certEdOrnChange()"></label><label>主幹彎曲度 <span id="certOrnBendV"></span><input id="certOrnBend" type="range" min="0" max="2" step="0.05" oninput="certEdOrnChange()"></label><label>彎曲方向<select id="certOrnBendDir" class="input" onchange="certEdOrnChange()"></select></label></div><div class="cert-orn-h">分支</div><div class="cert-orn-grid"><label>分支數 <span id="certOrnBranchesV"></span><input id="certOrnBranches" type="range" min="1" max="8" step="1" oninput="certEdOrnChange()"></label><label>分支方向<select id="certOrnBranch" class="input" onchange="certEdOrnChange()"><option value="alt">交錯</option><option value="out">朝紙邊</option><option value="in">朝文字</option></select></label><label>捲曲方式<select id="certOrnCurl" class="input" onchange="certEdOrnChange()"><option value="end">分支末端捲</option><option value="whole">整條分支捲</option></select></label><label>螺旋<select id="certOrnSpiral" class="input" onchange="certEdOrnChange()"></select></label><label>捲曲圈數 <span id="certOrnTurnsV"></span><input id="certOrnTurns" type="range" min="0.4" max="2.5" step="0.05" oninput="certEdOrnChange()"></label><div class="cert-orn-chks"><label class="cert-orn-chk"><input type="checkbox" id="certOrnTwigs" onchange="certEdOrnChange()"> 小枝</label><label class="cert-orn-chk"><input type="checkbox" id="certOrnLeaves" onchange="certEdOrnChange()"> 葉片</label></div></div><div class="cert-orn-h">角花（樣式跟中央花飾一樣，另外調大小和兩邊角度）</div><div class="cert-orn-grid"><label>角花大小 <span id="certOrnCornerV"></span><input id="certOrnCorner" type="range" min="0.2" max="1.5" step="0.05" oninput="certEdOrnChange()"></label><label>橫邊角度 <span id="certOrnCornerAV"></span><input id="certOrnCornerA" type="range" min="0" max="40" step="1" oninput="certEdOrnChange()"></label><label>直邊角度 <span id="certOrnCornerBV"></span><input id="certOrnCornerB" type="range" min="0" max="40" step="1" oninput="certEdOrnChange()"></label></div><div class="cert-orn-h">中央花飾</div><div class="cert-orn-grid"><label>中央花飾大小 <span id="certOrnDividerV"></span><input id="certOrnDivider" type="range" min="0.2" max="1.5" step="0.05" oninput="certEdOrnChange()"></label></div>
             <div class="cert-orn-line">
               <span>變化</span>
               <input id="certOrnSeed" type="number" min="0" max="999999" class="input" style="width:90px" oninput="certEdOrnChange()" title="0＝標準樣式；其他數字＝分支的位置、角度、長度略有不同，同一個數字永遠畫出同一個樣子">
