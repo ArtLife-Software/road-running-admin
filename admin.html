@@ -4857,7 +4857,168 @@ function certWrapLine(ctx, line, maxW) {
 }
 
 // ── 內建底圖 ──
-function certDrawPresetBg(ctx, W, H, preset) {
+// ── 內建底圖：巴洛克花飾（樹枝狀渦卷）──
+// 一條主幹沿途長出 C 形分支、分支上再長小枝，筆畫粗細對比大、尾端圓珠。全部用程式照紙張短邊的比例畫，
+// 任何解析度都一樣清晰。參數存在 template.bg.orn（沒設的用 CERT_ORN_DEFAULT）；後台與參加者頁各有一份，要一起改。
+const CERT_ORN_COLORS = {
+  gold:  { label: '漸層金', paper: '#fffaf0', stops: ['#b47a12', '#f0c24a', '#c8901c', '#f3cd5c', '#a86c0c'] },
+  brown: { label: '深棕',   paper: '#fbf7ee', ink: '#5a3416' },
+  navy:  { label: '深藍',   paper: '#f5f7fb', ink: '#1f3a68' },
+  green: { label: '墨綠',   paper: '#f5f8f1', ink: '#2f5a3f' },
+  red:   { label: '中國紅', paper: '#fdf6ef', ink: '#9b1c1c' },
+};
+// bend 主幹彎曲度 0～1；branch 分支方向 alt 交錯／out 朝紙邊／in 朝文字；branches 每條主幹的分支數；
+// twigs 分支上的小枝；leaves 葉片；weight 粗細；corner、divider 角花與中央花飾大小；
+// density 華麗程度 0 只有四角、1 加上下中央、2 再加左右中央；seed 變化（0＝標準樣式，其他數字＝分支位置、角度、長度略有不同）
+const CERT_ORN_DEFAULT = { color: 'gold', bend: 0.7, branch: 'alt', branches: 3, twigs: true, leaves: true, weight: 1, corner: 1, divider: 1, density: 1, seed: 0 };
+function certOrnOpts(bg) {
+  const o = Object.assign({}, CERT_ORN_DEFAULT, (bg && bg.orn) || {});
+  const num = (v, a, b, d) => { v = Number(v); return Number.isFinite(v) ? Math.min(b, Math.max(a, v)) : d; };
+  return {
+    color: CERT_ORN_COLORS[o.color] ? o.color : 'gold',
+    bend: num(o.bend, 0, 1, 0.7), branch: ['alt', 'out', 'in'].includes(o.branch) ? o.branch : 'alt',
+    branches: Math.round(num(o.branches, 1, 4, 3)), twigs: o.twigs !== false, leaves: o.leaves !== false,
+    weight: num(o.weight, 0.5, 1.8, 1), corner: num(o.corner, 0.5, 1.5, 1), divider: num(o.divider, 0.5, 1.5, 1),
+    density: Math.round(num(o.density, 0, 2, 1)), seed: Math.round(num(o.seed, 0, 999999, 0)),
+  };
+}
+function certOrnRng(seed) {
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function certOrnBez(p0, p1, p2, p3, n) {
+  const out = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, u = 1 - t;
+    out.push([u*u*u*p0[0] + 3*u*u*t*p1[0] + 3*u*t*t*p2[0] + t*t*t*p3[0], u*u*u*p0[1] + 3*u*u*t*p1[1] + 3*u*t*t*p2[1] + t*t*t*p3[1]]);
+  }
+  return out;
+}
+// 路徑尾端接一段往 toward 那一側捲的螺旋（巴洛克：捲得少、開口大）
+function certOrnCurl(pts, r0, turns, toward) {
+  const B = pts[pts.length - 1], A = pts[pts.length - 2];
+  let tx = B[0] - A[0], ty = B[1] - A[1]; const L = Math.hypot(tx, ty) || 1; tx /= L; ty /= L;
+  const side = ((-ty) * (toward[0] - B[0]) + tx * (toward[1] - B[1])) >= 0 ? 1 : -1;
+  const cx = B[0] - side * ty * r0, cy = B[1] + side * tx * r0, th0 = Math.atan2(B[1] - cy, B[0] - cx);
+  const dir = ((Math.cos(th0 + 0.01) - Math.cos(th0)) * tx + (Math.sin(th0 + 0.01) - Math.sin(th0)) * ty) > 0 ? 1 : -1;
+  const total = turns * Math.PI * 2, k = Math.log(2.6) / total, out = pts.slice();
+  for (let a = 0.05; a <= total; a += 0.05) { const r = r0 * Math.exp(-k * a); out.push([cx + Math.cos(th0 + dir * a) * r, cy + Math.sin(th0 + dir * a) * r]); }
+  return out;
+}
+// 錐形筆畫：起點細、peak 最粗、終點留 tail 比例，終點加圓珠
+function certOrnStroke(ctx, pts, wMax, peak, tail, endDot) {
+  const n = pts.length, lens = [0];
+  for (let i = 1; i < n; i++) lens.push(lens[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const T = lens[n - 1] || 1, Lf = [], Rt = [];
+  for (let i = 0; i < n; i++) {
+    const t = lens[i] / T, a = t < peak ? Math.sin(t / peak * Math.PI / 2) : 1 - (1 - tail) * Math.pow((t - peak) / (1 - peak), 1.1);
+    const h = Math.max(0.18, a) * wMax / 2;
+    const p = pts[Math.max(0, i - 1)], q = pts[Math.min(n - 1, i + 1)];
+    let tx = q[0] - p[0], ty = q[1] - p[1]; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+    Lf.push([pts[i][0] - ty * h, pts[i][1] + tx * h]); Rt.push([pts[i][0] + ty * h, pts[i][1] - tx * h]);
+  }
+  ctx.beginPath(); ctx.moveTo(Lf[0][0], Lf[0][1]);
+  for (const p of Lf) ctx.lineTo(p[0], p[1]);
+  for (let i = n - 1; i >= 0; i--) ctx.lineTo(Rt[i][0], Rt[i][1]);
+  ctx.closePath(); certOrnFill(ctx);
+  if (endDot) certOrnDot(ctx, pts[n - 1], endDot);
+}
+// 填色：halo 模式（第一遍）用紙色描一圈粗邊，花飾壓到外框線時把框線斷開，第二遍再正常上色
+let certOrnHalo = 0;
+function certOrnFill(ctx) { if (certOrnHalo) { ctx.lineWidth = certOrnHalo; ctx.lineJoin = 'round'; ctx.stroke(); } ctx.fill(); }
+function certOrnDot(ctx, p, r) { ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, Math.PI * 2); certOrnFill(ctx); }
+function certOrnLeaf(ctx, a, b, wid, bend) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L;
+  ctx.beginPath(); ctx.moveTo(a[0], a[1]);
+  ctx.quadraticCurveTo(a[0] + dx * 0.35 + nx * wid * (1 + bend), a[1] + dy * 0.35 + ny * wid * (1 + bend), b[0], b[1]);
+  ctx.quadraticCurveTo(a[0] + dx * 0.35 - nx * wid * (1 - bend), a[1] + dy * 0.35 - ny * wid * (1 - bend), a[0], a[1]);
+  certOrnFill(ctx);
+}
+function certOrnTangent(pts, i) { const p = pts[Math.max(0, i - 1)], q = pts[Math.min(pts.length - 1, i + 1)]; return Math.atan2(q[1] - p[1], q[0] - p[0]); }
+// 一條分支：先順著 ang 出去、往 side 那邊彎，再捲回來
+function certOrnBough(p0, ang, len, side, turns) {
+  const a1 = ang + side * 0.55, a2 = ang + side * 1.6;
+  const p3 = [p0[0] + Math.cos(a1) * len, p0[1] + Math.sin(a1) * len];
+  const pts = certOrnBez(p0, [p0[0] + Math.cos(ang) * len * 0.45, p0[1] + Math.sin(ang) * len * 0.45],
+    [p3[0] - Math.cos(a2) * len * 0.35, p3[1] - Math.sin(a2) * len * 0.35], p3, 40);
+  const na = a2 + side * Math.PI / 2;
+  return certOrnCurl(pts, len * 0.24, turns, [p3[0] + Math.cos(na), p3[1] + Math.sin(na)]);
+}
+// 一條藤蔓（本機座標：主幹沿 +x，-y 是紙邊）。v：{stem, len, n, w, side, alternate, curlTo, twigs, leaves, seed}
+function certOrnVine(ctx, v) {
+  const R = v.seed ? certOrnRng(v.seed) : null, jit = (a, b) => (R ? a + (b - a) * R() : (a + b) / 2);
+  const L = v.len, turns = 0.85;
+  let main = certOrnBez(v.stem[0], v.stem[1], v.stem[2], v.stem[3], 60);
+  main = certOrnCurl(main, L * 0.09, turns, v.curlTo);
+  certOrnStroke(ctx, main, L * v.w, 0.2, 0.45, L * v.w * 0.7);
+  let side = v.side;
+  for (let i = 0; i < v.n; i++) {
+    const t = 0.18 + 0.62 * (i + 0.5) / v.n + jit(-0.04, 0.04), idx = Math.round(t * 60), p = main[idx], ta = certOrnTangent(main, idx);
+    const k = Math.pow(0.8, i), bl = L * 0.42 * k * jit(0.86, 1.14);
+    const b = certOrnBough(p, ta + side * jit(0.38, 0.62), bl, side, turns * jit(0.9, 1.1));
+    certOrnStroke(ctx, b, L * v.w * 0.72 * k, 0.3, 0.5, L * v.w * 0.55 * k);
+    if (v.twigs) { // 分支中段再長一根反方向的小枝
+      const tl = bl * 0.45 * jit(0.85, 1.15), tw = certOrnBough(b[18], certOrnTangent(b, 18) - side * 0.7, tl, -side, turns);
+      certOrnStroke(ctx, tw, L * v.w * 0.45 * k, 0.35, 0.5, L * v.w * 0.38 * k);
+    }
+    if (v.leaves) { // 交接處的葉片，朝分支的反方向
+      const la = ta - side * 0.9;
+      certOrnLeaf(ctx, p, [p[0] + Math.cos(la) * bl * 0.32, p[1] + Math.sin(la) * bl * 0.32], bl * 0.07, -side * 0.3);
+    }
+    if (v.alternate) side = -side;
+  }
+}
+// 中央花飾（畫在原點、左右對稱，-y 是紙邊）
+function certOrnDivider(ctx, o, s, seed) {
+  const b = o.bend, side = o.branch === 'in' ? 1 : -1;
+  const v = {
+    stem: [[8 * s, 0], [110 * s, 70 * b * s], [250 * s, -70 * b * s], [345 * s, -10 * b * s]],
+    len: 360 * s, n: o.branches, w: 0.05 * o.weight, side, alternate: o.branch === 'alt',
+    curlTo: [320 * s, (o.branch === 'out' || o.branch === 'alt' ? 30 : -30) * s], twigs: o.twigs, leaves: o.leaves, seed,
+  };
+  certOrnVine(ctx, v);
+  ctx.save(); ctx.scale(-1, 1); certOrnVine(ctx, v); ctx.restore();
+  certOrnLeaf(ctx, [0, 8 * s], [0, -75 * s], 24 * s, 0);
+  certOrnDot(ctx, [0, 40 * s], 9 * s);
+}
+// 角花（畫在原點，x 沿紙邊往外、y 往內；沿對角線鏡射）。分支一律往內長，不會穿出外框
+function certOrnCorner(ctx, o, s, seed) {
+  const b = o.bend, v = {
+    stem: [[30 * s, 30 * s], [90 * s, 0], [200 * s, (10 + 30 * b) * s], [300 * s, 4 * s]],
+    len: 320 * s, n: Math.max(1, o.branches - 1), w: 0.055 * o.weight, side: 1, alternate: false,
+    curlTo: [300 * s, 40 * s], twigs: o.twigs, leaves: false, seed,
+  };
+  certOrnVine(ctx, v);
+  ctx.save(); ctx.rotate(Math.PI / 2); ctx.scale(1, -1); certOrnVine(ctx, v); ctx.restore();
+  certOrnLeaf(ctx, [34 * s, 34 * s], [4 * s, 4 * s], 14 * s, 0);
+  certOrnDot(ctx, [56 * s, 56 * s], 8 * s);
+}
+function certOrnDraw(ctx, W, H, o) {
+  const u = Math.min(W, H) / 1240, C = CERT_ORN_COLORS[o.color];
+  ctx.fillStyle = C.paper; ctx.fillRect(0, 0, W, H);
+  let ink = C.ink;
+  if (C.stops) { ink = ctx.createLinearGradient(0, 0, W, H); C.stops.forEach((c, i) => ink.addColorStop(i / (C.stops.length - 1), c)); }
+  ctx.save();
+  ctx.fillStyle = ink; ctx.strokeStyle = ink;
+  ctx.lineWidth = 7 * u; ctx.strokeRect(44 * u, 44 * u, W - 88 * u, H - 88 * u);
+  ctx.lineWidth = 2 * u; ctx.strokeRect(62 * u, 62 * u, W - 124 * u, H - 124 * u);
+  const seed = o.seed, cs = u * o.corner * 0.78, m = 80 * u;
+  const ds = u * o.divider * 0.6, gap = 122 * u;
+  const all = () => {
+    [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]].forEach(([x, y, dx, dy]) => {
+      ctx.save(); ctx.translate(x, y); ctx.scale(dx, dy); certOrnCorner(ctx, o, cs, seed && seed * 3 + 1); ctx.restore();
+    });
+    const place = (x, y, rot, flip, k) => { ctx.save(); ctx.translate(x, y); ctx.rotate(rot); if (flip) ctx.scale(1, -1); certOrnDivider(ctx, o, ds * k, seed && seed * 3 + 2); ctx.restore(); };
+    if (o.density >= 1) { place(W / 2, gap, 0, false, 1); place(W / 2, H - gap, 0, true, 1); }
+    if (o.density >= 2) { place(gap * 0.8, H / 2, -Math.PI / 2, false, 0.7); place(W - gap * 0.8, H / 2, Math.PI / 2, false, 0.7); }
+  };
+  ctx.fillStyle = ctx.strokeStyle = C.paper; certOrnHalo = 10 * u; all();
+  ctx.fillStyle = ctx.strokeStyle = ink; certOrnHalo = 0; all();
+  ctx.restore();
+}
+
+function certDrawPresetBg(ctx, W, H, preset, bg) {
+  if (preset === 'baroque') { certOrnDraw(ctx, W, H, certOrnOpts(bg)); return; }
   const u = Math.min(W, H) / 1240; // 以 A4 短邊 1240 為基準等比例
   if (preset === 'classic') {
     const g = ctx.createRadialGradient(W / 2, 0, 0, W / 2, 0, Math.max(W, H) * 0.8);
@@ -4959,7 +5120,7 @@ function certDraw(canvas, tpl, data, bgImg, opts) {
     // 自訂底圖；還沒上傳或載入失敗時畫白底（不要退回內建底圖，以免誤以為設定沒生效）
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
     if (bgImg) ctx.drawImage(bgImg, 0, 0, W, H);
-  } else certDrawPresetBg(ctx, W, H, (tpl.bg && tpl.bg.preset) || 'classic');
+  } else certDrawPresetBg(ctx, W, H, (tpl.bg && tpl.bg.preset) || 'classic', tpl.bg);
 
   if (opts.bgOnly) return []; // 只有底圖（後台匯出用）
   const rects = [];
@@ -5155,6 +5316,7 @@ window.openCertEditor = async function (eventId, kind) {
     mode: 'full', // 輸出內容：full 完整／noBg 套印（只有文字、透明背景）／bgOnly 只有底圖。只是畫面上的選項，不存檔
   };
   document.getElementById('certEdMode').value = 'full';
+  certEdSyncExportUi();
   document.getElementById('certEdCanvas').classList.remove('cert-transparent');
   document.getElementById('certEdTitle').textContent = K.label + '設定 — ' + (ev.name || '');
   document.getElementById('certEdOpenLabel').textContent = '開放選手下載' + K.label;
@@ -5522,8 +5684,21 @@ window.certEdCopyFrom = async function (otherKind) {
 window.certEdModeChange = function () {
   certEd.mode = document.getElementById('certEdMode').value;
   document.getElementById('certEdCanvas').classList.toggle('cert-transparent', certEd.mode === 'noBg'); // 棋盤格表示透明，只影響畫面
+  certEdSyncExportUi();
   certEdRedraw(false);
 };
+// 只有底圖時不分人，只輸出一個檔案：匯出按鈕與格式選項跟著改字
+function certEdSyncExportUi() {
+  const bgOnly = certEd && certEd.mode === 'bgOnly';
+  const btn = document.getElementById('certEdExportBtn'), fmt = document.getElementById('certEdExportFmt');
+  if (!btn.dataset.label) { btn.dataset.label = btn.textContent; btn.dataset.title = btn.title || ''; }
+  btn.textContent = bgOnly ? '📦 匯出底圖' : btn.dataset.label;
+  btn.title = bgOnly ? '只輸出一個底圖檔案（不含文字），照紙張大小與輸出解析度' : btn.dataset.title;
+  for (const o of fmt.options) {
+    if (!o.dataset.label) o.dataset.label = o.textContent;
+    o.textContent = bgOnly ? (o.value === 'pdf' ? 'PDF（一頁）' : 'PNG') : o.dataset.label;
+  }
+}
 // 輸出解析度（存在範本，後台匯出與選手下載都用）
 window.certEdDpiChange = function () {
   const d = +document.getElementById('certEdDpi').value || 0;
@@ -5681,6 +5856,7 @@ function certEdSyncBgUi() {
   document.getElementById('certEdBgUploadRow').style.display = bg.type === 'upload' ? 'block' : 'none';
   document.getElementById('certEdBgUrlRow').style.display = bg.type === 'url' ? 'block' : 'none';
   document.getElementById('certEdBgUrl').value = bg.url || '';
+  certEdSyncOrnUi();
   document.getElementById('certEdDpi').value = String(certTplDpi(certEd.tpl));
   const info = document.getElementById('certEdBgInfo');
   let warn = '';
@@ -5698,6 +5874,43 @@ function certEdSyncBgUi() {
   }
   else info.textContent = '';
 }
+// 巴洛克花飾的參數面板
+function certEdSyncOrnUi() {
+  const bg = certEd.tpl.bg, show = bg.type === 'preset' && bg.preset === 'baroque';
+  document.getElementById('certEdOrnRow').style.display = show ? 'block' : 'none';
+  if (!show) return;
+  const o = certOrnOpts(bg), $ = (id) => document.getElementById(id);
+  if (!$('certOrnColor').options.length) $('certOrnColor').innerHTML = Object.entries(CERT_ORN_COLORS).map(([k, c]) => '<option value="' + k + '">' + c.label + '</option>').join('');
+  $('certOrnColor').value = o.color; $('certOrnDensity').value = String(o.density); $('certOrnBranch').value = o.branch;
+  $('certOrnBranches').value = o.branches; $('certOrnBend').value = o.bend; $('certOrnWeight').value = o.weight;
+  $('certOrnCorner').value = o.corner; $('certOrnDivider').value = o.divider;
+  $('certOrnTwigs').checked = o.twigs; $('certOrnLeaves').checked = o.leaves; $('certOrnSeed').value = o.seed;
+  certEdOrnLabels(o);
+}
+function certEdOrnLabels(o) {
+  const t = (id, v) => { document.getElementById(id).textContent = v; };
+  t('certOrnBranchesV', o.branches); t('certOrnBendV', o.bend === 0 ? '直' : o.bend.toFixed(2)); t('certOrnWeightV', o.weight.toFixed(2));
+  t('certOrnCornerV', o.corner.toFixed(2)); t('certOrnDividerV', o.divider.toFixed(2));
+}
+window.certEdOrnChange = function () {
+  const $ = (id) => document.getElementById(id);
+  certEd.tpl.bg.orn = certOrnOpts({ orn: {
+    color: $('certOrnColor').value, density: +$('certOrnDensity').value, branch: $('certOrnBranch').value,
+    branches: +$('certOrnBranches').value, bend: +$('certOrnBend').value, weight: +$('certOrnWeight').value,
+    corner: +$('certOrnCorner').value, divider: +$('certOrnDivider').value,
+    twigs: $('certOrnTwigs').checked, leaves: $('certOrnLeaves').checked, seed: +$('certOrnSeed').value || 0,
+  } });
+  certEdOrnLabels(certEd.tpl.bg.orn);
+  certEdRedraw(false);
+};
+window.certEdOrnShuffle = function () {
+  document.getElementById('certOrnSeed').value = 1 + Math.floor(Math.random() * 999998);
+  certEdOrnChange();
+};
+window.certEdOrnReset = function () {
+  certEd.tpl.bg.orn = Object.assign({}, CERT_ORN_DEFAULT);
+  certEdSyncOrnUi(); certEdRedraw(false);
+};
 window.certEdBgTypeChange = function () {
   const v = document.getElementById('certEdBgType').value;
   const bg = certEd.tpl.bg;
@@ -6103,6 +6316,12 @@ th[data-sort]:hover{color:var(--accent);}
 .cert-ed-stage{position:relative;background:repeating-conic-gradient(#2a2e3e 0% 25%,#232736 0% 50%) 50%/20px 20px;border:1px solid var(--border);border-radius:10px;padding:0;outline:none;line-height:0;}
 .cert-ed-stage:focus{border-color:var(--accent);}
 #certEdCanvas{width:100%;height:auto;display:block;border-radius:9px;touch-action:none;}
+.cert-orn{margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px}
+.cert-orn-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px}
+.cert-orn-grid label{display:flex;flex-direction:column;gap:2px;font-size:.75rem;color:var(--muted)}
+.cert-orn-grid input[type=range]{width:100%}
+.cert-orn-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;font-size:.78rem;color:var(--muted)}
+.cert-orn-line label{display:flex;align-items:center;gap:4px;cursor:pointer}
 #certEdCanvas.cert-transparent{background:repeating-conic-gradient(#e6e6e6 0% 25%,#fff 0% 50%) 50%/16px 16px;}
 .cert-sel-box{position:absolute;display:none;border:2px dashed var(--accent);border-radius:4px;pointer-events:none;box-shadow:0 0 0 1px rgba(0,0,0,.35);}
 .cert-sel-box.is-hidden{border-color:var(--muted);}
@@ -6872,12 +7091,13 @@ th[data-sort]:hover{color:var(--accent);}
           <div id="certEdSelBox" class="cert-sel-box"></div>
         </div>
         <div class="cert-ed-toolbar">
+          <label style="font-size:.78rem;color:var(--muted)">輸出內容</label>
+          <select id="certEdMode" class="input" style="width:auto;padding:6px 8px" onchange="certEdModeChange()" title="完整：底圖＋文字。套印：只有文字、透明背景，用來套印在現成的證書紙上，或拿到其他軟體疊圖。只有底圖：不含文字，只輸出一個檔案。這個選項不會存檔，選手下載的永遠是完整的。"><option value="full">完整</option><option value="noBg">套印：只有文字</option><option value="bgOnly">只有底圖</option></select>
           <label style="font-size:.78rem;color:var(--muted)">測試資料</label>
           <select id="certEdSample" class="input" style="width:auto;flex:1;min-width:160px;padding:6px 10px" onchange="certEdSetSample()"></select>
           <button class="btn btn-ghost btn-sm" onclick="certEdDownloadTest()">📥 下載預覽 PNG</button>
           <select id="certEdExportFmt" class="input" style="width:auto;padding:6px 8px" title="PNG：依組別分資料夾打包；PDF：每人一頁、頁面為設定的紙張大小，適合列印與套印">
             <option value="zip">PNG（ZIP）</option><option value="pdf">PDF（每人一頁）</option></select>
-          <select id="certEdMode" class="input" style="width:auto;padding:6px 8px" onchange="certEdModeChange()" title="完整：底圖＋文字。套印：只有文字、透明背景，用來套印在現成的證書紙上，或拿到其他軟體疊圖。只有底圖：不含文字，只輸出一個檔案。這個選項不會存檔，選手下載的永遠是完整的。"><option value="full">完整</option><option value="noBg">套印：只有文字</option><option value="bgOnly">只有底圖</option></select>
           <button class="btn btn-ghost btn-sm" id="certEdExportBtn" onclick="certEdExportAll()">📦 匯出全部</button>
         </div>
         <div id="certEdRealRow" class="cert-ed-toolbar" style="display:none">
@@ -6914,9 +7134,31 @@ th[data-sort]:hover{color:var(--accent);}
           <select id="certEdBgType" class="input" onchange="certEdBgTypeChange()">
             <option value="preset-classic">內建：古典金框</option>
             <option value="preset-white">內建：簡約白</option>
+            <option value="preset-baroque">內建：巴洛克花飾</option>
             <option value="upload">上傳圖片</option>
             <option value="url">圖片網址</option>
           </select>
+          <div id="certEdOrnRow" class="cert-orn" style="display:none">
+            <div class="cert-orn-grid">
+              <label>配色<select id="certOrnColor" class="input" onchange="certEdOrnChange()"></select></label>
+              <label>華麗程度<select id="certOrnDensity" class="input" onchange="certEdOrnChange()"><option value="0">只有四角</option><option value="1">四角＋上下中央</option><option value="2">四角＋上下左右</option></select></label>
+              <label>分支方向<select id="certOrnBranch" class="input" onchange="certEdOrnChange()"><option value="alt">交錯</option><option value="out">朝紙邊</option><option value="in">朝文字</option></select></label>
+              <label>分支數 <span id="certOrnBranchesV"></span><input id="certOrnBranches" type="range" min="1" max="4" step="1" oninput="certEdOrnChange()"></label>
+              <label>主幹彎曲度 <span id="certOrnBendV"></span><input id="certOrnBend" type="range" min="0" max="1" step="0.05" oninput="certEdOrnChange()"></label>
+              <label>粗細 <span id="certOrnWeightV"></span><input id="certOrnWeight" type="range" min="0.5" max="1.8" step="0.05" oninput="certEdOrnChange()"></label>
+              <label>角花大小 <span id="certOrnCornerV"></span><input id="certOrnCorner" type="range" min="0.5" max="1.5" step="0.05" oninput="certEdOrnChange()"></label>
+              <label>中央花飾大小 <span id="certOrnDividerV"></span><input id="certOrnDivider" type="range" min="0.5" max="1.5" step="0.05" oninput="certEdOrnChange()"></label>
+            </div>
+            <div class="cert-orn-line">
+              <label><input type="checkbox" id="certOrnTwigs" onchange="certEdOrnChange()"> 小枝</label>
+              <label><input type="checkbox" id="certOrnLeaves" onchange="certEdOrnChange()"> 葉片</label>
+              <span style="margin-left:auto">變化</span>
+              <input id="certOrnSeed" type="number" min="0" max="999999" class="input" style="width:90px" oninput="certEdOrnChange()" title="0＝標準樣式；其他數字＝分支的位置、角度、長度略有不同，同一個數字永遠畫出同一個樣子">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="certEdOrnShuffle()">換一個</button>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="certEdOrnReset()" title="所有花飾參數恢復預設">預設</button>
+            </div>
+            <div class="cert-sub">全部用程式照比例畫，任何輸出解析度都一樣清晰；設定存在範本，選手下載的也一樣。花飾大時，文字方塊可能要往中間移。</div>
+          </div>
           <div style="margin-top:8px">
             <label class="cert-lbl" style="margin-top:0">紙張大小</label>
             <select id="certEdBgSize" class="input" onchange="certEdBgSizeChange()"></select>
